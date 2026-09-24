@@ -146,8 +146,3 @@ rot plus a 4th "placement spin" value, and scale), `blueprints` (settings blocks
 `meshes`. Old saves have no `objects` and need re-saving in the current game first. Turret ring part:
 `99281776-6b29-4ffb-9d8b-04139ca7b6a2`. Compartment structure: `7f8a9d20-eb45-482e-b149-014c964c4e2c`. Add-on
 structure: `8f8a9d20-eb45-482e-b149-014c964c4e2c`.
-
-## Credits
-
-Turret to Add-on was built with GPT-6 Astra and Claude. BepInEx, Il2CppInterop and HarmonyX are separate projects
-under their own licenses.
