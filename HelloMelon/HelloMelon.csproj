@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A MelonLoader-style mod. Needs MLLoader installed in GameDir (it provides MelonLoader.dll); install the DLL into MLLoader\Mods. -->
+  <Import Project="..\SprocketMod.props" />
+  <PropertyGroup>
+    <AssemblyName>HelloMelon</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(GameDir)\MLLoader\MelonLoader\MelonLoader.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

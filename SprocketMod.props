@@ -1,0 +1,21 @@
+<Project>
+  <!-- Shared settings for every Sprocket BepInEx mod in this kit. Import it from a mod's .csproj. -->
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- A Sprocket folder with a working BepInEx 6 IL2CPP that has been started once (so BepInEx\interop exists).
+         Override per build: dotnet build -p:GameDir="D:\Games\Sprocket" -->
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Sprocket</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile against the game's BepInEx; these are already in the game, so don't copy them into the mod. -->
+    <Reference Include="$(GameDir)\BepInEx\core\*.dll" Exclude="$(GameDir)\BepInEx\core\TerraFX*.dll"><Private>false</Private></Reference>
+    <Reference Include="$(GameDir)\BepInEx\interop\*.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+  <!-- Both are needed: interop is generated on first start, core is BepInEx itself (a disabled BepInEx can leave interop behind). -->
+  <Target Name="CheckSprocketGameDir" BeforeTargets="ResolveAssemblyReferences"
+          Condition="!Exists('$(GameDir)\BepInEx\interop') Or !Exists('$(GameDir)\BepInEx\core\BepInEx.Core.dll')">
+    <Error Text="GameDir '$(GameDir)' has no working BepInEx 6 IL2CPP (needs BepInEx\core\BepInEx.Core.dll and BepInEx\interop). Install BepInEx there and start Sprocket once, or build with -p:GameDir=&quot;your Sprocket folder&quot;." />
+  </Target>
+</Project>

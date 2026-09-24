@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\SprocketMod.props" />
+  <PropertyGroup>
+    <AssemblyName>MyFirstMod</AssemblyName>
+  </PropertyGroup>
+</Project>

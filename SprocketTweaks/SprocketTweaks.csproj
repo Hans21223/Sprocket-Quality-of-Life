@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- MelonLoader mod (runs through MLLoader on BepInEx). Install into MLLoader\Mods. -->
+  <Import Project="..\SprocketMod.props" />
+  <PropertyGroup>
+    <AssemblyName>SprocketTweaks</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(GameDir)\MLLoader\MelonLoader\MelonLoader.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
