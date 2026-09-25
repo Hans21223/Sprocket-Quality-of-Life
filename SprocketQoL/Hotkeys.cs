@@ -123,7 +123,10 @@ public static class Hotkeys
         found.Add("P  flatten     T  loop cut (an edge)     I  inset     V  bevel (edges)   [mod]");
         found.Add("O  proportional editing     U  select linked flat faces   [mod]");
         found.Add("Numpad 5  orthographic view     Numpad + / -  zoom it   [mod]");
+        found.Add("Numpad 1 / 3 / 7  front / side / top     Numpad 9  opposite (below, back...)   [mod]");
         found.Add("F2  exploded view     F3 / F4  closer / further apart   [mod]");
+        found.Add("F5  shadows off / on     F6  flashlight at the mouse   [mod]");
+        found.Add("F8 (photo mode)  photo at the best graphics settings   [mod]");
         return found;
     }
 

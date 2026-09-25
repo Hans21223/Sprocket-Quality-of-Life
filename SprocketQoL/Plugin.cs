@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.5.0")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.6.0")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -31,7 +31,7 @@ public sealed class Plugin : BasePlugin
             try { harmony.PatchAll(feature); }
             catch (Exception ex) { Log.LogError($"{feature.Name} disabled, could not attach to the game: {ex}"); }
         }
-        Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration.");
+        Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo.");
     }
 }
 

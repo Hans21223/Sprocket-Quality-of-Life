@@ -198,6 +198,139 @@ static class CutTests
         Check(now[993] == was[993] + was[901], $"real merge: target has both cubes' faces ({now[993]})");
         Check(was.Where(p => p.Key != 993 && p.Key != 901).All(p => now[p.Key] == p.Value), "real merge: no other part's shape changes");
         Console.WriteLine($"  real merge replay: {was[993]} + {was[901]} faces -> {now[993]}, in place");
+
+        // An add-on merged into a turret body (a compartment): its faces join the turret's, the add-on part goes, and
+        // nothing else changes shape. A turret can't be merged into an add-on.
+        if (Backup("20260925-090307-1ef82734") is not { } turretDesign) return;
+        string design = File.ReadAllText(turretDesign.FullName);
+        var into = AddonEdits.PlanMerge(design, 426, new[] { 523 });
+        var before = AddonEdits.FaceCounts(design);
+        var after = AddonEdits.FaceCounts(into.DesignJson);
+        Check(after[426] == before[426] + before[523] && !after.ContainsKey(523), $"merge into a turret: {before[426]} + {before[523]} faces -> {after.GetValueOrDefault(426)}, add-on gone");
+        Check(before.Where(p => p.Key != 426 && p.Key != 523).All(p => after[p.Key] == p.Value), "merge into a turret: no other part's shape changes");
+        bool refused = false;
+        try { AddonEdits.PlanMerge(design, 523, new[] { 426 }); } catch (Exception) { refused = true; }
+        Check(refused, "a turret can't be merged into an add-on");
+        Console.WriteLine($"  merge into a turret: {before[426]} + {before[523]} faces -> {after[426]}, in place={into.Live}");
+    }
+
+    /// A design with mirror pairs: hull 1; add-on pair 2/3 (3 flipped); add-on pair 4/5 with a rivet and attached twins
+    /// 6/7; add-on 8 on the centre line. Shapes are off-centre so a wrongly mirrored copy shows.
+    static string MirrorDesign()
+    {
+        var objects = new JsonArray();
+        var blocks = new JsonArray();
+        var meshes = new JsonArray();
+        void Part(int vuid, int parent, string guid, int flags, int mirror, float[] pos, float[] rot, int block = 0)
+        {
+            var o = new JsonObject
+            {
+                ["guid"] = guid, ["vuid"] = vuid, ["pvuid"] = parent, ["flags"] = flags,
+                ["transform"] = new JsonObject
+                {
+                    ["mirrorVuid"] = mirror, ["pos"] = new JsonArray(pos.Select(x => (JsonNode?)x).ToArray()),
+                    ["rot"] = new JsonArray(rot.Append(0).Select(x => (JsonNode?)x).ToArray()), ["scale"] = new JsonArray(1f, 1f, 1f),
+                },
+            };
+            if (block > 0) o["structureBlueprintVuid"] = block;
+            objects.Add(o);
+        }
+        void Shape(int block, float radius, bool rivet)
+        {
+            var (md, _) = AddonEdits.Cylinder(radius, 0.2f, 5, 10);
+            var vs = md["mesh"]!["vertices"]!.AsArray();
+            for (int i = 0; i < vs.Count; i += 3) vs[i] = vs[i]!.GetValue<float>() + 0.15f;
+            if (rivet) md["rivets"]!["nodes"]!.AsArray().Add(new JsonObject { ["next"] = -1, ["prev"] = -1, ["face"] = 0, ["u"] = 0.2f, ["v"] = 0.3f, ["w"] = 0.5f, ["faceOffset"] = 2, ["profile"] = 0, ["flags"] = 2 });
+            meshes.Add(new JsonObject { ["vuid"] = 100 + block, ["meshData"] = md });
+            blocks.Add(new JsonObject { ["id"] = block, ["type"] = "structure", ["blueprint"] = new JsonObject { ["bodyMeshVuid"] = 100 + block, ["armourVolume"] = 1.0 } });
+        }
+        Shape(10, 0.8f, false); Shape(11, 0.2f, false); Shape(12, 0.1f, true); Shape(13, 0.1f, false);
+        const string other = "11111111-2222-3333-4444-555555555555";
+        Part(1, -1, Conversion.CompartmentGuid, 2, -1, new[] { 0f, 0, 0 }, new[] { 0f, 0, 0 }, 10);
+        Part(2, 1, Conversion.AddonGuid, 2, 3, new[] { -1f, 0.5f, 0.2f }, new[] { 0f, 30, 10 }, 11);
+        Part(3, 1, Conversion.AddonGuid, 3, 2, new[] { 1f, 0.5f, 0.2f }, new[] { 0f, -30, -10 }, 11);
+        Part(4, 1, Conversion.AddonGuid, 2, 5, new[] { -1.3f, 0.9f, 0.4f }, new[] { 5f, 12, 0 }, 12);
+        Part(5, 1, Conversion.AddonGuid, 3, 4, new[] { 1.3f, 0.9f, 0.4f }, new[] { 5f, -12, 0 }, 12);
+        Part(6, 4, other, 2, 7, new[] { 0.1f, 0.2f, 0 }, new[] { 0f, 20, 0 });
+        Part(7, 5, other, 2, 6, new[] { -0.1f, 0.2f, 0 }, new[] { 0f, -20, 0 });
+        Part(8, 1, Conversion.AddonGuid, 2, -1, new[] { 0f, 1.2f, 0 }, new[] { 0f, 0, 0 }, 13);
+        return new JsonObject { ["objects"] = objects, ["blueprints"] = blocks, ["meshes"] = meshes }.ToJsonString();
+    }
+
+    /// Every shape point and rivet of a design where it shows in the vehicle (flipped parts mirrored along their own x).
+    static List<Vector3> WorldPoints(string json)
+    {
+        var b = Conversion.Parse(json);
+        var objects = Conversion.Objects(b);
+        var world = Conversion.WorldMatrices(objects);
+        var points = new List<Vector3>();
+        foreach (var (v, o) in objects)
+        {
+            if (o["structureBlueprintVuid"] is not JsonValue id) continue;
+            var md = AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), id.GetValue<int>())["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!;
+            var m = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world[v] : world[v];
+            var vs = MeshVerts(md["mesh"]!.AsObject());
+            var faces = MeshFaces(md["mesh"]!.AsObject());
+            points.AddRange(vs.Select(p => Vector3.Transform(p, m)));
+            foreach (var n in md["rivets"]!["nodes"]!.AsArray())
+            {
+                var tri = MeshCut.RivetTriangles[n!["faceOffset"]!.GetValue<int>()];
+                var f = faces[n["face"]!.GetValue<int>()];
+                var at = n["u"]!.GetValue<float>() * vs[f[tri[0]]] + n["v"]!.GetValue<float>() * vs[f[tri[1]]] + n["w"]!.GetValue<float>() * vs[f[tri[2]]];
+                points.Add(Vector3.Transform(at, m) + new Vector3(0, 100, 0)); // rivets kept apart from shape points
+            }
+        }
+        return points;
+    }
+
+    internal static bool SamePoints(List<Vector3> a, List<Vector3> b)
+    {
+        if (a.Count != b.Count) return false;
+        var left = b.ToList();
+        foreach (var p in a)
+        {
+            int i = left.FindIndex(q => Vector3.Distance(p, q) < 1e-3f);
+            if (i < 0) return false;
+            left.RemoveAt(i);
+        }
+        return true;
+    }
+
+    /// Merging with mirror twins: every shape and rivet stays exactly where it showed, twins go together, links stay right.
+    static void CheckMirrorMerge()
+    {
+        string design = MirrorDesign();
+        var points = WorldPoints(design);
+        var faces = AddonEdits.FaceCounts(design);
+        JsonObject Obj(string json, int v) => Conversion.Objects(Conversion.Parse(json))[v];
+        int Mirror(string json, int v) => Obj(json, v)["transform"]!["mirrorVuid"]!.GetValue<int>();
+        foreach (var (what, target, others) in new (string, int, int[])[] { ("pair into pair", 2, new[] { 4 }), ("pair into pair, twins selected too", 2, new[] { 4, 5, 3 }), ("pair into its flipped side", 3, new[] { 5 }) })
+        {
+            var plan = AddonEdits.PlanMerge(design, target, others);
+            var now = AddonEdits.FaceCounts(plan.DesignJson);
+            Check(SamePoints(points, WorldPoints(plan.DesignJson)), $"{what}: every shape and rivet stays where it was");
+            Check(plan.Remove.OrderBy(x => x).SequenceEqual(new[] { 4, 5 }) && plan.MeshIds.Keys.OrderBy(x => x).SequenceEqual(new[] { 2, 3 }) && plan.Live, $"{what}: both add-ons go, both targets change in place");
+            Check(now[2] == faces[2] + faces[4] && now[3] == now[2] && Mirror(plan.DesignJson, 2) == 3, $"{what}: the pair shares the merged shape and stays linked");
+            Check(Obj(plan.DesignJson, 6)["pvuid"]!.GetValue<int>() == 2 && Obj(plan.DesignJson, 7)["pvuid"]!.GetValue<int>() == 3 && Mirror(plan.DesignJson, 6) == 7, $"{what}: attached twins move onto their side");
+        }
+        {
+            var plan = AddonEdits.PlanMerge(design, 1, new[] { 4 });
+            var now = AddonEdits.FaceCounts(plan.DesignJson);
+            Check(SamePoints(points, WorldPoints(plan.DesignJson)), "into the centre: both twins land where they showed");
+            Check(now[1] == faces[1] + 2 * faces[4] && plan.Remove.Count == 2 && Obj(plan.DesignJson, 7)["pvuid"]!.GetValue<int>() == 1, "into the centre: the hull takes both twins and their parts");
+            var hull = AddonEdits.MeshOf(Conversion.Parse(plan.DesignJson)["meshes"]!.AsArray(), 110)!["mesh"]!.AsObject();
+            var piece = AddonEdits.MeshOf(Conversion.Parse(design)["meshes"]!.AsArray(), 112)!["mesh"]!.AsObject();
+            var hullBefore = AddonEdits.MeshOf(Conversion.Parse(design)["meshes"]!.AsArray(), 110)!["mesh"]!.AsObject();
+            Check(Math.Abs(Volume(hull) - Volume(hullBefore) - 2 * Volume(piece)) < 1e-4, "into the centre: the mirrored copy isn't inside out");
+        }
+        {
+            var plan = AddonEdits.PlanMerge(design, 2, new[] { 4, 8 });
+            var now = AddonEdits.FaceCounts(plan.DesignJson);
+            Check(SamePoints(points, WorldPoints(plan.DesignJson)), "mixed: every shape stays where it was");
+            Check(now[2] == faces[2] + faces[4] + faces[8] && now[3] == faces[3] && now.ContainsKey(5) && !plan.Live, "mixed: only the target takes the selected add-ons");
+            Check(Mirror(plan.DesignJson, 2) == -1 && Mirror(plan.DesignJson, 3) == -1 && Mirror(plan.DesignJson, 5) == -1, "mixed: no twin link is left pointing at a changed pair or a removed part");
+        }
+        Console.WriteLine("mirror merges: pair into pair, into the centre, mixed checked");
     }
 
     static void CheckRealPocket(Action<JsonObject, string> checkRefs)
@@ -422,6 +555,7 @@ static class CutTests
         CheckFill();
         CheckRealPocket(checkRefs);
         CheckRealMerge();
+        CheckMirrorMerge();
         CheckHole("cut the top", Top, 1);
         CheckHole("cut right through", Through, 2);
         CheckHole("cut a side at an angle", Side, -1);

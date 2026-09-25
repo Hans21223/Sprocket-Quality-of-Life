@@ -740,7 +740,7 @@ public static class MeshCut
 
     // A rivet sits on one of its face's triangles by weights: faceOffset 0/+1 = corners (0,1,2), +2 = (2,3,0),
     // -1 = (2,3,1), -2 = (3,0,1) (worked out from saved designs: generated rivets land exactly `padding` in).
-    static readonly Dictionary<int, int[]> RivetTriangles = new() { [0] = new[] { 0, 1, 2 }, [1] = new[] { 0, 1, 2 }, [2] = new[] { 2, 3, 0 }, [-1] = new[] { 2, 3, 1 }, [-2] = new[] { 3, 0, 1 } };
+    internal static readonly Dictionary<int, int[]> RivetTriangles = new() { [0] = new[] { 0, 1, 2 }, [1] = new[] { 0, 1, 2 }, [2] = new[] { 2, 3, 0 }, [-1] = new[] { 2, 3, 1 }, [-2] = new[] { 3, 0, 1 } };
 
     static Vector3? RivetPosition(JsonObject node, List<Poly> faces, List<Vector3> verts)
     {

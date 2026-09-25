@@ -60,17 +60,19 @@ public sealed class DesignEditor : MonoBehaviour
         queued = RunLiveEdit;
     }
 
-    /// Ctrl+J, as in Blender: the other selected add-ons join the last one selected (the active one).
+    /// Ctrl+J, as in Blender: the selected add-ons join the last add-on, turret or hull selected (the active one).
     private void JoinHotkey()
     {
         var keys = UnityEngine.InputSystem.Keyboard.current;
         if (keys == null || !keys.ctrlKey.isPressed || !keys.jKey.wasPressedThisFrame) return;
+        var picked = SelectedParts();
         var addons = SelectedParts(Conversion.AddonGuid);
-        if (addons.Count < 2) { Say("Ctrl+J: select two or more add-ons; they join the last one you selected.", 5); return; }
-        int target = addons[^1];
-        var others = addons.Take(addons.Count - 1).ToList();
-        Plugin.ModLog.LogInfo($"Ctrl+J: joining {string.Join(", ", others)} into {target} (selection order {string.Join(", ", addons)})");
-        RequestLiveEdit("Merging add-ons", $"Merged {addons.Count} add-ons into the last one selected.", json => AddonEdits.PlanMerge(json, target, others));
+        var bodies = SelectedParts(Conversion.CompartmentGuid);
+        int target = picked.LastOrDefault(v => addons.Contains(v) || bodies.Contains(v), -1);
+        var others = addons.Where(v => v != target).ToList();
+        if (target < 0 || others.Count == 0) { Say("Ctrl+J: select add-ons, then last the add-on, turret or hull they join.", 5); return; }
+        Plugin.ModLog.LogInfo($"Ctrl+J: joining {string.Join(", ", others)} into {target} (selection order {string.Join(", ", picked)})");
+        RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into the last part selected.", json => AddonEdits.PlanMerge(json, target, others));
     }
 
     internal void RequestRestore()
@@ -144,6 +146,7 @@ public sealed class DesignEditor : MonoBehaviour
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
             if (ready && !busy) JoinHotkey();
             if (ready) { MeshTools.Keys(); ExplodedView.Keys(); }
+            PhotoShot.Update();
             if (pending != null && pending.IsCompleted)
             {
                 var task = pending; pending = null; busy = false;
@@ -312,15 +315,16 @@ public sealed class DesignEditor : MonoBehaviour
         return found;
     }
 
-    /// A changed part must have its own live shape: if another part shared it, swapping it would change that part too.
-    /// Checked on the live objects, then by a trial swap and a save to memory, where only the changed parts may differ.
+    /// A changed part's live shape may only be shared with other changed parts (its mirror twin): otherwise swapping it
+    /// would change that part too. Checked on the live objects, then by a trial swap and a save to memory, where only
+    /// the changed parts may differ.
     private void CheckOnlyTargetsChange(List<MeshSwap> changes, AddonEdits.EditPlan plan, string original, Dictionary<int, VehicleObject> byId)
     {
-        var owners = new Dictionary<IntPtr, int>();
-        foreach (var obj in byId.Values)
+        var owners = new Dictionary<IntPtr, List<int>>();
+        foreach (var (vuid, obj) in byId)
             foreach (var s in Each(obj.Components).Select(c => c?.TryCast<PlateStructure>()).Where(s => s?.Mesh != null))
-                owners[s!.Mesh.Pointer] = owners.GetValueOrDefault(s.Mesh.Pointer) + 1;
-        if (changes.Any(c => owners.GetValueOrDefault(c.Mesh.Pointer) > 1)) throw new Exception("a changed part shares its live shape with another part");
+                (owners.TryGetValue(s!.Mesh.Pointer, out var list) ? list : owners[s.Mesh.Pointer] = new()).Add(vuid);
+        if (changes.Any(c => owners[c.Mesh.Pointer].Any(v => !plan.MeshIds.ContainsKey(v)))) throw new Exception("a changed part shares its live shape with another part");
 
         Swap(changes, true, "trial of " + editName);
         string trial;
@@ -373,6 +377,7 @@ public sealed class DesignEditor : MonoBehaviour
     // Result message and the hotkeys box; the controls live in the game's inspector.
     public void OnGUI()
     {
+        if (PhotoShot.Capturing) return; // nothing of ours in the photo
         Ui.Guard("Hotkeys", Hotkeys.DrawBox);
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;
         float width = Math.Min(620, Screen.width - 40);

@@ -163,30 +163,26 @@ foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\
     var addons = objs.Values.Where(o => Conversion.GuidOf(o) == Conversion.AddonGuid && Freeform(o)).Select(o => o["vuid"]!.GetValue<int>()).ToList();
     if (addons.Count < 2) continue;
     int target = addons[0];
-    var others = addons.Skip(1).Where(v => !Above(v, target)).Take(2).ToList();
+    // (Not the target's own mirror twin: that one isn't merged into it.)
+    var others = addons.Skip(1).Where(v => !Above(v, target) && objs[target]["transform"]!["mirrorVuid"]?.GetValue<int>() != v).Take(2).ToList();
     if (others.Count == 0) continue;
     var before = Conversion.WorldMatrices(objs);
-    var expected = others.SelectMany(v => Verts(bp, objs[v]).Select(p => Vector3.Transform(p, before[v]))).ToList();
-    int Faces(JsonObject b, JsonObject o)
-    {
-        int block = o["structureBlueprintVuid"]!.GetValue<int>();
-        int mesh = b["blueprints"]!.AsArray().First(x => x!["id"]!.GetValue<int>() == block)!["blueprint"]!["bodyMeshVuid"]!.GetValue<int>();
-        return b["meshes"]!.AsArray().First(x => x!["vuid"]!.GetValue<int>() == mesh)!["meshData"]!["mesh"]!["faces"]!.AsArray().Count;
-    }
-    int facesBefore = new[] { target }.Concat(others).Sum(v => Faces(bp, objs[v]));
+    // Where a part's points show: a flipped part mirrors its shape along its own x.
+    IEnumerable<Vector3> Shown(JsonObject b, JsonObject o, Matrix4x4 world) =>
+        Verts(b, o).Select(p => Vector3.Transform(p, (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world : world));
     var mergePlan = AddonEdits.PlanMerge(json, target, others);
     var merged = Conversion.Parse(mergePlan.DesignJson);
-    Check(mergePlan.Remove.OrderBy(v => v).SequenceEqual(others.OrderBy(v => v)) && mergePlan.MeshIds.ContainsKey(target), "merge plan: removes the merged add-ons, reshapes the target");
-    Check(mergePlan.Reparent.All(r => Conversion.Objects(merged)[r.Child]["pvuid"]!.GetValue<int>() == target && r.Parent == target), "merge plan: parts it moves end up on the target");
-    Check(Faces(merged, Conversion.Objects(merged)[target]) == facesBefore, "merge keeps every face");
     var objsAfter = Conversion.Objects(merged);
-    Check(others.All(v => !objsAfter.ContainsKey(v)) && objsAfter.Count == objs.Count - others.Count, "merged parts removed");
+    Check(others.All(mergePlan.Remove.Contains) && mergePlan.MeshIds.ContainsKey(target), "merge plan: removes the merged add-ons, reshapes the target");
+    Check(mergePlan.Reparent.All(r => objsAfter[r.Child]["pvuid"]!.GetValue<int>() == r.Parent && mergePlan.MeshIds.ContainsKey(r.Parent)), "merge plan: parts it moves end up on a merged part");
+    Check(mergePlan.Remove.All(v => !objsAfter.ContainsKey(v)) && objsAfter.Count == objs.Count - mergePlan.Remove.Count, "merged parts removed");
     CheckRefs(merged, "merge");
     var after = Conversion.WorldMatrices(objsAfter);
     Check(objsAfter.Keys.All(k => Conversion.Near(before[k], after[k])), "merge: no surviving part moved");
-    var got = Verts(merged, objsAfter[target]).Select(p => Vector3.Transform(p, after[target])).ToList();
-    int start = got.Count - expected.Count;
-    Check(start >= 0 && expected.Select((p, i) => Vector3.Distance(p, got[start + i])).All(d => d < 1e-3), "merged vertices stay put in the world");
+    // Every point of the merged parts and the target (and its twin) shows where it did, and nothing else is added.
+    var expected = mergePlan.MeshIds.Keys.Concat(mergePlan.Remove).SelectMany(v => Shown(bp, objs[v], before[v])).ToList();
+    var got = mergePlan.MeshIds.Keys.SelectMany(v => Shown(merged, objsAfter[v], after[v])).ToList();
+    Check(got.Count == expected.Count && CutTests.SamePoints(expected, got), "merged vertices stay put in the world");
     merges++;
 }
 Check(merges > 0, "found real add-ons to merge");

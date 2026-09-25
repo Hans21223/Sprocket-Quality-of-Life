@@ -39,7 +39,10 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   Select several turrets and it converts them all at once.
 - **Merge add-ons:** select two or more add-ons. The panel of the one you clicked offers to merge the others into
   it, keeping their shape, position and armour. Parts attached to them move onto it. Happens in place; Ctrl+Z undoes it.
-  **Ctrl+J** does the same as Blender's join: all selected add-ons merge into the last one you selected.
+  **Ctrl+J** does the same as Blender's join: all selected add-ons merge into the last one you selected. Add-ons can
+  merge into a turret or hull too (select it last, or open its panel): they turn with it, and their inside counts as
+  its inside. Mirror twins: when the target and every merged add-on have twins, the twins merge on the other side too;
+  into a centre part (turret, hull), each add-on brings its twin, mirrored into place.
 - **Cut with this add-on (Boolean cut):** place an add-on through a plate, and its panel offers **Cut hole** or
   **Cut pocket (with walls)** out of the structure it sits on (or out of the other selected parts). Any closed shape
   works, dents included. A pocket turns the add-on's surface inside the structure into plates with the add-on's
@@ -82,10 +85,22 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   - **Orthographic view (Numpad 5):** no perspective. Scroll zooms as usual (sized by the camera's orbit distance,
     never the ground), and **Numpad + / −** or the **Ortho zoom** slider zoom further, past the game's closest
     distance. With **Ortho: whole view** (on by default) the camera never cuts into the vehicle when zoomed in.
+    With **Ortho: straight views** (on by default) it snaps to front, back, sides or top, and orbiting flips between
+    them; **Numpad 1 / 3 / 7** jump to front, side and top (with **Ctrl**: back, the other side, and from below), and **Numpad 9** flips to the opposite view (top to below,
+    front to back).
 - **Exploded view (F2):** the running gear (tracks, road wheels, sprockets, idlers, suspension) stays on the ground and
   the hull lifts off it; every other part moves away from the part it's on, straight up or down or outward on the
   level, and parts on parts go further; **F3 / F4** bring them closer or further apart (the spread is remembered). F2 again
   puts everything back. Only what's drawn moves: whenever the design is saved or read, the parts go back first.
+- **Shadows off / on (F5):** turns off every light's shadows and back on, exactly as they were. While they're off, a
+  shadowless headlight (the sun's colour, 60% of its strength) points wherever the camera looks, so the sides turned
+  away from the sun aren't black.
+- **Flashlight (F6):** a spotlight from the camera that points wherever the mouse points, putting 80% of the sun's
+  light on whatever it lands on, near or far. F6 again turns it off.
+- **Max-quality photo (F8 in photo mode):** takes a photo with every graphics quality setting at its best, without
+  leaving photo mode: the settings go up and the photo mode overlay hides for about a second, then both come back as
+  they were. Resolution, anti-aliasing type and looks (vignette, film grain, depth of field on or off) stay yours.
+  Saved as PNG in `Documents\My Games\Sprocket\Photos`.
 - **Copy turrets with Alt:** the game's turret ring part says it can't be duplicated; the mod lets it, in memory, and
   a copied ring brings everything on it (turret body, guns and the rest), each on the copy of its parent.
 - **Hotkeys:** while a hand-made structure is selected, a box beside the panel lists the mesh editing keys,

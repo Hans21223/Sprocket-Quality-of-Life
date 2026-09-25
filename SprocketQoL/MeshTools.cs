@@ -1,4 +1,5 @@
 using HarmonyLib;
+using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Sprocket.MeshEditing;
 using Sprocket.PartImporting;
@@ -304,7 +305,16 @@ public static class MeshTools
         if (keys == null || Typing()) return;
         var e = Hotkeys.Current;
         if (e != null && halfGrid) KeepHalfGrid(e);
-        if (keys.ctrlKey.isPressed || keys.altKey.isPressed || keys.shiftKey.isPressed) return; // those belong to the game
+        bool ctrl = keys.ctrlKey.isPressed;
+        if (keys.f5Key.wasPressedThisFrame) ToggleShadows();
+        if (keys.f6Key.wasPressedThisFrame) ToggleFlashlight();
+        AimFlashlight();
+        if (headlight != null && Camera.main != null) headlight.transform.rotation = Camera.main.transform.rotation;
+        if (keys.numpad1Key.wasPressedThisFrame) LookFrom(ctrl ? Vector3.forward : Vector3.back);   // front (Ctrl: back)
+        if (keys.numpad3Key.wasPressedThisFrame) LookFrom(ctrl ? Vector3.right : Vector3.left);     // right side (Ctrl: left)
+        if (keys.numpad7Key.wasPressedThisFrame) LookFrom(ctrl ? Vector3.up : Vector3.down);         // top (Ctrl: from below)
+        if (keys.numpad9Key.wasPressedThisFrame) LookFrom(-(held ?? shown));                         // the opposite view
+        if (ctrl || keys.altKey.isPressed || keys.shiftKey.isPressed) return; // those belong to the game
         if (keys.numpad5Key.wasPressedThisFrame) ToggleOrtho();
         if (ortho && (keys.numpadPlusKey.wasPressedThisFrame || keys.numpadMinusKey.wasPressedThisFrame))
         {
@@ -340,9 +350,143 @@ public static class MeshTools
         if (Math.Abs(now - half) > half * 0.01f) e.meshEditor.GridSize = half;
     }
 
+    // ---------- shadows (F5) ----------
+
+    // Lights whose shadows are off, with what they had, to give it back exactly.
+    static readonly List<(Light Light, LightShadows Was)> shadowless = new();
+
+    static void ToggleShadows() => Ui.Guard("Shadows", () =>
+    {
+        if (shadowless.Count > 0)
+        {
+            foreach (var (light, was) in shadowless)
+                if (light != null)
+                {
+                    light.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalLightData>()?.EnableShadows(true);
+                    light.shadows = was;
+                }
+            DesignEditor.Instance?.Say($"Shadows back on ({shadowless.Count} lights)", 3);
+            shadowless.Clear();
+            if (headlight != null) UnityEngine.Object.Destroy(headlight);
+            headlight = null;
+            return;
+        }
+        Light? sun = null;
+        foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Light>()))
+            if (o.TryCast<Light>() is { } light && light.shadows != LightShadows.None)
+            {
+                if (light.type == LightType.Directional && (sun == null || light.intensity > sun.intensity)) sun = light;
+                shadowless.Add((light, light.shadows));
+                light.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalLightData>()?.EnableShadows(false);
+                light.shadows = LightShadows.None;
+            }
+        if (sun != null) headlight = Headlight(sun);
+        DesignEditor.Instance?.Say(shadowless.Count > 0 ? $"Shadows off ({shadowless.Count} lights), F5 to turn them back on" : "No light casting shadows found", 3);
+        Plugin.ModLog.LogInfo($"Shadows off on {shadowless.Count} lights");
+    });
+
+    // With shadows off, a headlight lights whatever the camera looks at, so the sides turned from the sun aren't black.
+    static GameObject? headlight;
+    const float HeadlightShare = 0.6f; // of the sun's strength
+
+    /// A new shadowless light with the sun's colour and part of its strength (a new object, not a copy of the sun's,
+    /// so none of the game's scripts on the sun run twice). Turned with the camera every frame by Keys.
+    static GameObject Headlight(Light sun)
+    {
+        var go = new GameObject("Quality of Life headlight");
+        var light = go.AddComponent<Light>();
+        light.type = LightType.Directional;
+        light.color = sun.color;
+        light.useColorTemperature = sun.useColorTemperature;
+        light.colorTemperature = sun.colorTemperature;
+        light.shadows = LightShadows.None;
+        var hd = LikeTheSun(light, sun);
+        hd.intensity = SunLux(sun) * HeadlightShare;
+        hd.EnableShadows(false);
+        light.shadows = LightShadows.None;
+        if (Camera.main != null) go.transform.rotation = Camera.main.transform.rotation;
+        Plugin.ModLog.LogInfo($"Shadows off: headlight at {hd.intensity:0} ({HeadlightShare:P0} of the sun '{sun.name}')");
+        return go;
+    }
+
+    /// A new light lights what the sun lights: the same light layers (HDRP lights only reach objects on their layers,
+    /// and a new light starts on the default one). Returns its HDRP settings.
+    static UnityEngine.Rendering.HighDefinition.HDAdditionalLightData LikeTheSun(Light light, Light sun)
+    {
+        light.cullingMask = sun.cullingMask;
+        light.renderingLayerMask = sun.renderingLayerMask;
+        var hd = light.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalLightData>() ?? light.gameObject.AddComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalLightData>();
+        if (sun.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalLightData>() is { } sunHd) hd.lightlayersMask = sunHd.lightlayersMask;
+        return hd;
+    }
+
+    static float SunLux(Light sun) => sun.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalLightData>() is { } hd ? hd.intensity : sun.intensity;
+
+    /// The brightest directional light that isn't one of ours.
+    static Light? Sun()
+    {
+        Light? sun = null;
+        foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Light>()))
+            if (o.TryCast<Light>() is { } light && light.type == LightType.Directional && !light.name.StartsWith("Quality of Life") && (sun == null || light.intensity > sun.intensity)) sun = light;
+        return sun;
+    }
+
+    // ---------- mouse flashlight (F6) ----------
+
+    static GameObject? flashlight;
+    static Light? flashLight;
+    static UnityEngine.Rendering.HighDefinition.HDAdditionalLightData? flashHd;
+    static float flashLux;
+    const float FlashShare = 0.8f; // of the sun's light, landing on what the mouse points at
+
+    static void ToggleFlashlight() => Ui.Guard("Flashlight", () =>
+    {
+        if (flashlight != null)
+        {
+            UnityEngine.Object.Destroy(flashlight);
+            flashlight = null;
+            DesignEditor.Instance?.Say("Flashlight off", 2);
+            return;
+        }
+        var sun = Sun();
+        if (sun == null) { DesignEditor.Instance?.Say("Flashlight: no sun in this scene to match", 3); return; }
+        flashlight = new GameObject("Quality of Life flashlight");
+        flashLight = flashlight.AddComponent<Light>();
+        flashLight.type = LightType.Spot;
+        flashLight.spotAngle = 40;
+        flashLight.color = sun.color;
+        flashLight.useColorTemperature = sun.useColorTemperature;
+        flashLight.colorTemperature = sun.colorTemperature;
+        flashLight.shadows = LightShadows.None;
+        flashHd = LikeTheSun(flashLight, sun);
+        flashHd.EnableShadows(false);
+        flashLight.shadows = LightShadows.None;
+        flashLux = SunLux(sun);
+        AimFlashlight();
+        DesignEditor.Instance?.Say("Flashlight on: it points where the mouse points (F6 to turn off)", 3);
+        Plugin.ModLog.LogInfo($"Flashlight on ({FlashShare:P0} of the sun's {flashLux:0} lux where it lands)");
+    });
+
+    /// From the camera along the mouse, as strong as needed to put a set share of the sun's light on what it hits
+    /// (candela = lux × distance²), so it's as bright near or far.
+    static void AimFlashlight()
+    {
+        if (flashlight == null || flashLight == null || flashHd == null) return;
+        var cam = Camera.main;
+        if (cam == null) return;
+        var ray = Mouse.current is { } mouse ? cam.ScreenPointToRay(mouse.position.ReadValue()) : cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
+        float distance = float.MaxValue;
+        foreach (var hit in Physics.RaycastAll(ray, 2000f))
+            if (hit.distance < distance && hit.collider != null) distance = hit.distance;
+        if (distance == float.MaxValue) distance = (orbit?.TargetDistance ?? 10) + (ortho && orthoWhole ? PullBack : 0);
+        flashlight.transform.SetPositionAndRotation(ray.origin, Quaternion.LookRotation(ray.direction));
+        flashLight.range = distance * 1.5f + 5;
+        flashHd.SetIntensity(flashLux * FlashShare * distance * distance, UnityEngine.Rendering.LightUnit.Candela);
+    }
+
     // ---------- orthographic view ----------
 
-    static bool ortho, orthoWhole = true, orthoLogged;
+    static bool ortho, orthoWhole = true, orthoLock = true, orthoLogged;
     static float orthoZoom = 1; // on top of the orbit distance, which stops at the game's closest zoom
     static float? farBefore;
     const float PullBack = 100; // metres the camera steps back in orthographic view, so it never cuts into the vehicle
@@ -351,7 +495,7 @@ public static class MeshTools
     static void ToggleOrtho()
     {
         ortho = !ortho;
-        if (!ortho) PutCameraBack();
+        if (!ortho) { held = null; PutCameraBack(); }
         Plugin.ModLog.LogInfo($"Orthographic view {(ortho ? "on" : "off")}");
     }
 
@@ -361,8 +505,48 @@ public static class MeshTools
         var cam = Camera.main;
         if (cam == null) return;
         cam.orthographic = false;
-        if (orbit != null) cam.transform.position = orbit.AppliedPosition;
+        if (orbit != null) cam.transform.SetPositionAndRotation(orbit.AppliedPosition, orbit.AppliedRotation);
         if (farBefore is { } far) { cam.farClipPlane = far; farBefore = null; }
+        Ground(cam, default, hide: false);
+    }
+
+    // The ground, hidden while looking from below: by its layer, or by its own renderers if a vehicle part shares the
+    // layer (then hiding the layer would hide the part too).
+    static int? groundLayer;
+    static int maskBefore;
+    static bool groundTried;
+    static readonly List<Renderer> groundHidden = new();
+
+    static void Ground(Camera cam, Vector3 at, bool hide)
+    {
+        if (!hide)
+        {
+            if (groundLayer != null) { cam.cullingMask = maskBefore; groundLayer = null; }
+            foreach (var r in groundHidden) if (r != null) r.enabled = true;
+            groundHidden.Clear();
+            groundTried = false;
+            return;
+        }
+        if (groundTried) return;
+        groundTried = true;
+        // The first thing under the point in view that isn't part of the vehicle.
+        Collider? ground = null;
+        foreach (var hit in Physics.RaycastAll(at + Vector3.up * 50, Vector3.down, 1000f).OrderBy(h => h.distance))
+            if (hit.collider != null && hit.collider.GetComponentInParent<Sprocket.Vehicles.VehicleObject>() == null) { ground = hit.collider; break; }
+        if (ground == null) { Plugin.ModLog.LogInfo("View from below: found no ground under the vehicle"); return; }
+        int layer = ground.gameObject.layer;
+        bool shared = DesignEditor.Instance?.AllParts().Any(p => p.GetComponentsInChildren<Renderer>().Any(r => r.gameObject.layer == layer)) == true;
+        if (!shared)
+        {
+            maskBefore = cam.cullingMask;
+            cam.cullingMask &= ~(1 << layer);
+            groundLayer = layer;
+        }
+        else
+            foreach (var r in ground.GetComponentsInChildren<Renderer>().Concat(ground.GetComponentsInParent<Renderer>()))
+                if (r.enabled) { r.enabled = false; groundHidden.Add(r); }
+        Plugin.ModLog.LogInfo($"View from below: hiding the ground '{ground.gameObject.name}' " +
+                              (shared ? $"({groundHidden.Count} of its renderers; a vehicle part shares its layer {layer})" : $"(layer {layer})"));
     }
 
     /// Each time the game's orbit camera places itself: in orthographic view the view is the size a perspective view
@@ -382,12 +566,57 @@ public static class MeshTools
             Plugin.ModLog.LogInfo($"Orthographic view: orbit distance {__instance.Distance:0.00} m, camera {Vector3.Distance(cam.transform.position, __instance.AppliedPosition):0.000} m from where the orbit put it");
         }
         cam.orthographic = true;
-        cam.orthographicSize = Math.Max(0.005f, __instance.Distance * MathF.Tan(cam.fieldOfView * MathF.PI / 360) / orthoZoom);
-        if (!orthoWhole) return;
+        // Sized by the zoom the player set (the target distance), not the distance the orbit is at right now: that one
+        // moves a little every frame as the camera keeps out of parts, and would shake the view.
+        cam.orthographicSize = Math.Max(0.005f, __instance.TargetDistance * MathF.Tan(cam.fieldOfView * MathF.PI / 360) / orthoZoom);
+        float back = orthoWhole ? PullBack : 0;
+        // Where the orbit is heading: it only changes when the player turns the camera, not while it's still easing.
+        var aim = __instance.TargetRotation * Vector3.forward;
+        if (held != null && Vector3.Angle(aim, heldAim) > 2) held = null; // the player orbited: back to snapping
+        if (orthoLock || held != null)
+        {
+            // A view picked with Numpad 1 / 3 / 7, else the straight view nearest to where the orbit is heading; at the
+            // point the orbit is heading to look at (steady: no easing or shake in it), so panning still works.
+            var at = __instance.TargetPosition + aim * __instance.TargetDistance;
+            var dir = held ?? Straight.OrderByDescending(d => Vector3.Dot(d, aim)).First();
+            shown = dir;
+            // Looking straight down or up, the vehicle's front is at the top of the screen.
+            cam.transform.rotation = Quaternion.LookRotation(dir, Mathf.Abs(dir.y) > 0.5f ? Vector3.forward : Vector3.up);
+            cam.transform.position = at - dir * (__instance.TargetDistance + back);
+            Ground(cam, at, hide: dir.y > 0.5f); // from below, the ground is in the way
+        }
+        // Where the game puts the camera, set whole every time (the game doesn't always set it again, so a step taken
+        // from wherever the camera is would add up and fly away), then straight back along that same view: an
+        // orthographic picture doesn't change along its own view, so this can't shake either.
+        else
+        {
+            var rotation = __instance.AppliedRotation;
+            cam.transform.SetPositionAndRotation(__instance.AppliedPosition - rotation * Vector3.forward * back, rotation);
+            Ground(cam, default, hide: false);
+        }
+        if (back <= 0) return;
         farBefore ??= cam.farClipPlane;
-        cam.transform.position = __instance.AppliedPosition - cam.transform.forward * PullBack;
-        cam.farClipPlane = Math.Max(farBefore.Value, __instance.Distance + PullBack + 1000);
+        cam.farClipPlane = Math.Max(farBefore.Value, __instance.Distance + back + 1000);
     });
+
+    // The straight views, as the direction the camera looks: from the front, back, right, left, and from above.
+    // (From below only with Ctrl+Numpad 7: the game's orbit camera can't go under the ground.)
+    static readonly Vector3[] Straight = { Vector3.back, Vector3.forward, Vector3.left, Vector3.right, Vector3.down };
+
+    // A view picked with Numpad 1 / 3 / 7, held until the player turns the camera (the orbit's own heading then).
+    static Vector3? held;
+    static Vector3 shown = Vector3.back; // the straight view on screen
+    static Vector3 heldAim;
+
+    /// Numpad 1 / 3 / 7 (Ctrl: the opposite side): orthographic view from the front, the side or the top. The game's
+    /// orbit camera isn't turned (it would ease back to its own heading); the view is held until you orbit.
+    static void LookFrom(Vector3 dir)
+    {
+        if (!ortho) ToggleOrtho();
+        held = dir;
+        Plugin.ModLog.LogInfo($"Orthographic view held looking {dir} (Ctrl {(Keyboard.current?.ctrlKey.isPressed == true ? "held" : "not held")})");
+        heldAim = orbit != null ? orbit.TargetRotation * Vector3.forward : Vector3.forward;
+    }
 
     // ---------- proportional editing ----------
 
@@ -505,6 +734,9 @@ public static class MeshTools
             halfGrid = v;
             if (!v && gridBefore is { } before) { __instance.meshEditor.GridSize = before; gridBefore = null; }
         }), "Snapping (hold Ctrl while moving) uses a 0.5 mm grid instead of the game's smallest, 1 mm.");
+        ui.ToggleField("Ortho: straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
+            "Orthographic view snaps to front, back, sides or top (orbiting flips between them). Numpad 1 / 3 / 7: front, side, top; " +
+            "with Ctrl, back and the other side. Off: orbit freely.");
         ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100));
         ui.ToggleField("Ortho: whole view", orthoWhole, Ui.BoolCallback(v =>
         {

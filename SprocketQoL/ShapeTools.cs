@@ -16,18 +16,22 @@ public static class ShapeTools
         var part = __instance.Component.VehicleObject;
         var editor = DesignEditor.Instance;
         var ui = layout.TryCast<IGUIElementDrawer>();
-        if (editor == null || ui == null || part.GUID != Conversion.AddonGuid) return;
+        if (editor == null || ui == null || part.GUID is not (Conversion.AddonGuid or Conversion.CompartmentGuid)) return;
         int addon = (int)part.VUID;
-        Ui.Section(layout, "Merge add-ons");
+        bool body = part.GUID == Conversion.CompartmentGuid; // a turret or hull: add-ons can merge into it
         var others = editor.SelectedParts(Conversion.AddonGuid).Where(v => v != addon).ToList();
+        if (body && others.Count == 0) return; // only offered when add-ons are selected with it
+        Ui.Section(layout, body ? "Merge add-ons into this" : "Merge add-ons");
         if (others.Count == 0) ui.InfoField("Select other add-ons too to merge them into this one.\nCtrl+J merges all selected into the last one selected.", 2);
         else
         {
-            var tip = new UITooltip("Merge add-ons",
-                "The other selected add-ons become part of this one: same shape, place and armour. Parts attached to them move onto this one.");
+            var tip = new UITooltip("Merge add-ons", body
+                ? "The selected add-ons become part of this turret or hull: same shape, place and armour, and they turn with it. Their inside counts as this part's inside. Mirror twins come along."
+                : "The other selected add-ons become part of this one: same shape, place and armour. Parts attached to them move onto this one. If this add-on and the others all have mirror twins, the twins merge the same way.");
             ui.Button($"Merge {others.Count} selected add-on{(others.Count == 1 ? "" : "s")} into this one", Ui.Callback(() =>
-                editor.RequestLiveEdit("Merging add-ons", $"Merged {others.Count + 1} add-ons into one.", json => AddonEdits.PlanMerge(json, addon, others))), ref tip);
+                editor.RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into part {addon}.", json => AddonEdits.PlanMerge(json, addon, others))), ref tip);
         }
+        if (body) return; // cutting with a part is for add-ons
 
         Ui.Section(layout, "Cut with this add-on");
         var targets = editor.SelectedParts().Where(v => v != addon).ToList();

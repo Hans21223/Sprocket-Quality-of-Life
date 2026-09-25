@@ -19,10 +19,15 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   (or one height / side / length), T loop cut through the ring of quads a selected edge crosses, I inset selected
   faces, V bevel selected edges into chamfer strips, U select linked flat faces, O proportional editing (moving
   points pulls their neighbours, radius in the panel). Also a 0.5 mm snap grid, and Numpad 5 for an
-  orthographic view (Numpad + / - zoom it; it never cuts into the vehicle).
+  orthographic view (Numpad + / - zoom it; it never cuts into the vehicle; it snaps to front / side / top,
+  Numpad 1 / 3 / 7, Ctrl for back / other side / from below, Numpad 9 the opposite view).
 - Exploded view: F2 pulls the parts apart to see inside, tracks and wheels staying on the ground (F3 / F4 closer /
   further), F2 again puts them back.
   Only what's drawn moves; saving is never affected.
+- F5 turns shadows off (with a headlight from the camera, so no side is black) and back on.
+- F6 turns on a flashlight that points where the mouse points (F6 again turns it off).
+- F8 in photo mode takes a photo at the best graphics settings without leaving photo mode (settings and
+  overlay come back after). Saved in Documents\My Games\Sprocket\Photos.
 - Turrets can be copied with Alt like other parts, with everything on them (turret body, guns...).
 - Hotkeys box beside the panel: the mesh editing keys, including hidden ones like B (box select) and
   C (circle select). x closes it, F1 shows or hides it.
@@ -31,7 +36,9 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 
 ADD-ON TOOLS
 - Merge add-ons: folds the selected add-ons into one, keeping their shape, position and armour.
-  Ctrl+J (like Blender's join) merges all selected add-ons into the last one you selected.
+  Ctrl+J (like Blender's join) merges all selected add-ons into the last one you selected; that can be a
+  turret or hull too. Mirror twins merge together: on both sides when the target has a twin, or both
+  into a centre part.
 - Boolean cut: uses an add-on to cut a hole, or a pocket with walls and a floor, into the structure under it.
   Any closed shape works, and rivets move onto the new faces.
 
