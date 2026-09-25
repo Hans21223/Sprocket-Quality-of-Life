@@ -7,6 +7,8 @@
     <!-- A Sprocket folder with a working BepInEx 6 IL2CPP that has been started once (so BepInEx\interop exists).
          Override per build: dotnet build -p:GameDir="D:\Games\Sprocket" -->
     <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Sprocket</GameDir>
+    <!-- Builds record /kit/... instead of your own folder path (the compiler writes the debug file's path into the DLL). -->
+    <PathMap>$(MSBuildThisFileDirectory)=/kit/</PathMap>
   </PropertyGroup>
   <ItemGroup>
     <!-- Compile against the game's BepInEx; these are already in the game, so don't copy them into the mod. -->

@@ -38,18 +38,41 @@ public static class AddonEdits
 
     /// What an edit changes, so the game can apply it in place as one undoable step: the edited design, the mesh id of
     /// each part whose shape changed (and its face count before), parts to remove, parts to move onto a new parent,
-    /// and whether in place is possible (not when a changed part shares its mesh with another part).
+    /// and whether in place is possible (not when a changed part shares its settings block with another part).
     public sealed record EditPlan(string DesignJson, Dictionary<int, int> MeshIds, Dictionary<int, int> OldFaces, List<int> Remove,
                                   List<(int Child, int Parent)> Reparent, bool Live, int Focus, string Summary);
 
-    /// Whether part `id`'s mesh is its own (no mirror twin or copy shares its settings block or mesh).
+    /// Whether part `id`'s settings block is its own (no mirror twin or copy shares it). A mesh shared only in the saved
+    /// file (every unedited palette cube shares one) is fine: in the game each part has its own, checked when applying.
     static bool OwnsMesh(JsonObject b, Dictionary<int, JsonObject> objects, int id)
     {
-        var blocks = b["blueprints"]!.AsArray();
         int blockId = Conversion.Id(objects[id], "structureBlueprintVuid");
-        int meshId = Conversion.Id(Block(blocks, blockId)["blueprint"]!, "bodyMeshVuid");
-        return objects.Values.Count(o => o["structureBlueprintVuid"]?.GetValue<int>() == blockId) == 1
-            && blocks.Count(x => x!["type"]?.GetValue<string>() == "structure" && x["blueprint"]?["bodyMeshVuid"]?.GetValue<int>() == meshId) == 1;
+        return objects.Values.Count(o => o["structureBlueprintVuid"]?.GetValue<int>() == blockId) == 1;
+    }
+
+    /// Face count of every part's hand-made shape in a design (parts without one are left out).
+    public static Dictionary<int, int> FaceCounts(string json)
+    {
+        var b = Conversion.Parse(json);
+        var blocks = b["blueprints"]!.AsArray();
+        var meshes = b["meshes"]!.AsArray();
+        var counts = new Dictionary<int, int>();
+        foreach (var (vuid, o) in Conversion.Objects(b))
+        {
+            var id = o["structureBlueprintVuid"];
+            var block = id == null ? null : blocks.FirstOrDefault(x => x?["id"]?.GetValue<int>() == id.GetValue<int>());
+            var mesh = block?["blueprint"]?["bodyMeshVuid"];
+            if (mesh != null && MeshOf(meshes, mesh.GetValue<int>())?["mesh"]?["faces"] is JsonArray faces) counts[vuid] = faces.Count;
+        }
+        return counts;
+    }
+
+    /// The mesh number part `vuid`'s structure uses in a design.
+    public static int MeshIdOf(string json, int vuid)
+    {
+        var b = Conversion.Parse(json);
+        var block = Block(b["blueprints"]!.AsArray(), Conversion.Id(Conversion.Objects(b)[vuid], "structureBlueprintVuid"));
+        return Conversion.Id(block["blueprint"]!, "bodyMeshVuid");
     }
 
     /// Folds add-ons `others` into `target`: their faces join target's shape at the same place in the world (each keeps
@@ -160,7 +183,7 @@ public static class AddonEdits
         {
             if (!Matrix4x4.Invert(before[target], out var intoTarget)) throw new Exception($"Part {target}'s transform can't be inverted.");
             var solids = shapes.Select(s => Outward(s.World.Select(p => Vector3.Transform(p, intoTarget)).ToList(), s.Faces, s.Thickness, s.Modes)).ToList();
-            live &= OwnsMesh(b, objects, target); // a part sharing its mesh with a copy only gets its own mesh by reloading
+            live &= OwnsMesh(b, objects, target); // a part sharing its settings with a twin only gets its own by reloading
             var (structure, meshData) = OwnMesh(b, objects, target, "cut");
             int facesBefore = meshData["mesh"]!["faces"]!.AsArray().Count;
             var result = MeshCut.Cut(meshData, solids, pocket, light);

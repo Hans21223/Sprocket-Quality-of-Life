@@ -22,15 +22,21 @@ public static class Hotkeys
         new[] { ("Core/Select", "select"), ("Core/ExtendSelect", "add"), ("Core/GroupSelect", "group"), ("MeshEdit/LoopSelect", "loop") },
         new[] { ("MeshEdit/BoxSelect", "box select, drag"), ("MeshEdit/RadialSelect", "circle select, paint") },
         new[] { ("MeshEdit/ToggleSelection", "select all / none"), ("MeshEdit/InvertSelection", "invert") },
-        new[] { ("Core/Move", "move"), ("Core/Rotate", "rotate"), ("Core/Resize", "scale") },
+        new[] { ("Core/Move", "move"), ("Core/Rotate", "rotate"), ("Core/Resize", "scale"), ("Core/RotateSingleAxis", "turn on one axis") },
         new[] { ("Core/LateralConstraint", "lock sideways"), ("Core/LongitudinalConstraint", "lengthways"), ("Core/VerticalConstraint", "vertical") },
+        new[] { ("Core/SnapModifier", "hold: snap"), ("Core/HighPrecision", "hold: fine"), ("Core/ToggleRotationSnap", "rotation snap") },
         new[] { ("MeshEdit/Extend", "extrude"), ("MeshEdit/Fill", "fill"), ("MeshEdit/Merge", "merge points"), ("MeshEdit/Split", "split") },
         new[] { ("MeshEdit/Slope", "slope"), ("MeshEdit/Duplicate", "duplicate"), ("MeshEdit/Flip", "flip faces") },
         new[] { ("MeshEdit/Delete", "delete"), ("Core/Undo", "undo"), ("Core/Redo", "redo") },
+        new[] { ("Core/EnableExteriorView", "outside"), ("Core/EnableInteriorView", "inside"), ("Core/EnableArmourView", "armour view") },
+        new[] { ("Core/Focus", "focus"), ("Core/CycleModule", "next tab"), ("Core/Save", "save") },
     };
 
     static InputActionAsset? controls;
     static PlateStructureEditor? structure; // the hand-made structure whose panel was drawn last
+
+    /// The hand-made structure being edited (its part selected), or null.
+    internal static PlateStructureEditor? Current => StructureSelected() ? structure : null;
     static List<string>? lines;
     static int checkedFrame = -1;
     static bool visible;
@@ -74,7 +80,7 @@ public static class Hotkeys
         lines ??= Lines();
         if (lines.Count == 0) return;
         // Left of the game's panel (about the right 23% of the screen), under the top bar.
-        const float width = 430, lineHeight = 20;
+        const float width = 470, lineHeight = 20;
         var box = new Rect(Screen.width * 0.765f - width - 12, 90, width, 30 + lines.Count * lineHeight);
         GUI.Box(box, "Hotkeys  (F1 shows / hides)");
         if (GUI.Button(new Rect(box.xMax - 26, box.y + 3, 22, 20), "×")) Show(false);
@@ -112,7 +118,12 @@ public static class Hotkeys
         }
         if (controls.FindAction("Core/VerticalConstraint", false) is { } vertical &&
             InputActionRebindingExtensions.GetBindingDisplayString(vertical, default(InputBinding.DisplayStringOptions), (string?)null) is { Length: > 0 } up)
-            found.Insert(5, $"Shift+{up}  move / scale without height (Shift+other axis keys too)");
+            found.Insert(5, $"Shift+{up}  move / scale without height   [mod]");
+        found.Add("Ctrl+J  merge selected add-ons into the last one   [mod]");
+        found.Add("P  flatten     T  loop cut (an edge)     I  inset     V  bevel (edges)   [mod]");
+        found.Add("O  proportional editing     U  select linked flat faces   [mod]");
+        found.Add("Numpad 5  orthographic view     Numpad + / -  zoom it   [mod]");
+        found.Add("F2  exploded view     F3 / F4  closer / further apart   [mod]");
         return found;
     }
 

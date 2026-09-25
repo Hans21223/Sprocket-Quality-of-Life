@@ -13,28 +13,10 @@ namespace SprocketQoL;
 [HarmonyPatch]
 public static class MergeFaces
 {
-    // The game's Delete operation, given nothing to delete, carries the merge so it gets the game's undo and mesh
-    // rebuild. Only these instances merge; every other Delete runs as normal.
-    static readonly List<DeleteOp> ours = new();
-    static PlateStructureEditOperations? notify;
     static int sides; // index into SideNames / SideModes
     static bool mirror; // the editor's Mirror was on when Merge was pressed
     static readonly string[] SideNames = { "Points other faces use: take out their lines", "Points other faces use: run past them", "Points other faces use: keep as corners" };
     static readonly FaceMerge.SidePoints[] SideModes = { FaceMerge.SidePoints.TakeOutLine, FaceMerge.SidePoints.RunPast, FaceMerge.SidePoints.Keep };
-
-    // Declared before Draw: if this can't attach, Harmony stops here and the button never shows.
-    [HarmonyPrefix, HarmonyPatch(typeof(DeleteOp), "ExecuteInternal")]
-    static bool Intercept(DeleteOp __instance, EditMesh mesh)
-    {
-        if (!ours.Any(o => o.Pointer == __instance.Pointer)) return true;
-        Ui.Guard("Merge faces", () =>
-        {
-            string result = Apply(mesh);
-            Plugin.ModLog.LogInfo("Merge faces: " + result);
-            if (!result.StartsWith("merged")) notify?.NotifyError("Merge faces: " + result);
-        });
-        return false;
-    }
 
     [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
     static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Guard("Merge faces", () =>
@@ -51,15 +33,11 @@ public static class MergeFaces
         ui.Button(SideNames[sides], Ui.Callback(() => { sides = (sides + 1) % SideNames.Length; __instance.RequestRedraw(); }), ref sideTip);
         var tip = new UITooltip("Merge selected faces", "Two triangles become a quad, a strip of quads one quad, a fan a few quads. " +
                                 "The selection splits at bends over 20°; a straight line of points shared across a bend goes from both sides.");
-        ui.Button("Merge selected faces", Ui.Callback(() => Ui.Guard("Merge faces", () =>
+        ui.Button("Merge selected faces", Ui.Callback(() =>
         {
             mirror = __instance.meshEditor.Symmetry;
-            var op = new DeleteOp(DeleteType.None) { Name = "Merge faces" };
-            ours.Add(op);
-            var ops = notify = __instance.operations;
-            ops.Execute(__instance.meshEditor.CreateTopoOp(op), StructureEditOperationOptions.None, ops.GetNewGroupID());
-            __instance.meshEditor.SelectFlush();
-        })), ref tip);
+            MeshTools.Run(__instance, "Merge faces", mesh => Apply(mesh) is var result && result.StartsWith("merged") ? (true, result) : (false, result));
+        }), ref tip);
     });
 
     static string Apply(EditMesh mesh)
@@ -165,22 +143,7 @@ public static class MergeFaces
                 l.thickenEdge = old[Id(l.vertex)].thickenEdge;
             }
         }
-        // A corner (new, or of a face next to the merge) that thickens along an edge being deleted lets the game pick.
-        int repointed = 0;
-        for (int i = 0; i < faces.Count; i++)
-        {
-            if (faces[i].HasFlag(ElementFlags.Delete)) continue;
-            var l = faces[i].firstLoop;
-            for (int k = 0; k < faces[i].vertexCount; k++, l = l.next)
-                if (l.thickenEdge != null && l.thickenEdge.HasFlag(ElementFlags.Delete))
-                {
-                    l.thickenEdge = null;
-                    if (l.thickenMode == ThickenMode.AlongEdgeManual) l.thickenMode = ThickenMode.AlongEdgeAuto;
-                    repointed++;
-                }
-        }
-        mesh.DeleteMarked();
-        mesh.MarkDirty(MeshDirtyFlags.All);
+        int repointed = MeshTools.FinishDelete(mesh);
 
         var problems = made.Select(m => HoleQuality.Problem(m.Face)).Where(p => p != null).Distinct().ToList();
         int leftOn = todo.SelectMany(g => g.LeftOn).Distinct().Count();

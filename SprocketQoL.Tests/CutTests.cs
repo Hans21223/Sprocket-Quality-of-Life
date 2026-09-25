@@ -177,10 +177,32 @@ static class CutTests
 
     /// Replays a real pocket cut from the test copy's backups (skipped if it isn't there): the add-on's cap was a fan
     /// of triangles to a centre point, and the pocket floor must not keep that fan.
+    /// A design the mod backed up before an edit (BepInEx\SprocketQoLBackups\{name}\original.blueprint), found under the
+    /// folder in the SPROCKET_QOL_BACKUPS environment variable. Null when that isn't set or the backup isn't there.
+    static FileInfo? Backup(string name) =>
+        Environment.GetEnvironmentVariable("SPROCKET_QOL_BACKUPS") is { Length: > 0 } dir &&
+        new FileInfo(Path.Combine(dir, name, "original.blueprint")) is { Exists: true } file ? file : null;
+
+    /// Merging freshly placed add-ons: every unedited palette cube shares one mesh in the file, so the merge target gets
+    /// its own mesh number, only it changes, and the merge can still happen in place.
+    static void CheckRealMerge()
+    {
+        if (Backup("20260925-085555-09f0f542") is not { } backup) { Console.WriteLine("  (real merge replay skipped: set SPROCKET_QOL_BACKUPS)"); return; }
+        string original = File.ReadAllText(backup.FullName);
+        var plan = AddonEdits.PlanMerge(original, 993, new[] { 901 });
+        var was = AddonEdits.FaceCounts(original);
+        var now = AddonEdits.FaceCounts(plan.DesignJson);
+        int sharedMesh = AddonEdits.MeshIdOf(original, 993);
+        Check(plan.Live, "real merge: two palette cubes merge in place");
+        Check(AddonEdits.MeshIdOf(original, 901) == sharedMesh && AddonEdits.MeshIdOf(plan.DesignJson, 993) != sharedMesh, "real merge: the target gets its own mesh number");
+        Check(now[993] == was[993] + was[901], $"real merge: target has both cubes' faces ({now[993]})");
+        Check(was.Where(p => p.Key != 993 && p.Key != 901).All(p => now[p.Key] == p.Value), "real merge: no other part's shape changes");
+        Console.WriteLine($"  real merge replay: {was[993]} + {was[901]} faces -> {now[993]}, in place");
+    }
+
     static void CheckRealPocket(Action<JsonObject, string> checkRefs)
     {
-        var backup = new FileInfo(@"D:\Projects\SprocketInteropPatch\TestGame\BepInEx\SprocketQoLBackups\20260925-022900-c003bd4d\original.blueprint");
-        if (!backup.Exists) { Console.WriteLine("  (real pocket replay skipped: backup not on this PC)"); return; }
+        if (Backup("20260925-022900-c003bd4d") is not { } backup) { Console.WriteLine("  (real pocket replay skipped: set SPROCKET_QOL_BACKUPS)"); return; }
         Fill.Paths.Clear();
         var plan = AddonEdits.PlanCut(File.ReadAllText(backup.FullName), 432, Array.Empty<int>(), true, true);
         Console.WriteLine($"  real pocket replay fills: {string.Join(", ", Fill.Paths)}");
@@ -305,11 +327,101 @@ static class CutTests
         Merge("strip, lines taken out round a corner", corner, strip.Concat(side2).ToList(), 3, 3, 8, FaceMerge.SidePoints.TakeOutLine);
     }
 
+    /// Mesh tools: every result is a closed, consistently turned surface where the input was, with the expected shape.
+    static void CheckMeshTools()
+    {
+        static Vector3 Nw(IReadOnlyList<Vector3> p, IReadOnlyList<int> f) { var n = Vector3.Zero; for (int k = 0; k < f.Count; k++) n += Vector3.Cross(p[f[k]], p[f[(k + 1) % f.Count]]); return n; }
+        static (List<Vector3> Pos, List<int[]> Faces) Applied(List<Vector3> pos, List<int[]> faces, MeshPlans.Rebuild r)
+        {
+            var p = pos.Concat(r.Points.Select(x => x.P)).ToList();
+            var gone = r.Remove.ToHashSet();
+            return (p, faces.Where((_, i) => !gone.Contains(i)).Concat(r.Add.Select(a => a.Corners)).ToList());
+        }
+        // Every side is used by exactly two faces running it opposite ways (a closed shape with no gaps or flips).
+        static bool Closed(List<int[]> faces)
+        {
+            var sides = new Dictionary<(int, int), int>();
+            foreach (var f in faces) for (int k = 0; k < f.Length; k++) sides[(f[k], f[(k + 1) % f.Length])] = sides.GetValueOrDefault((f[k], f[(k + 1) % f.Length])) + 1;
+            return sides.All(s => s.Value == 1 && sides.GetValueOrDefault((s.Key.Item2, s.Key.Item1)) == 1);
+        }
+        static double Volume(List<Vector3> p, List<int[]> faces) => faces.Sum(f => Enumerable.Range(1, f.Length - 2).Sum(k => Vector3.Dot(p[f[0]], Vector3.Cross(p[f[k]], p[f[k + 1]])) / 6.0));
+        static double Area(List<Vector3> p, IEnumerable<int[]> fs) => fs.Sum(f => (double)Nw(p, f).Length() / 2);
+
+        // A unit cube, point x + 2y + 4z, faces turned outward.
+        var cube = Enumerable.Range(0, 8).Select(i => new Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1)).ToList();
+        var cubeFaces = new List<int[]> { new[] { 0, 1, 5, 4 }, new[] { 2, 3, 7, 6 }, new[] { 0, 2, 6, 4 }, new[] { 1, 3, 7, 5 }, new[] { 0, 1, 3, 2 }, new[] { 4, 5, 7, 6 } }
+            .Select(f => Vector3.Dot(Nw(cube, f), f.Aggregate(Vector3.Zero, (s, v) => s + cube[v]) / 4 - new Vector3(0.5f)) < 0 ? f.Reverse().ToArray() : f).ToList();
+        Check(Closed(cubeFaces) && Math.Abs(Volume(cube, cubeFaces) - 1) < 1e-6, "mesh tools: the test cube is closed, volume 1");
+
+        // Bevel one top edge from corner to corner: a straight chamfer, volume down by exactly half w² along it.
+        const float w = 0.1f;
+        var one = MeshPlans.Bevel(cube, cubeFaces, new[] { (2, 3) }, w);
+        Check(one.Why == null, $"bevel one edge: works ({one.Why})");
+        var (p1, f1) = Applied(cube, cubeFaces, one);
+        Check(Closed(f1) && f1.All(f => f.Length is 3 or 4), "bevel one edge: closed, tris and quads");
+        Check(Math.Abs(Volume(p1, f1) - (1 - 0.5 * w * w)) < 1e-5, $"bevel one edge: volume {Volume(p1, f1):0.00000}, expected {1 - 0.5 * w * w:0.00000}");
+        // The four top edges: a chamfered top, still closed; three edges at one corner: a cap closes it.
+        var (p4, f4) = Applied(cube, cubeFaces, MeshPlans.Bevel(cube, cubeFaces, new[] { (2, 3), (3, 7), (7, 6), (6, 2) }, w));
+        // Chamfering the whole top turns its rim into a frustum: the top slab loses w − w/3·(1 + (1−2w)² + (1−2w)).
+        double frustum = 1 - (w - w / 3.0 * (1 + (1 - 2 * w) * (1 - 2 * w) + (1 - 2 * w)));
+        Check(Closed(f4) && Math.Abs(Volume(p4, f4) - frustum) < 1e-5, $"bevel a loop: closed, volume {Volume(p4, f4):0.00000}, expected {frustum:0.00000}");
+        var (p3, f3) = Applied(cube, cubeFaces, MeshPlans.Bevel(cube, cubeFaces, new[] { (3, 7), (5, 7), (6, 7) }, w));
+        Check(Closed(f3) && f3.Any(f => f.Length == 3) && Volume(p3, f3) < 1, "bevel a corner: closed, with a cap");
+        Check(MeshPlans.Bevel(cube, cubeFaces, Array.Empty<(int, int)>(), w).Why != null, "bevel nothing: says why");
+
+        // Loop cut round the cube's four side faces: 4 faces become 8, the ring closes, still closed with volume 1.
+        var loop = MeshPlans.LoopCut(cube, cubeFaces, new[] { (0, 2) });
+        var (pl, fl) = Applied(cube, cubeFaces, loop);
+        Check(loop.Why == null && loop.Remove.Count == 4 && loop.Points.Count == 4 && Closed(fl) && Math.Abs(Volume(pl, fl) - 1) < 1e-6, $"loop cut round a cube: {loop.Remove.Count} faces cut, {loop.Points.Count} points, closed ({loop.Why})");
+        // On an open strip it runs to the plate's edge; a triangle ends it.
+        var grid = Enumerable.Range(0, 8).Select(i => new Vector3(i / 2, i % 2, 0)).ToList();
+        var strip = Enumerable.Range(0, 3).Select(x => new[] { 2 * x, 2 * x + 2, 2 * x + 3, 2 * x + 1 }).ToList();
+        var along = MeshPlans.LoopCut(grid, strip, new[] { (2, 3) });
+        Check(along.Why == null && along.Add.Count == 6 && along.Points.Count == 4 && along.Points.All(p => Math.Abs(p.P.Y - 0.5f) < 1e-6), "loop cut along a strip: 3 quads become 6, points halfway");
+        var tri = grid.Append(new Vector3(4, 0.5f, 0)).ToList();
+        var withTri = strip.Append(new[] { 6, 8, 7 }).ToList();
+        var toTri = MeshPlans.LoopCut(tri, withTri, new[] { (2, 3) });
+        var (pt, ft) = Applied(tri, withTri, toTri);
+        Check(toTri.Why == null && toTri.Remove.Contains(3) && Math.Abs(Area(pt, ft) - Area(tri, withTri)) < 1e-5, "loop cut into a triangle: it's cut too, same area");
+
+        // Inset a square by 0.1: an inner square and four ring quads, same area, turned the same way.
+        var sq = new List<Vector3> { new(0, 0, 0), new(1, 0, 0), new(1, 1, 0), new(0, 1, 0) };
+        var ins = MeshPlans.Inset(sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, new[] { 0 }, 0.1f);
+        var (pi, fi) = Applied(sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, ins);
+        Check(ins.Why == null && fi.Count == 5 && Math.Abs(Area(pi, fi) - 1) < 1e-5 && fi.All(f => Nw(pi, f).Z > 0), "inset a square: 5 faces, same area, all face up");
+        Check(ins.Points.Any(p => Vector3.Distance(p.P, new Vector3(0.1f, 0.1f, 0)) < 1e-5), "inset a square: corner 0.1 in both ways");
+        var (ps, fs) = Applied(grid, strip, MeshPlans.Inset(grid, strip, new[] { 0, 1, 2 }, 0.1f));
+        Check(fs.Count == 3 + 8 && Math.Abs(Area(ps, fs) - 3) < 1e-5, "inset a strip together: 3 inner faces and a ring of 8");
+        Check(MeshPlans.Inset(sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, new[] { 0 }, 0.6f).Why != null, "inset too wide: says why");
+
+        // Flatten: bumpy points land on one plane; Level puts them at one height.
+        var bumpy = new List<Vector3> { new(0, 0, 0.02f), new(1, 0, -0.01f), new(1, 1, 0.03f), new(0, 1, -0.02f), new(0.5f, 0.5f, 0.01f) };
+        var flat = MeshPlans.Flatten(bumpy, new[] { 0, 1, 2, 3, 4 }, MeshPlans.FlattenMode.BestFit);
+        var n = Vector3.Normalize(Vector3.Cross(flat[1] - flat[0], flat[3] - flat[0]));
+        Check(flat.Values.All(p => Math.Abs(Vector3.Dot(p - flat[0], n)) < 1e-5), "flatten: all points on one plane");
+        var level = MeshPlans.Flatten(bumpy, new[] { 0, 1, 2 }, MeshPlans.FlattenMode.Level);
+        Check(level.Values.Select(p => p.Y).Distinct().Count() == 1, "flatten level: one height");
+
+        // Select linked flat: from one face of a flat strip it takes the strip, not a face bent 90° away.
+        var bent = grid.Concat(new[] { new Vector3(3, 0, 1), new Vector3(3, 1, 1) }).ToList();
+        var bentFaces = strip.Append(new[] { 6, 8, 9, 7 }).ToList();
+        var linked = MeshPlans.LinkedFlat(bent, bentFaces, new[] { 0 }, 5);
+        Check(linked.SetEquals(new[] { 0, 1, 2 }), $"select linked flat: the strip only ({string.Join(",", linked)})");
+
+        // Proportional editing: nearer points follow more, none beyond the radius.
+        var line = new List<Vector3> { new(0, 0, 0), new(0.25f, 0, 0), new(0.5f, 0, 0), new(1.5f, 0, 0) };
+        var fall = MeshPlans.Falloff(line, new HashSet<int> { 0 }, 1);
+        Check(!fall.ContainsKey(3) && fall[1].Weights[0] > fall[2].Weights[0] && fall[1].Weights[0] < 1, "proportional: falls off with distance");
+        Console.WriteLine($"mesh tools: bevel, loop cut, inset, flatten, select linked flat, proportional checked");
+    }
+
     public static void Run(string factions, Action<JsonObject, string> checkRefs)
     {
+        CheckMeshTools();
         CheckMergeFaces();
         CheckFill();
         CheckRealPocket(checkRefs);
+        CheckRealMerge();
         CheckHole("cut the top", Top, 1);
         CheckHole("cut right through", Through, 2);
         CheckHole("cut a side at an angle", Side, -1);

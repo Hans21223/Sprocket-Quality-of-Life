@@ -38,7 +38,7 @@ public sealed class DesignEditor : MonoBehaviour
     internal bool CanRestore => recoveryJson != null && !busy;
     public DesignEditor(IntPtr pointer) : base(pointer) { Instance = this; }
 
-    private void Say(string text, float seconds = 6) { status = text; statusUntil = Time.unscaledTime + seconds; }
+    internal void Say(string text, float seconds = 6) { status = text; statusUntil = Time.unscaledTime + seconds; }
 
     internal void RequestEdit(string name, string done, Func<string, EditResult> change)
     {
@@ -95,6 +95,14 @@ public sealed class DesignEditor : MonoBehaviour
         return found.Distinct().ToList();
     }
 
+    /// Every part of the vehicle being edited.
+    internal IEnumerable<VehicleObject> AllParts()
+    {
+        if (core?.Target == null) yield break;
+        foreach (var part in Each(core.Target.Cast<IVehicleGateway>().ObjectReader.Items))
+            if (part != null) yield return part;
+    }
+
     /// Every component of every part of the vehicle being edited.
     internal IEnumerable<VehicleComponent> AllComponents()
     {
@@ -135,6 +143,7 @@ public sealed class DesignEditor : MonoBehaviour
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
             if (ready && !busy) JoinHotkey();
+            if (ready) { MeshTools.Keys(); ExplodedView.Keys(); }
             if (pending != null && pending.IsCompleted)
             {
                 var task = pending; pending = null; busy = false;
@@ -248,11 +257,14 @@ public sealed class DesignEditor : MonoBehaviour
             var mesh = structure.Mesh ?? throw new Exception($"part {vuid} has no mesh");
             if (plan.OldFaces.TryGetValue(vuid, out int expected) && mesh.FaceCount != expected)
                 throw new Exception($"part {vuid}'s live mesh has {mesh.FaceCount} faces, the saved design {expected}");
+            // The part's shape before: its own mesh number in the original (a shared palette mesh gets a new number when edited).
+            int oldId = AddonEdits.MeshIdOf(original, vuid);
             changes.Add(new MeshSwap(structure, mesh,
-                before.TryGetValue(meshId, out var old) ? old : throw new Exception($"mesh {meshId} missing before the edit"),
+                before.TryGetValue(oldId, out var old) ? old : throw new Exception($"mesh {oldId} missing before the edit"),
                 after.TryGetValue(meshId, out var @new) ? @new : throw new Exception($"mesh {meshId} missing after the edit")));
         }
         VehicleObject Part(int v) => byId.TryGetValue(v, out var o) ? o : throw new Exception($"part {v} isn't in the vehicle");
+        CheckOnlyTargetsChange(changes, plan, original, byId);
         var remove = plan.Remove.Select(v => Part(v).GetReference()).ToArray();
         var moves = plan.Reparent.GroupBy(r => r.Parent).Select(g => (Parent: Part(g.Key), Children: g.Select(r => Part(r.Child)).ToList())).ToList();
 
@@ -298,6 +310,31 @@ public sealed class DesignEditor : MonoBehaviour
         foreach (var m in blueprint.Meshes)
             if (m?.Mesh?.TryCast<PlateStructureMeshBlueprint>() is { } mesh) found[m.MeshID] = mesh;
         return found;
+    }
+
+    /// A changed part must have its own live shape: if another part shared it, swapping it would change that part too.
+    /// Checked on the live objects, then by a trial swap and a save to memory, where only the changed parts may differ.
+    private void CheckOnlyTargetsChange(List<MeshSwap> changes, AddonEdits.EditPlan plan, string original, Dictionary<int, VehicleObject> byId)
+    {
+        var owners = new Dictionary<IntPtr, int>();
+        foreach (var obj in byId.Values)
+            foreach (var s in Each(obj.Components).Select(c => c?.TryCast<PlateStructure>()).Where(s => s?.Mesh != null))
+                owners[s!.Mesh.Pointer] = owners.GetValueOrDefault(s.Mesh.Pointer) + 1;
+        if (changes.Any(c => owners.GetValueOrDefault(c.Mesh.Pointer) > 1)) throw new Exception("a changed part shares its live shape with another part");
+
+        Swap(changes, true, "trial of " + editName);
+        string trial;
+        try { trial = Snapshot(); }
+        finally { Swap(changes, false, "trial of " + editName); }
+        var was = AddonEdits.FaceCounts(original);
+        var now = AddonEdits.FaceCounts(trial);
+        var want = AddonEdits.FaceCounts(plan.DesignJson);
+        foreach (var (vuid, faces) in was)
+        {
+            bool changed = plan.MeshIds.ContainsKey(vuid);
+            if (!now.TryGetValue(vuid, out int n) || n != (changed ? want[vuid] : faces))
+                throw new Exception($"trial: part {vuid} saved {(now.ContainsKey(vuid) ? n : 0)} faces, expected {(changed ? want[vuid] : faces)}");
+        }
     }
 
     static bool Swap(List<MeshSwap> changes, bool forward, string name)

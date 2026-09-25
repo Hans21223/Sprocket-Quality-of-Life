@@ -68,6 +68,26 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   of the game's own mesh edits, so Ctrl+Z undoes it. With the editor's **Mirror** on, the faces mirroring your
   selection merge too (matched by position, the way the game's Mirror matches points), so a mirrored hull stays even.
 
+- **Mesh tools** (Blender-style, in a hand-made structure's **Mesh tools** section and on keys; each is one of the
+  game's own mesh edits, so Ctrl+Z undoes it, and each follows the editor's Mirror):
+  - **Flatten (P):** selected points onto their best-fit plane, or to one height, side or length position.
+  - **Loop cut (T):** in Edges mode, a loop through the ring of quads a selected edge crosses, to the plate's edge,
+    a triangle, or all the way round.
+  - **Inset (I):** the selected faces shrink inward by the width set in the panel, with a ring of faces around them.
+  - **Bevel (V):** in Edges mode, the selected edges become chamfer strips; where three meet, a cap closes the corner.
+  - **Select linked flat faces (U):** grows the selection over faces lying flat with it (angle in the panel).
+  - **Proportional editing (O):** moving, scaling or rotating points pulls the points around them too, less the
+    further away, up to the radius in the panel. Cancelling, Ctrl+Z and redo take the followers along.
+  - **0.5 mm grid:** snapping (hold Ctrl while moving) uses 0.5 mm instead of the game's smallest, 1 mm.
+  - **Orthographic view (Numpad 5):** no perspective. Scroll zooms as usual (sized by the camera's orbit distance,
+    never the ground), and **Numpad + / −** or the **Ortho zoom** slider zoom further, past the game's closest
+    distance. With **Ortho: whole view** (on by default) the camera never cuts into the vehicle when zoomed in.
+- **Exploded view (F2):** the running gear (tracks, road wheels, sprockets, idlers, suspension) stays on the ground and
+  the hull lifts off it; every other part moves away from the part it's on, straight up or down or outward on the
+  level, and parts on parts go further; **F3 / F4** bring them closer or further apart (the spread is remembered). F2 again
+  puts everything back. Only what's drawn moves: whenever the design is saved or read, the parts go back first.
+- **Copy turrets with Alt:** the game's turret ring part says it can't be duplicated; the mod lets it, in memory, and
+  a copied ring brings everything on it (turret body, guns and the rest), each on the copy of its parent.
 - **Hotkeys:** while a hand-made structure is selected, a box beside the panel lists the mesh editing keys,
   including the ones the game's hint bar leaves out: **B** box select (then drag), **C** circle select, **A** select
   all / none, **E** extrude, **J** split, **M** merge points, **H** slope, **X / Y / Z** lock to an axis, and more. The

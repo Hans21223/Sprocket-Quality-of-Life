@@ -15,6 +15,15 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 - Hole quality: segments and size for the Create Hole tool. Holes come out round, face the right way, and get a
   clean fill instead of long thin triangles.
 - Turret to Add-on: turns a turret into a fixed add-on. Guns, crew and attached parts stay where they are.
+- Mesh tools (Blender-style; Mirror applies; Ctrl+Z undoes each): P flatten selected points onto one plane
+  (or one height / side / length), T loop cut through the ring of quads a selected edge crosses, I inset selected
+  faces, V bevel selected edges into chamfer strips, U select linked flat faces, O proportional editing (moving
+  points pulls their neighbours, radius in the panel). Also a 0.5 mm snap grid, and Numpad 5 for an
+  orthographic view (Numpad + / - zoom it; it never cuts into the vehicle).
+- Exploded view: F2 pulls the parts apart to see inside, tracks and wheels staying on the ground (F3 / F4 closer /
+  further), F2 again puts them back.
+  Only what's drawn moves; saving is never affected.
+- Turrets can be copied with Alt like other parts, with everything on them (turret body, guns...).
 - Hotkeys box beside the panel: the mesh editing keys, including hidden ones like B (box select) and
   C (circle select). x closes it, F1 shows or hides it.
 - Move or scale without height: while moving or scaling, Shift+Z locks to the two flat axes

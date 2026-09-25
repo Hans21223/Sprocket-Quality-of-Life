@@ -248,28 +248,14 @@ public static class FaceMerge
     /// `tolerance` metres. A face on the plane can be its own twin; faces without a twin are left out.
     public static List<int> Mirrored(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<int> which, float tolerance)
     {
-        float cell = Math.Max(tolerance, 1e-5f);
-        (int, int, int) Cell(Vector3 p) => ((int)MathF.Round(p.X / cell), (int)MathF.Round(p.Y / cell), (int)MathF.Round(p.Z / cell));
-        var grid = new Dictionary<(int, int, int), List<int>>();
-        foreach (int v in faces.SelectMany(f => f).Distinct())
-        {
-            if (!grid.TryGetValue(Cell(pos[v]), out var here)) grid[Cell(pos[v])] = here = new();
-            here.Add(v);
-        }
-        int Twin(int v)
-        {
-            var m = new Vector3(-pos[v].X, pos[v].Y, pos[v].Z);
-            var (x, y, z) = Cell(m);
-            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
-                if (grid.TryGetValue((x + dx, y + dy, z + dz), out var near))
-                    foreach (int w in near) if (Vector3.Distance(pos[w], m) <= tolerance) return w;
-            return -1;
-        }
+        var which2 = which.ToList();
+        var point = MeshPlans.Twins(pos, which2.SelectMany(f => faces[f]).Distinct(), tolerance);
+        int Twin(int v) => point.TryGetValue(v, out int t) ? t : -1;
         static string Corners(IEnumerable<int> vs) => string.Join(",", vs.OrderBy(v => v));
         var byCorners = new Dictionary<string, int>();
         for (int f = 0; f < faces.Count; f++) byCorners.TryAdd(Corners(faces[f]), f);
         var twins = new List<int>();
-        foreach (int f in which)
+        foreach (int f in which2)
         {
             var mirrored = faces[f].Select(Twin).ToArray();
             if (!mirrored.Contains(-1) && byCorners.TryGetValue(Corners(mirrored), out int twin)) twins.Add(twin);
