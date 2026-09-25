@@ -39,6 +39,7 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   Select several turrets and it converts them all at once.
 - **Merge add-ons:** select two or more add-ons. The panel of the one you clicked offers to merge the others into
   it, keeping their shape, position and armour. Parts attached to them move onto it. Happens in place; Ctrl+Z undoes it.
+  **Ctrl+J** does the same as Blender's join: all selected add-ons merge into the last one you selected.
 - **Cut with this add-on (Boolean cut):** place an add-on through a plate, and its panel offers **Cut hole** or
   **Cut pocket (with walls)** out of the structure it sits on (or out of the other selected parts). Any closed shape
   works, dents included. A pocket turns the add-on's surface inside the structure into plates with the add-on's
@@ -64,9 +65,20 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   joined; **run past them** works like the game's Delete + Fill (the other face keeps the point, not joined there, so
   moving it later opens a gap); **keep as corners** leaves them as corners. The selection splits into flat
   patches at bends over 20°, and a straight line of points two patches share across a corner goes from both. It's one
-  of the game's own mesh edits, so Ctrl+Z undoes it.
+  of the game's own mesh edits, so Ctrl+Z undoes it. With the editor's **Mirror** on, the faces mirroring your
+  selection merge too (matched by position, the way the game's Mirror matches points), so a mirrored hull stays even.
 
-Every Quality of Life section in a panel folds away: click its header. It stays folded until you restart the game.
+- **Hotkeys:** while a hand-made structure is selected, a box beside the panel lists the mesh editing keys,
+  including the ones the game's hint bar leaves out: **B** box select (then drag), **C** circle select, **A** select
+  all / none, **E** extrude, **J** split, **M** merge points, **H** slope, **X / Y / Z** lock to an axis, and more. The
+  keys are read from the game's live bindings, so rebound keys show as rebound. **×** closes the box, **F1** shows or
+  hides it, and it remembers which.
+- **Move or scale without height:** while moving or scaling, **Shift + the vertical-lock key (Z)** locks to the two
+  flat axes, so a scale keeps the height. Shift + X or Shift + Y leaves out that axis instead. These are the game's
+  own two-axis locks, which it has no key for; the axis key alone goes back to the one-axis lock.
+
+Every Quality of Life section in a panel folds away: click its header. It stays folded, even after a restart
+(saved in `BepInEx\config\local.sprocket.qol.cfg`).
 
 Merge and Cut happen in place as one of the game's own undoable steps. Turret to Add-on saves the design, changes it
 and reloads it, because it changes a part's type, which the game only does by rebuilding. Every edit backs up the design

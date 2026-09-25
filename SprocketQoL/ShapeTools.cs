@@ -20,7 +20,7 @@ public static class ShapeTools
         int addon = (int)part.VUID;
         Ui.Section(layout, "Merge add-ons");
         var others = editor.SelectedParts(Conversion.AddonGuid).Where(v => v != addon).ToList();
-        if (others.Count == 0) ui.InfoField("Select other add-ons too to merge them into this one.", 1);
+        if (others.Count == 0) ui.InfoField("Select other add-ons too to merge them into this one.\nCtrl+J merges all selected into the last one selected.", 2);
         else
         {
             var tip = new UITooltip("Merge add-ons",

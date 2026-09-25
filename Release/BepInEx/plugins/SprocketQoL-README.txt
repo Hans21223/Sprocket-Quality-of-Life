@@ -1,7 +1,8 @@
 Quality of Life - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
-Adds new sections to the vehicle editor's own panels. Every section folds away (click its header).
+Adds new sections to the vehicle editor's own panels. Every section folds away (click its header) and stays
+folded.
 
 INSTALL
 Needs BepInEx 6 (IL2CPP) for Sprocket. Add the zip in Sprocket Mod Manager, or copy SprocketQoL.dll into
@@ -10,12 +11,18 @@ Sprocket\BepInEx\plugins.
 STRUCTURE TOOLS (hand-made structures and add-ons)
 - Merge faces: select faces in Faces edit mode, press Merge selected faces. They become as few quads as possible.
   Lines that run on into neighbouring faces are taken out too, so nothing comes apart.
+  With Mirror on, the mirrored faces merge too.
 - Hole quality: segments and size for the Create Hole tool. Holes come out round, face the right way, and get a
   clean fill instead of long thin triangles.
 - Turret to Add-on: turns a turret into a fixed add-on. Guns, crew and attached parts stay where they are.
+- Hotkeys box beside the panel: the mesh editing keys, including hidden ones like B (box select) and
+  C (circle select). x closes it, F1 shows or hides it.
+- Move or scale without height: while moving or scaling, Shift+Z locks to the two flat axes
+  (Shift+X / Shift+Y leave out that axis instead).
 
 ADD-ON TOOLS
 - Merge add-ons: folds the selected add-ons into one, keeping their shape, position and armour.
+  Ctrl+J (like Blender's join) merges all selected add-ons into the last one you selected.
 - Boolean cut: uses an add-on to cut a hole, or a pocket with walls and a floor, into the structure under it.
   Any closed shape works, and rivets move onto the new faces.
 

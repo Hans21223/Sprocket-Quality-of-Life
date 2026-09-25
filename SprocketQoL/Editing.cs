@@ -60,6 +60,19 @@ public sealed class DesignEditor : MonoBehaviour
         queued = RunLiveEdit;
     }
 
+    /// Ctrl+J, as in Blender: the other selected add-ons join the last one selected (the active one).
+    private void JoinHotkey()
+    {
+        var keys = UnityEngine.InputSystem.Keyboard.current;
+        if (keys == null || !keys.ctrlKey.isPressed || !keys.jKey.wasPressedThisFrame) return;
+        var addons = SelectedParts(Conversion.AddonGuid);
+        if (addons.Count < 2) { Say("Ctrl+J: select two or more add-ons; they join the last one you selected.", 5); return; }
+        int target = addons[^1];
+        var others = addons.Take(addons.Count - 1).ToList();
+        Plugin.ModLog.LogInfo($"Ctrl+J: joining {string.Join(", ", others)} into {target} (selection order {string.Join(", ", addons)})");
+        RequestLiveEdit("Merging add-ons", $"Merged {addons.Count} add-ons into the last one selected.", json => AddonEdits.PlanMerge(json, target, others));
+    }
+
     internal void RequestRestore()
     {
         if (busy || recoveryJson == null) return;
@@ -121,6 +134,7 @@ public sealed class DesignEditor : MonoBehaviour
                 core = UnityEngine.Object.FindObjectOfType<VehicleDesignerCore>();
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
+            if (ready && !busy) JoinHotkey();
             if (pending != null && pending.IsCompleted)
             {
                 var task = pending; pending = null; busy = false;
@@ -319,9 +333,10 @@ public sealed class DesignEditor : MonoBehaviour
         pending = core.Load(serializer!.DeserializeJSON(recoveryJson), Il2CppSystem.Threading.CancellationToken.None);
     }
 
-    // Result message only; the controls live in the game's inspector.
+    // Result message and the hotkeys box; the controls live in the game's inspector.
     public void OnGUI()
     {
+        Ui.Guard("Hotkeys", Hotkeys.DrawBox);
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;
         float width = Math.Min(620, Screen.width - 40);
         GUI.Box(new Rect((Screen.width - width) / 2, 80, width, 30), status); // below the game's vehicle name bar

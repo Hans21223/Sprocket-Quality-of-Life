@@ -18,6 +18,7 @@ public static class MergeFaces
     static readonly List<DeleteOp> ours = new();
     static PlateStructureEditOperations? notify;
     static int sides; // index into SideNames / SideModes
+    static bool mirror; // the editor's Mirror was on when Merge was pressed
     static readonly string[] SideNames = { "Points other faces use: take out their lines", "Points other faces use: run past them", "Points other faces use: keep as corners" };
     static readonly FaceMerge.SidePoints[] SideModes = { FaceMerge.SidePoints.TakeOutLine, FaceMerge.SidePoints.RunPast, FaceMerge.SidePoints.Keep };
 
@@ -52,6 +53,7 @@ public static class MergeFaces
                                 "The selection splits at bends over 20°; a straight line of points shared across a bend goes from both sides.");
         ui.Button("Merge selected faces", Ui.Callback(() => Ui.Guard("Merge faces", () =>
         {
+            mirror = __instance.meshEditor.Symmetry;
             var op = new DeleteOp(DeleteType.None) { Name = "Merge faces" };
             ours.Add(op);
             var ops = notify = __instance.operations;
@@ -86,6 +88,13 @@ public static class MergeFaces
         for (int i = 0; i < edges.Count; i++)
             if (edges[i].loop == null) loose.Add(FaceMerge.Key(Id(edges[i].v0), Id(edges[i].v1)));
         if (selected.Count < 2) return "select two or more faces that share edges first";
+        // Mirror on: the faces mirroring the selection merge too, matched the way the game's Mirror matches points.
+        int twins = 0;
+        if (mirror)
+        {
+            float tolerance = MeshTransformation.MirrorMaxDistance > 0 ? MeshTransformation.MirrorMaxDistance : 0.0003f;
+            foreach (int f in FaceMerge.Mirrored(pos, corners, selected.ToList(), tolerance)) if (selected.Add(f)) twins++;
+        }
 
         var plan = FaceMerge.Plan(pos, corners, selected, loose, SideModes[sides]);
         var todo = plan.Where(g => g.Why == null).ToList();
@@ -176,7 +185,7 @@ public static class MergeFaces
         var problems = made.Select(m => HoleQuality.Problem(m.Face)).Where(p => p != null).Distinct().ToList();
         int leftOn = todo.SelectMany(g => g.LeftOn).Distinct().Count();
         int neighbours = replaced.Count(f => !selected.Contains(f));
-        return $"merged {replaced.Count} faces into {made.Count}" + (neighbours == 0 ? "" : $" ({neighbours} of them unselected, rebuilt to take their lines out)") +
+        return $"merged {replaced.Count} faces into {made.Count}" + (mirror ? $" (Mirror: {twins} mirrored faces added)" : "") + (neighbours == 0 ? "" : $" ({neighbours} of them unselected, rebuilt to take their lines out)") +
                (leftOn == 0 ? "" : $", running past {leftOn} point{(leftOn == 1 ? "" : "s")} other faces keep") +
                (repointed == 0 ? "" : $", {repointed} corner{(repointed == 1 ? "" : "s")} now thicken the game's way") + (why == "" ? "" : $" (left alone: {why})") +
                (problems.Count == 0 ? ", mesh checks OK" : ", MESH CHECK FAILED: " + string.Join("; ", problems));

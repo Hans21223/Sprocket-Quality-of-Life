@@ -280,6 +280,20 @@ static class CutTests
         // Taking the lines out: the strip and each neighbouring row become one quad, all still joined.
         Merge("strip held by neighbours, lines taken out", rows, held, 3, 3, 8, FaceMerge.SidePoints.TakeOutLine);
 
+        // Mirror: a strip right of the centre plane (x = 1..4) and its twin left of it; selecting the right one finds the
+        // left one (a hair off, as floats are), and both merge to one quad each.
+        {
+            var both = Enumerable.Range(0, 8).Select(i => new Vector3(1 + i / 2, i % 2, 0)).ToList();
+            both.AddRange(Enumerable.Range(0, 8).Select(i => new Vector3(-(1 + i / 2) + 1e-5f, i % 2, 0)));
+            var right = Enumerable.Range(0, 3).Select(x => new[] { G(x, 0), G(x + 1, 0), G(x + 1, 1), G(x, 1) }).ToList();
+            var left = right.Select(f => f.Reverse().Select(v => v + 8).ToArray()).ToList(); // mirrored, so turning the other way
+            var mesh = right.Concat(left).ToList();
+            var twins = FaceMerge.Mirrored(both, mesh, new[] { 0, 1, 2 }, 0.0003f);
+            Check(twins.OrderBy(f => f).SequenceEqual(new[] { 3, 4, 5 }), $"mirror: the left strip's faces are the twins (got {string.Join(",", twins)})");
+            Check(FaceMerge.Mirrored(both, mesh, new[] { 0 }, 0.000001f).Count == 0, "mirror: nothing matches outside the tolerance");
+            Merge("strip and its mirror twin", both, mesh, 6, 2, 8);
+        }
+
         // Round a 90° corner, both selected: a strip on top (z = 0) and one down the side (y = 0) sharing the corner line.
         var corner = grid.ToList();
         for (int x = 0; x < 4; x++) corner.Add(new Vector3(x, 0, -1)); // point 8 + x
