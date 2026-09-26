@@ -197,12 +197,12 @@ Check(merges > 0, "found real add-ons to merge");
 Console.WriteLine($"ADDON_TESTS_OK: {checks} checks total, cylinder + round part + {multi} multi-turret tanks + {merges} real merges ({refusedMixed} mixed mirrored/unmirrored refused)");
 
 // ---------------- Create Hole ring ----------------
-void CheckHole(Matrix4x4 place, float gameRadius, bool gameReversed, Vector3 gameCentre, float expectRadius)
+void CheckHole(Matrix4x4 place, float gameRadius, bool gameReversed, Vector3 gameCentre, float expectRadius, float size = 1f)
 {
     var square = new[] { new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(1, 1, 0), new Vector3(0, 1, 0) }.Select(p => Vector3.Transform(p, place)).ToArray();
     var inner = Enumerable.Range(0, 24).Select(k => (gameReversed ? -1 : 1) * 2 * MathF.PI * k / 24)
         .Select(a => Vector3.Transform(new Vector3(0.5f + gameRadius * MathF.Cos(a), 0.5f + gameRadius * MathF.Sin(a), 0.03f), place)).ToArray();
-    var ring = HoleRing.Fit(square, inner, Vector3.Transform(gameCentre, place), out var note);
+    var ring = HoleRing.Fit(square, inner, Vector3.Transform(gameCentre, place), out var note, size);
     Matrix4x4.Invert(place, out var back);
     var local = ring.Select(p => Vector3.Transform(p, back)).ToArray();
     Check(local.All(p => MathF.Abs(p.Z) < 1e-4f), "hole ring lies in the face: " + note);
@@ -217,6 +217,22 @@ CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.2f)
 CheckHole(tilted, 0.2f, true, new Vector3(0.5f, 0.5f, 0.03f), 0.2f);                      // odd angle + ring the wrong way round
 CheckHole(tilted, 0.8f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.475f);                   // too big: shrunk to fit the face
 CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(4f, 4f, 0f), 0.2f);                // centre off the face: face middle
+CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.3f, 1.5f);   // Hole size 150%: applied here
+CheckHole(tilted, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.475f, 3f);               // Hole size 300%: still fits the face
+CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.1f, 0.5f);   // Hole size 50%
+{
+    // An L-shaped (concave) face: the hole goes in the arm the game picked, clear of every edge; its middle is
+    // outside the L, so a ring with no safe spot is left as the game made it.
+    var ell = new[] { new Vector3(0, 0, 0), new Vector3(2, 0, 0), new Vector3(2, 1, 0), new Vector3(1, 1, 0), new Vector3(1, 2, 0), new Vector3(0, 2, 0) };
+    var game = Enumerable.Range(0, 16).Select(k => new Vector3(0.5f + 0.2f * MathF.Cos(k * MathF.Tau / 16), 0.5f + 0.2f * MathF.Sin(k * MathF.Tau / 16), 0)).ToArray();
+    var ring = HoleRing.Fit(ell, game, new Vector3(0.5f, 0.5f, 0), out var note, 3f);
+    Check(ring.All(p => Vector2.Distance(new(p.X, p.Y), new(0.5f, 0.5f)) < 0.5f - 1e-4f), "concave face: big hole stays clear of its edges: " + note);
+    var square = new[] { new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(1, 1, 0), new Vector3(0, 1, 0) };
+    var hollow = new[] { new Vector3(0, 0, 0), new Vector3(3, 0, 0), new Vector3(3, 3, 0), new Vector3(2, 3, 0), new Vector3(2, 1, 0), new Vector3(1, 1, 0), new Vector3(1, 3, 0), new Vector3(0, 3, 0) };
+    var kept = HoleRing.Fit(hollow, game, new Vector3(1.5f, 2f, 0), out note, 3f); // centre and middle both in the gap
+    Check(kept.SequenceEqual(game), "no safe spot: game's ring left alone: " + note);
+    Check(HoleRing.Fit(square, game, new Vector3(0.5f, 0.5f, 0), out _, float.NaN).All(p => MathF.Abs(Vector2.Distance(new(p.X, p.Y), new(0.5f, 0.5f)) - 0.2f) < 1e-4f), "bad size value: game's size");
+}
 Console.WriteLine($"HOLE_TESTS_OK: {checks} checks total");
 
 // ---------------- Boolean cut (CutTests.cs) ----------------
