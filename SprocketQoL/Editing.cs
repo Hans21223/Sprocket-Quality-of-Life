@@ -60,6 +60,173 @@ public sealed class DesignEditor : MonoBehaviour
         queued = RunLiveEdit;
     }
 
+    private Func<string, (string Json, List<(int Source, int Added)> Parts, string Log)>? separate;
+
+    /// Separate as one of the game's own steps, so Ctrl+Z undoes it: the game duplicates the part (and its twin), then
+    /// the copies take the separated faces and the part keeps the rest. The result is saved to memory and checked against
+    /// the planned design; if anything differs (or the part is a hull or turret, which can't be duplicated into an
+    /// add-on), the planned design is loaded instead, as before.
+    internal void RequestSeparate(Func<string, (string Json, List<(int Source, int Added)> Parts, string Log)> plan)
+    {
+        if (busy) return;
+        Plugin.ModLog.LogInfo("QOL requested: Separating faces");
+        editName = "Separating faces"; doneMessage = "Separated into a new add-on."; separate = plan;
+        busy = true; Say(editName + "...", 30);
+        queued = RunSeparate;
+    }
+
+    private void RunSeparate()
+    {
+        if (!EditorIdle(RunSeparate)) return;
+        string original = Snapshot();
+        var (planned, parts, log) = separate!(original);
+        Backup(original, planned);
+        Plugin.ModLog.LogInfo($"QOL_EDIT {editName}: {log}; backup={recoveryDir}");
+        string? why = null;
+        try { why = SeparateInPlace(original, planned, parts); }
+        catch (Exception ex) { why = ex.Message; Plugin.ModLog.LogWarning($"QOL_LIVE separate: {ex}"); }
+        if (why == null) { busy = false; return; }
+        Plugin.ModLog.LogInfo($"QOL_LIVE separate not in place ({why}); loading the planned design instead");
+        recoveryJson = original;
+        LastEditedPart = parts[0].Added;
+        restoring = false;
+        doneMessage = "Separated into a new add-on. Restore undoes it.";
+        pending = core!.Load(serializer!.DeserializeJSON(planned), Il2CppSystem.Threading.CancellationToken.None);
+    }
+
+    /// Null when done in place; else why not (nothing changed then, or the check found a difference and the planned
+    /// design is about to be loaded over it).
+    private string? SeparateInPlace(string original, string planned, List<(int Source, int Added)> parts)
+    {
+        var byId = new Dictionary<int, VehicleObject>();
+        foreach (var o in AllParts()) byId[(int)o.VUID] = o;
+        PlateStructure StructureOf(VehicleObject o) => Each(o.Components).Select(c => c?.TryCast<PlateStructure>()).FirstOrDefault(s => s?.Mesh != null)
+                                                       ?? throw new Exception($"part {(int)o.VUID} has no plate structure");
+        var sources = parts.Select(p => byId.TryGetValue(p.Source, out var o) ? o : throw new Exception($"part {p.Source} isn't in the vehicle")).ToList();
+        if (sources.Any(o => o.GUID != Conversion.AddonGuid)) return "a hull or turret can't be duplicated into an add-on";
+        // The parts' live shape may be shared only with each other and the game's mirror images, or loading it changes others.
+        var saved = Conversion.Objects(Conversion.Parse(original)).Keys.ToHashSet();
+        var shapes = sources.Select(o => StructureOf(o).Mesh.Pointer).ToHashSet();
+        foreach (var (v, o) in byId)
+            if (saved.Contains(v) && !parts.Any(p => p.Source == v) && Each(o.Components).Any(c => c?.TryCast<PlateStructure>() is { Mesh: { } m } && shapes.Contains(m.Pointer)))
+                return $"part {v} shares the shape";
+        var before = Meshes(original);
+        var after = Meshes(planned);
+        var oldShape = before[AddonEdits.MeshIdOf(original, parts[0].Source)];
+        var keptShape = after[AddonEdits.MeshIdOf(planned, parts[0].Source)];
+        var newShape = after[AddonEdits.MeshIdOf(planned, parts[0].Added)];
+
+        var ops = core!.Editor.operations;
+        int group = ops.GetNewGroupID();
+        var dup = ops.Duplicate(new Il2CppReferenceArray<ISoftVehicleObject>(sources.Select(o => o.GetReference()).ToArray()), DuplicateOptions.Copy, group);
+        List<VehicleObject> Copies() => sources.Select(s => dup.GetDupe(s) ?? throw new Exception($"the game made no copy of part {(int)s.VUID}")).ToList();
+        var copies = Copies();
+        if (copies.Any(c => sources.Any(s => StructureOf(s).Mesh.Pointer == StructureOf(c).Mesh.Pointer))) return "the copy shares the part's shape";
+        // Parts attached to the part were copied with it: they stay on the part only.
+        var extra = copies.SelectMany(c => Each(c.GetComponent<VehicleTransform>().Children)).Select(t => t?.VehicleObject).Where(o => o != null).Select(o => o!.GetReference()).ToArray();
+        if (extra.Length > 0) ops.Destroy(new Il2CppReferenceArray<ISoftVehicleObject>(extra), group);
+        string name = editName, done = doneMessage;
+        void Shapes(bool forward)
+        {
+            foreach (var s in sources) { StructureOf(s).Mesh.LoadBlueprint(forward ? keptShape : oldShape); StructureOf(s).RequestMeshRefresh(); }
+            if (!forward) return;
+            var now = Copies();
+            for (int i = 0; i < now.Count; i++)
+            {
+                // Exactly where the part is (a copy the game offsets, as for Alt-dragging, goes back onto it).
+                var (from, to) = (sources[i].GetComponent<VehicleTransform>(), now[i].GetComponent<VehicleTransform>());
+                to.SetLocalPositionAndRotation(from.LocalPosition, from.LocalRotation);
+                StructureOf(now[i]).Mesh.LoadBlueprint(newShape);
+                StructureOf(now[i]).RequestMeshRefresh();
+            }
+            if (now.Count == 2 && now[0].GetComponent<VehicleTransform>() is { } a && now[1].GetComponent<VehicleTransform>() is { } b && a.Mirror?.Pointer != b.Pointer)
+                VehicleTransform.SetMirrors(a, b);
+        }
+        bool executed = false;
+        var callbacks = new VehicleOperationCallbacks
+        {
+            Execute = Keep(DelegateSupport.ConvertDelegate<Il2CppSystem.Func<IVehicleOperatorContext, VehicleOPExecutionResult>>(
+                new Func<IVehicleOperatorContext, VehicleOPExecutionResult>(_ =>
+                {
+                    try { Shapes(true); executed = true; return VehicleOPExecutionResult.Executed; }
+                    catch (Exception ex) { Plugin.ModLog.LogError($"{name}: {ex}"); return VehicleOPExecutionResult.Cancelled; }
+                }))!),
+            Revert = Keep(DelegateSupport.ConvertDelegate<Il2CppSystem.Action<IVehicleOperatorContext>>(
+                new Action<IVehicleOperatorContext>(_ => { try { Shapes(false); } catch (Exception ex) { Plugin.ModLog.LogError($"{name} undo: {ex}"); } }))!),
+        };
+        var flags = Sprocket.VehicleDesigner.Operations.VehicleOp.InternalOpToVehicleOpFlags(global::Operations.Operation.DefaultFlags)
+                    | VehicleOperationFlags.Undo | VehicleOperationFlags.Redo | VehicleOperationFlags.Register;
+        ops.CreateOp(name, ref callbacks, flags, group, VehicleOpExecutionMode.Synchronous);
+        if (!executed) return "the shapes didn't go in";
+
+        // The check: saved now, the design must match the plan: every part's face count, and each copy placed, flipped,
+        // mirrored and linked as planned.
+        string check = Snapshot();
+        var want = Conversion.Objects(Conversion.Parse(planned));
+        var got = Conversion.Objects(Conversion.Parse(check));
+        var wantFaces = AddonEdits.FaceCounts(planned);
+        var gotFaces = AddonEdits.FaceCounts(check);
+        var copyIds = copies.Select(c => (int)c.VUID).ToList();
+        var problems = new List<string>();
+        if (got.Count != want.Count) problems.Add($"{got.Count} parts, planned {want.Count}");
+        foreach (var (v, n) in wantFaces.Where(kv => want.ContainsKey(kv.Key) && !parts.Any(p => p.Added == kv.Key)))
+            if (gotFaces.GetValueOrDefault(v) != n) problems.Add($"part {v} has {gotFaces.GetValueOrDefault(v)} faces, planned {n}");
+        for (int i = 0; i < parts.Count; i++)
+        {
+            int c = copyIds[i];
+            var (w, g) = (want[parts[i].Added], got.GetValueOrDefault(c));
+            if (g == null) { problems.Add($"copy {c} not saved"); continue; }
+            if (gotFaces.GetValueOrDefault(c) != wantFaces[parts[i].Added]) problems.Add($"copy {c} has {gotFaces.GetValueOrDefault(c)} faces, planned {wantFaces[parts[i].Added]}");
+            if (g["pvuid"]!.GetValue<int>() != w["pvuid"]!.GetValue<int>()) problems.Add($"copy {c} hangs on {g["pvuid"]}, planned {w["pvuid"]}");
+            if ((g["flags"]!.GetValue<int>() & 5) != (w["flags"]!.GetValue<int>() & 5)) problems.Add($"copy {c} flags {g["flags"]}, planned {w["flags"]}");
+            if (!Conversion.Near(Conversion.Local(g["transform"]!), Conversion.Local(w["transform"]!))) problems.Add($"copy {c} placed elsewhere");
+            if (parts.Count == 2 && g["transform"]!["mirrorVuid"]!.GetValue<int>() != copyIds[1 - i]) problems.Add($"copy {c} not linked to its twin");
+        }
+        // A copy the game should show twice (mirrored mark, no twin) needs its image: a part of the game's own, not saved,
+        // sharing its shape.
+        if (parts.Count == 1 && (want[parts[0].Added]["flags"]!.GetValue<int>() & 4) != 0)
+        {
+            var shape = StructureOf(copies[0]).Mesh.Pointer;
+            if (!AllParts().Any(o => !got.ContainsKey((int)o.VUID) && Each(o.Components).Any(c => c?.TryCast<PlateStructure>() is { Mesh: { } m } && m.Pointer == shape)))
+                problems.Add($"copy {copyIds[0]} isn't shown on the other side yet");
+        }
+        if (problems.Count > 0) return "the check found: " + string.Join("; ", problems);
+        // The new add-on selected, in the same step: the part's shape editor closes (its own Ctrl+Z covers shape edits
+        // only), so Ctrl+Z undoes the separate straight away.
+        try { ops.Select(StructureOf(copies[0]), Sprocket.Vehicles.Selection.SelectionMode.Set, group); }
+        catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_LIVE {name}: couldn't select the new add-on: {ex.Message}"); }
+        Plugin.ModLog.LogInfo($"QOL_LIVE {name}: in place, new add-on{(copyIds.Count > 1 ? "s" : "")} {string.Join(" and ", copyIds)}, checked against the plan");
+        Say(done + " Ctrl+Z undoes it.", 8);
+        LastEditedPart = -1;
+        return null;
+    }
+
+    private readonly HashSet<int> filledRings = new();
+    private float nextTurretCheck;
+
+    /// A turret placed or copied with Mirror on gets a twin ring from the game with nothing on it (the game copies only
+    /// the ring): once the placing is done, the body, guns and everything else get mirrored onto it. Once per turret.
+    private void FillMirroredTurrets()
+    {
+        if (core?.Editor == null || core.Editor.OperationInProgress) return;
+        foreach (var part in AllParts())
+        {
+            if (part.GUID != Conversion.RingGuid || part.GetComponent<VehicleTransform>() is not { } ring) continue;
+            var twin = ring.Mirror;
+            if (twin == null) continue; // Unity's own null check: a twin just deleted counts as none
+            if (!Each(ring.Children).Any() || Each(twin.Children).Any() || !filledRings.Add((int)part.VUID)) continue;
+            int vuid = (int)part.VUID;
+            Plugin.ModLog.LogInfo($"Turret mirror: twin ring {(int)(twin.VehicleObject?.VUID ?? default)} of ring {vuid} has nothing on it; mirroring the turret onto it");
+            RequestEdit("Mirroring turret", "The mirrored turret got its body and everything on it. Restore undoes it.", json =>
+            {
+                var (result, count, how) = Conversion.MirrorTurret(json, vuid);
+                int body = Conversion.Objects(Conversion.Parse(result))[vuid]["structureID"]?.GetValue<int>() ?? vuid;
+                return new EditResult(result, body, $"ring {vuid}: {count} parts {how}");
+            });
+            return;
+        }
+    }
+
     /// Ctrl+J, as in Blender: the selected add-ons join the last add-on, turret or hull selected (the active one).
     private void JoinHotkey()
     {
@@ -72,7 +239,7 @@ public sealed class DesignEditor : MonoBehaviour
         var others = addons.Where(v => v != target).ToList();
         if (target < 0 || others.Count == 0) { Say("Ctrl+J: select add-ons, then last the add-on, turret or hull they join.", 5); return; }
         Plugin.ModLog.LogInfo($"Ctrl+J: joining {string.Join(", ", others)} into {target} (selection order {string.Join(", ", picked)})");
-        RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into the last part selected.", json => AddonEdits.PlanMerge(json, target, others));
+        RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into the last part selected.", json => AddonEdits.PlanMerge(json, target, others, LiveShapes(json)));
     }
 
     internal void RequestRestore()
@@ -115,6 +282,46 @@ public sealed class DesignEditor : MonoBehaviour
                     if (c != null) yield return c;
     }
 
+    private bool liveShapesFailed;
+
+    /// Where the game shows each part's shape (shape coordinates to vehicle space, by the game's own conversion), for the
+    /// saved parts and the images of parts it shows twice. Null if the game won't say: edits then use the design's maths.
+    internal AddonEdits.LiveShapes? LiveShapes(string savedJson)
+    {
+        if (liveShapesFailed) return null;
+        try
+        {
+            var saved = Conversion.Objects(Conversion.Parse(savedJson)).Keys.ToHashSet();
+            var parts = new Dictionary<int, System.Numerics.Matrix4x4>();
+            var byMesh = new Dictionary<IntPtr, List<int>>();
+            var unsaved = new List<(IntPtr Mesh, System.Numerics.Matrix4x4 At)>();
+            foreach (var obj in AllParts())
+            {
+                var s = Each(obj.Components).Select(c => c?.TryCast<PlateStructure>()).FirstOrDefault(x => x?.Mesh != null);
+                var t = obj.GetComponent<VehicleTransform>();
+                if (s == null || t == null) continue;
+                Vector3 At(float x, float y, float z) => t.WorldToVehicleSpace(s.StructureToWorldSpace(new Vector3(x, y, z)));
+                Vector3 o = At(0, 0, 0), ex = At(1, 0, 0) - o, ey = At(0, 1, 0) - o, ez = At(0, 0, 1) - o;
+                var m = new System.Numerics.Matrix4x4(ex.x, ex.y, ex.z, 0, ey.x, ey.y, ey.z, 0, ez.x, ez.y, ez.z, 0, o.x, o.y, o.z, 1);
+                int v = (int)obj.VUID;
+                if (!saved.Contains(v)) { unsaved.Add((s.Mesh.Pointer, m)); continue; }
+                parts[v] = m;
+                (byMesh.TryGetValue(s.Mesh.Pointer, out var list) ? list : byMesh[s.Mesh.Pointer] = new()).Add(v);
+            }
+            // An image is a part of the game's own, not saved, sharing the shape of the one saved part it mirrors.
+            var images = new Dictionary<int, System.Numerics.Matrix4x4>();
+            foreach (var (mesh, at) in unsaved)
+                if (byMesh.TryGetValue(mesh, out var owners) && owners.Count == 1) images[owners[0]] = at;
+            return new AddonEdits.LiveShapes(parts, images);
+        }
+        catch (Exception ex)
+        {
+            liveShapesFailed = true;
+            Plugin.ModLog.LogWarning($"Live part placement unavailable, using the design's maths: {ex.Message}");
+            return null;
+        }
+    }
+
     /// Turret rings of every selected turret, whether its ring or its body was clicked.
     internal List<int> SelectedTurretRings()
     {
@@ -136,17 +343,31 @@ public sealed class DesignEditor : MonoBehaviour
 
     public void Update()
     {
-        try
+        // The per-frame features each on their own: one that fails (every frame) is logged once and stops no other.
+        Ui.Guard("Editor lookup", () =>
         {
             if (Time.unscaledTime >= nextLookup)
             {
                 nextLookup = Time.unscaledTime + 0.5f;
+                bool wasInEditor = core != null;
                 core = UnityEngine.Object.FindObjectOfType<VehicleDesignerCore>();
+                if (wasInEditor && core == null) { MeshTools.LeftEditor(); ExplodedView.LeftEditor(); } // editor-only views end with it
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
-            if (ready && !busy) JoinHotkey();
-            if (ready) { MeshTools.Keys(); ExplodedView.Keys(); }
-            PhotoShot.Update();
+        });
+        if (ready && !busy) Ui.Guard("Ctrl+J", JoinHotkey);
+        if (ready && !busy && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); }
+        if (ready)
+        {
+            Ui.Guard("Mesh tools keys", MeshTools.Keys);
+            Ui.Guard("Exploded view", ExplodedView.Keys);
+            Ui.Guard("Own paint", PartPaint.Tick);
+            Ui.Guard("Hotkeys", Hotkeys.Keys);
+        }
+        Ui.Guard("Photo", PhotoShot.Update);
+        // Design edits: a failure ends the edit (so the editor isn't left busy) and says why.
+        try
+        {
             if (pending != null && pending.IsCompleted)
             {
                 var task = pending; pending = null; busy = false;
@@ -207,6 +428,24 @@ public sealed class DesignEditor : MonoBehaviour
         File.WriteAllText(Path.Combine(recoveryDir, "original.blueprint"), original);
         File.WriteAllText(Path.Combine(recoveryDir, "edited.blueprint"), edited);
         File.WriteAllText(Path.Combine(recoveryDir, "README.txt"), $"{editName}. original.blueprint is the whole design before the edit, including unsaved changes; edited.blueprint is the result. Copy either into your faction's Blueprints\\Vehicles folder to load it. No saved blueprint was overwritten.");
+        PruneBackups();
+    }
+
+    /// Only the newest backups are kept (setting "Backups kept"; 0 keeps all): each is a whole design or two, and they
+    /// add up. Only the mod's own backup folders (named by time and a code) are ever taken away.
+    private static void PruneBackups()
+    {
+        int keep = Plugin.BackupsKept?.Value ?? 50;
+        if (keep <= 0) return;
+        try
+        {
+            var root = Path.Combine(Paths.BepInExRootPath, "SprocketQoLBackups");
+            var ours = new System.Text.RegularExpressions.Regex(@"^\d{8}-\d{6}-[0-9a-f]{8}$");
+            var old = Directory.GetDirectories(root).Where(d => ours.IsMatch(Path.GetFileName(d))).OrderByDescending(d => Path.GetFileName(d), StringComparer.Ordinal).Skip(keep).ToList();
+            foreach (var d in old) Directory.Delete(d, recursive: true);
+            if (old.Count > 0) Plugin.ModLog.LogInfo($"Backups: kept the newest {keep}, removed {old.Count} older");
+        }
+        catch (Exception ex) { Plugin.ModLog.LogWarning($"Backups: couldn't tidy the old ones: {ex.Message}"); }
     }
 
     private void RunEdit()
@@ -246,6 +485,33 @@ public sealed class DesignEditor : MonoBehaviour
     /// Swaps the parts' meshes as one of the game's own undoable operations, grouped with moving attached parts and
     /// removing parts, so Ctrl+Z and Ctrl+Y work on it like on any other edit. The meshes come from the game reading
     /// the design before and after the edit (the same reader a reload uses). Everything is checked before anything changes.
+    /// A change as one of the game's own undoable steps: `apply` runs now (and again on Ctrl+Y), `undo` on Ctrl+Z.
+    /// False (nothing done) when there's no editor to hold the step.
+    internal bool Undoable(string name, System.Action apply, System.Action undo)
+    {
+        var ops = core?.Editor?.operations;
+        if (ops == null) return false;
+        bool done = false;
+        var callbacks = new VehicleOperationCallbacks
+        {
+            Execute = Keep(DelegateSupport.ConvertDelegate<Il2CppSystem.Func<IVehicleOperatorContext, VehicleOPExecutionResult>>(
+                new Func<IVehicleOperatorContext, VehicleOPExecutionResult>(_ =>
+                {
+                    try { apply(); done = true; return VehicleOPExecutionResult.Executed; }
+                    catch (Exception ex) { Plugin.ModLog.LogError($"{name}: {ex}"); return VehicleOPExecutionResult.Cancelled; }
+                }))!),
+            Revert = Keep(DelegateSupport.ConvertDelegate<Il2CppSystem.Action<IVehicleOperatorContext>>(
+                new Action<IVehicleOperatorContext>(_ =>
+                {
+                    try { undo(); } catch (Exception ex) { Plugin.ModLog.LogError($"{name} undo: {ex}"); }
+                }))!),
+        };
+        var flags = Sprocket.VehicleDesigner.Operations.VehicleOp.InternalOpToVehicleOpFlags(global::Operations.Operation.DefaultFlags)
+                    | VehicleOperationFlags.Undo | VehicleOperationFlags.Redo | VehicleOperationFlags.Register;
+        ops.CreateOp(name, ref callbacks, flags, ops.GetNewGroupID(), VehicleOpExecutionMode.Synchronous);
+        return done;
+    }
+
     private void ApplyInPlace(AddonEdits.EditPlan plan, string original)
     {
         var byId = new Dictionary<int, VehicleObject>();
@@ -324,7 +590,11 @@ public sealed class DesignEditor : MonoBehaviour
         foreach (var (vuid, obj) in byId)
             foreach (var s in Each(obj.Components).Select(c => c?.TryCast<PlateStructure>()).Where(s => s?.Mesh != null))
                 (owners.TryGetValue(s!.Mesh.Pointer, out var list) ? list : owners[s.Mesh.Pointer] = new()).Add(vuid);
-        if (changes.Any(c => owners[c.Mesh.Pointer].Any(v => !plan.MeshIds.ContainsKey(v)))) throw new Exception("a changed part shares its live shape with another part");
+        // A part the game shows twice has its image as a part of its own, not saved in the design: that one follows.
+        var saved = Conversion.Objects(Conversion.Parse(original)).Keys.ToHashSet();
+        var sharers = changes.SelectMany(c => owners[c.Mesh.Pointer]).Where(v => !plan.MeshIds.ContainsKey(v)).Distinct().ToList();
+        if (sharers.Any(saved.Contains)) throw new Exception("a changed part shares its live shape with another part");
+        if (sharers.Count > 0) Plugin.ModLog.LogInfo($"QOL_LIVE the game's mirror images {string.Join(", ", sharers)} share the changed shape and follow it");
 
         Swap(changes, true, "trial of " + editName);
         string trial;

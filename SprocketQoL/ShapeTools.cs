@@ -29,7 +29,7 @@ public static class ShapeTools
                 ? "The selected add-ons become part of this turret or hull: same shape, place and armour, and they turn with it. Their inside counts as this part's inside. Mirror twins come along."
                 : "The other selected add-ons become part of this one: same shape, place and armour. Parts attached to them move onto this one. If this add-on and the others all have mirror twins, the twins merge the same way.");
             ui.Button($"Merge {others.Count} selected add-on{(others.Count == 1 ? "" : "s")} into this one", Ui.Callback(() =>
-                editor.RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into part {addon}.", json => AddonEdits.PlanMerge(json, addon, others))), ref tip);
+                editor.RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into part {addon}.", json => AddonEdits.PlanMerge(json, addon, others, editor.LiveShapes(json)))), ref tip);
         }
         if (body) return; // cutting with a part is for add-ons
 
@@ -41,19 +41,22 @@ public static class ShapeTools
         // Short labels: a toggle's label only gets the narrow left column.
         ui.ToggleField("Keep add-on", keepCutter, Ui.BoolCallback(v => keepCutter = v),
             "Off: the cutting add-on is removed. On: it stays (e.g. to cut again elsewhere).");
-        ui.ToggleField("Smooth fill", smoothFill, Ui.BoolCallback(v => smoothFill = v),
-            "Off (light): one ring of points between the hole and the face's corners, few points to edit. " +
-            "On (smooth): a ring of quads hugging the hole, then rings stepping out (more points, even slices).");
+        var fillTip = new UITooltip("Fill", "How the plate around the cut is filled. Fewest points: only the cut's own points and the " +
+            "face's corners, no new ones (like Blender's Boolean). Light rings: one ring of new points between the hole and the corners, " +
+            "for even faces. Smooth rings: a ring of quads hugging the hole, then rings stepping out (most points, even slices).");
+        ui.Button($"Fill: {Fill.ModeNames[(int)fill]}  (click to change)", Ui.Callback(() => { fill = (Fill.Mode)(((int)fill + 1) % Fill.ModeNames.Length); __instance.RequestRedraw(); }), ref fillTip);
         foreach (bool pocket in new[] { false, true })
         {
             var tip = new UITooltip(pocket ? "Cut pocket" : "Cut hole", pocket
                 ? "Cuts a recess the add-on's shape: its surface inside the structure becomes plates with its armour."
-                : "Cuts a hole the add-on's shape through every plate it passes through.");
+                : "Cuts a hole the add-on's shape through every plate it passes through. A mirrored plate (twin pair, or shown on both sides) is cut on both sides.");
+            var mode = fill;
             ui.Button(pocket ? "Cut pocket (with walls)" : "Cut hole", Ui.Callback(() =>
                 editor.RequestLiveEdit(pocket ? "Cutting a pocket" : "Cutting a hole", pocket ? "Pocket cut." : "Hole cut.",
-                    json => AddonEdits.PlanCut(json, addon, targets, !keepCutter, pocket, light: !smoothFill))), ref tip);
+                    json => AddonEdits.PlanCut(json, addon, targets, !keepCutter, pocket, mode, editor.LiveShapes(json)))), ref tip);
         }
     });
 
-    static bool keepCutter, smoothFill;
+    static bool keepCutter;
+    static Fill.Mode fill = Fill.Mode.Fewest;
 }

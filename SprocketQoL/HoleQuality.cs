@@ -19,17 +19,37 @@ public static class HoleQuality
     static ushort? holeThickness; // the holed face's plate thickness, read before the game takes the face away
 
     [HarmonyPrefix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.CreateHole))]
-    static void UseQuality(ref int resolution, Il2CppReferenceArray<Vertex> vertices)
+    static void UseQuality(ref int resolution, EditMesh mesh, Il2CppReferenceArray<Vertex> vertices)
     {
         Plugin.ModLog.LogInfo($"Create Hole: game asked for {resolution} segments, using {segments} at {sizePercent}% size");
         resolution = segments;
         holeThickness = null;
-        Ui.Guard("Create Hole", () => holeThickness = FaceOf(vertices)?.firstLoop?.thickness);
+        holeRivets = null;
+        Ui.Guard("Create Hole", () =>
+        {
+            var face = FaceOf(vertices);
+            holeThickness = face?.firstLoop?.thickness;
+            // The game drops the holed face's rivets with it: noted here, put back on the faces round the hole after.
+            if (face != null) holeRivets = new MeshTools.RivetKeeper(mesh, new[] { face });
+        });
     }
 
+    static MeshTools.RivetKeeper? holeRivets;
+
+    /// The holed face's rivets onto the faces now round the hole (those in the hole itself go).
+    [HarmonyPostfix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.FillEdgeLoop))]
+    static void KeepRivets(Il2CppReferenceArray<Face> __result) => Ui.Guard("Create Hole", () =>
+    {
+        if (holeRivets is not { Count: > 0 } keeper || __result == null) return;
+        holeRivets = null;
+        var (kept, lost) = keeper.Place(__result, reach: 0.002f);
+        Plugin.ModLog.LogInfo($"Create Hole: rivets {kept} kept, {lost} in the hole removed");
+    });
+
     static Num? faceSide; // which way the face being holed really faces, to check the filled-in faces against
-    static int holeFill; // index into FillNames
-    static readonly string[] FillNames = { "Hole fill: light rings", "Hole fill: smooth rings", "Hole fill: game's fan" };
+    static int holeFill; // index into FillNames: Fill.Mode's (fewest points first), then the game's own fan
+    static readonly string[] FillNames = Fill.ModeNames.Select(n => "Hole fill: " + n).Append("Hole fill: game's fan").ToArray();
+    static bool GameFill => holeFill == FillNames.Length - 1;
 
     /// Runs after the game has made the ring and before it fills the face around it: makes the ring a true circle,
     /// then (clean fill) builds the faces around it itself, a quad ring at the rim stepping out to the face's corners,
@@ -46,7 +66,7 @@ public static class HoleQuality
             int order = FaceOrder(outer);
             faceSide = order == 0 ? null : HoleRing.Normal(corners) * order;
             // The holed face is already gone by now: new faces copy a neighbour's settings and the holed face's thickness.
-            string fill = holeFill == 2 ? "game's fill" : faceSide == null ? "game's fill (can't tell which way the face faces)"
+            string fill = GameFill ? "game's fill" : faceSide == null ? "game's fill (can't tell which way the face faces)"
                 : (FaceOf(outer) ?? Neighbour(outer)) is not { } like ? "game's fill (no face next to it to copy settings from)"
                 : (mine = CleanFill(mesh, outer, inner, faceSide.Value, order, like, holeThickness ?? like.firstLoop.thickness)) == null ? "game's fill (clean fill didn't fit)"
                 : $"clean fill ({Fill.Paths[^1]}, {holeThickness?.ToString() ?? "neighbour's"} thickness)";
@@ -67,7 +87,9 @@ public static class HoleQuality
         // The fill turns its faces the way the outline runs: give it the corners in the face's own order.
         var corners = Enumerable.Range(0, outer.Length).ToList();
         if (order < 0) corners.Reverse();
-        var faces = Fill.Region(pos, corners, new List<List<int>> { Enumerable.Range(outer.Length, inner.Length).ToList() }, normal, added, light: holeFill == 0);
+        var mode = (Fill.Mode)holeFill;
+        var faces = Fill.Region(pos, corners, new List<List<int>> { Enumerable.Range(outer.Length, inner.Length).ToList() }, normal,
+                                mode == Fill.Mode.Fewest ? null : added, mode == Fill.Mode.Light);
         if (faces.Count == 0 || faces.Any(f => f.Length is < 3 or > 4 || f.Distinct().Count() != f.Length)) return null;
         foreach (var a in added)
         {
@@ -223,7 +245,8 @@ public static class HoleQuality
             sizePercent = (int)Math.Round(v);
             CreateHoleOp.HoleRadiusScale = gameScale.Value * sizePercent / 100f;
         }));
-        var tip = new UITooltip("Hole fill", "Light: one ring of points between the hole and the face's corners, few points to edit. " +
+        var tip = new UITooltip("Hole fill", "Fewest points: only the hole's ring and the face's corners, no new points (triangles paired into quads). " +
+                                "Light: one ring of points between the hole and the corners, for even faces. " +
                                 "Smooth: a ring of quads hugging the hole, then rings stepping out (more points, even slices). Game's: the game's own fan of triangles.");
         // The panel only redraws when asked, so ask, or the button would keep showing the old choice.
         ui.Button(FillNames[holeFill], Ui.Callback(() => { holeFill = (holeFill + 1) % FillNames.Length; __instance.RequestRedraw(); }), ref tip);

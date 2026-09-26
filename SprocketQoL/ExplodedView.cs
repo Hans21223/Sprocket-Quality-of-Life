@@ -36,6 +36,13 @@ public static class ExplodedView
         }
     }
 
+    /// The editor closed: parts that still exist go back, and the view is off next time.
+    internal static void LeftEditor()
+    {
+        if (on) Collapse();
+        on = false;
+    }
+
     static float Spread => Plugin.ExplodeSpread?.Value ?? 0.5f;
 
     static bool Gone(Transform t)

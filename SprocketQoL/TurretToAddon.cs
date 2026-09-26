@@ -39,13 +39,20 @@ public static class InspectorSection
             $"{(rings.Count == 1 ? "Turret" : $"{rings.Count} turrets")} converted to add-ons. Save under the new name to keep it.", json =>
             {
                 var bodies = new List<int>();
+                // A turret's mirror twin converts with it, so the pair stays alike.
+                var objects = Conversion.Objects(Conversion.Parse(json));
+                var all = rings.ToList();
                 foreach (int ring in rings)
+                    if (objects.TryGetValue(ring, out var r) && r["transform"]?["mirrorVuid"]?.GetValue<int>() is int t && !all.Contains(t)
+                        && objects.TryGetValue(t, out var twin) && Conversion.GuidOf(twin) == Conversion.RingGuid && twin["transform"]?["mirrorVuid"]?.GetValue<int>() == ring)
+                        all.Add(t);
+                foreach (int ring in all)
                 {
                     var r = Conversion.Convert(json, ring);
                     json = r.Json;
                     bodies.Add(r.BodyId);
                 }
-                return new EditResult(json, bodies[^1], $"rings={string.Join(",", rings)} -> add-on bodies={string.Join(",", bodies)}");
+                return new EditResult(json, bodies[^1], $"rings={string.Join(",", all)} -> add-on bodies={string.Join(",", bodies)}");
             })), ref tip);
     }
 }

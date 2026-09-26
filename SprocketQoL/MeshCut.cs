@@ -51,8 +51,8 @@ public static class MeshCut
         public bool Changed;
     }
 
-    /// `light`: fill around each cut with as few new points as avoid long thin fans (see Fill.Region).
-    public static Result Cut(JsonObject meshData, IReadOnlyList<Solid> shapes, bool pocket, bool light = true)
+    /// `fill`: how the faces around each cut are made (see Fill.Mode); the fewest points by default.
+    public static Result Cut(JsonObject meshData, IReadOnlyList<Solid> shapes, bool pocket, Fill.Mode fill = Fill.Mode.Fewest)
     {
         var mesh = meshData["mesh"]!.AsObject();
         var raw = mesh["vertices"]!.AsArray().Select(F).ToArray();
@@ -242,7 +242,7 @@ public static class MeshCut
                 var mine = outers.Count == 1 ? holes : holes.Where(h => InsideLoop(outer, verts[h[0]], o.Normal, verts)).ToList();
                 var extra = new List<Fill.Added>();
                 int first = verts.Count;
-                var faces = Fill.Region(verts, outer, mine, o.Normal, extra, light);
+                var faces = Fill.Region(verts, outer, mine, o.Normal, fill == Fill.Mode.Fewest ? null : extra, fill == Fill.Mode.Light);
                 for (int i = 0; i < extra.Count; i++)
                 {
                     // A new vertex takes its thickness from the rim and outer corners it lies between.

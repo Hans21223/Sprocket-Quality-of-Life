@@ -19,6 +19,96 @@ public static class MeshPlans
         public static Rebuild Fail(string why) => new(new(), new(), new(), why);
     }
 
+    // ---------- checks, before anything changes ----------
+
+    /// Why a rebuild would leave the shape broken, or null: a new face repeating a corner, squashed to next to no area, or
+    /// turned over against the face it's made from; edges shared by more than two faces, longer in all than before
+    /// (faces laid over each other); or open edges longer in all than before (a crack: faces no longer joined). `gaps`
+    /// false skips the last, for tools asked to leave points unjoined. Faces that were squashed already are left be.
+    public static string? Check(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, Rebuild plan, bool gaps = true)
+    {
+        var at = pos.Concat(plan.Points.Select(p => p.P)).ToList();
+        foreach (var nf in plan.Add)
+        {
+            var c = nf.Corners;
+            if (c.Length < 3 || c.Distinct().Count() != c.Length || c.Any(i => i < 0 || i >= at.Count)) return "a new face would repeat a corner";
+            var n = HoleRing.Normal(c.Select(i => at[i]).ToList());
+            var s = HoleRing.Normal(faces[nf.Source].Select(i => pos[i]).ToList());
+            if (s.Length() < 1e-9f) continue; // made from a squashed face: nothing to compare with
+            if (n.Length() < 1e-5f * s.Length()) return "a new face would be squashed to next to no area";
+            if (Vector3.Dot(n, s) < -0.5f * n.Length() * s.Length()) return "a new face would be turned over";
+        }
+        var removed = plan.Remove.ToHashSet();
+        var after = faces.Where((_, i) => !removed.Contains(i)).Concat(plan.Add.Select(a => a.Corners)).ToList();
+        float tolerance = 1e-5f + 1e-4f * plan.Remove.SelectMany(f => faces[f]).Select(i => pos[i]).DefaultIfEmpty().Max(p => p.Length());
+        if (Length(after, at, u => u > 2) > Length(faces, at, u => u > 2) + tolerance) return "faces would be laid over each other";
+        if (gaps && Length(after, at, u => u == 1) > Length(faces, at, u => u == 1) + tolerance) return "it would leave a crack (faces no longer joined)";
+        return null;
+    }
+
+    /// Why moving points to `moved` would fold a face over or squash it flat, or null.
+    public static string? Folds(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IReadOnlyDictionary<int, Vector3> moved)
+    {
+        foreach (var f in faces)
+        {
+            if (!f.Any(moved.ContainsKey)) continue;
+            var was = HoleRing.Normal(f.Select(i => pos[i]).ToList());
+            var now = HoleRing.Normal(f.Select(i => moved.TryGetValue(i, out var p) ? p : pos[i]).ToList());
+            if (was.Length() < 1e-8f) continue; // squashed already: not this tool's doing
+            if (now.Length() < 1e-8f) return "a face would be squashed to no area";
+            if (Vector3.Dot(now, was) <= 0) return "a face would fold over";
+        }
+        return null;
+    }
+
+    /// The point of a face (its corners, fanned into triangles from the first) nearest to `p`, and how far away it is.
+    public static (Vector3 Point, float Distance) Closest(IReadOnlyList<Vector3> corners, Vector3 p)
+    {
+        var best = (Point: corners[0], Distance: float.MaxValue);
+        for (int k = 1; k + 1 < corners.Count; k++)
+        {
+            var q = OnTriangle(p, corners[0], corners[k], corners[k + 1]);
+            float d = Vector3.Distance(p, q);
+            if (d < best.Distance) best = (q, d);
+        }
+        return best;
+    }
+
+    // Nearest point of triangle abc to p (Ericson, Real-Time Collision Detection 5.1.5).
+    static Vector3 OnTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+    {
+        Vector3 ab = b - a, ac = c - a, ap = p - a;
+        float d1 = Vector3.Dot(ab, ap), d2 = Vector3.Dot(ac, ap);
+        if (d1 <= 0 && d2 <= 0) return a;
+        Vector3 bp = p - b;
+        float d3 = Vector3.Dot(ab, bp), d4 = Vector3.Dot(ac, bp);
+        if (d3 >= 0 && d4 <= d3) return b;
+        float vc = d1 * d4 - d3 * d2;
+        if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+        Vector3 cp = p - c;
+        float d5 = Vector3.Dot(ab, cp), d6 = Vector3.Dot(ac, cp);
+        if (d6 >= 0 && d5 <= d6) return c;
+        float vb = d5 * d2 - d1 * d6;
+        if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+        float va = d3 * d6 - d5 * d4;
+        if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return b + (c - b) * ((d4 - d3) / (d4 - d3 + (d5 - d6)));
+        float denom = 1 / (va + vb + vc);
+        return a + ab * (vb * denom) + ac * (vc * denom);
+    }
+
+    static IEnumerable<(int, int)> Sides(int[] f) => f.Select((v, k) => v < f[(k + 1) % f.Length] ? (v, f[(k + 1) % f.Length]) : (f[(k + 1) % f.Length], v));
+
+    static Dictionary<(int, int), int> Uses(IEnumerable<int[]> faces)
+    {
+        var uses = new Dictionary<(int, int), int>();
+        foreach (var f in faces) foreach (var e in Sides(f)) uses[e] = uses.GetValueOrDefault(e) + 1;
+        return uses;
+    }
+
+    /// Total length of the edges used by a number of faces `which` picks (1: open edges; more than 2: crowded ones).
+    static double Length(IEnumerable<int[]> faces, IReadOnlyList<Vector3> at, Func<int, bool> which) =>
+        Uses(faces).Where(u => which(u.Value)).Sum(u => (double)Vector3.Distance(at[u.Key.Item1], at[u.Key.Item2]));
+
     // ---------- Flatten ----------
 
     public enum FlattenMode { BestFit, Level, Sideways, Lengthways }
@@ -222,6 +312,7 @@ public static class MeshPlans
         var points = new List<NewPoint>();
         // How each face's corner at a bevelled point changes: one point in its place (or two, cutting the corner off).
         var corner = new Dictionary<(int Face, int Point), int[]>();
+        var endsAt = new HashSet<int>(); // points where a bevel ends inside the plate and the point stays
         int Add(Vector3 p, int from)
         {
             points.Add(new NewPoint(p, new[] { (from, 1f) }));
@@ -275,16 +366,20 @@ public static class MeshPlans
                 if (!at.ContainsKey(x)) at[x] = Add(Slide(u, x), u);
                 corner[(f, u)] = new[] { at[x] };
             }
+            bool cutOff = false;
             foreach (int g in around.Where(g => !sides.Contains(g)))
             {
                 // g's corner at u, between its two neighbours there: add the new point on each side it shares.
                 int k = Array.IndexOf(faces[g], u);
                 int before = faces[g][(k - 1 + faces[g].Length) % faces[g].Length], after = faces[g][(k + 1) % faces[g].Length];
                 bool hasBefore = at.ContainsKey(before), hasAfter = at.ContainsKey(after);
-                if (hasBefore && hasAfter) corner[(g, u)] = new[] { at[before], at[after] };      // box corner: u is cut off
+                if (hasBefore && hasAfter) { corner[(g, u)] = new[] { at[before], at[after] }; cutOff = true; } // box corner: u is cut off
                 else if (hasBefore) corner[(g, u)] = new[] { at[before], u };
                 else if (hasAfter) corner[(g, u)] = new[] { u, at[after] };
             }
+            // More faces round u than a box corner: u stays, and the strip's end runs through it (else a hole is left
+            // between u and the two new points).
+            if (!cutOff) endsAt.Add(u);
         }
 
         int[] Rebuilt(int f) => faces[f].SelectMany(v => corner.TryGetValue((f, v), out var r) ? r : new[] { v }).ToArray();
@@ -304,8 +399,10 @@ public static class MeshPlans
             var strip = new List<int>();
             strip.AddRange(At(f1, b).Reverse());
             strip.AddRange(At(f1, a).Reverse());
+            if (endsAt.Contains(a)) strip.Add(a);
             strip.AddRange(At(f2, a).Reverse());
             strip.AddRange(At(f2, b).Reverse());
+            if (endsAt.Contains(b)) strip.Add(b);
             strip = strip.Where((v, i) => v != strip[(i + 1) % strip.Count]).Distinct().ToList();
             if (strip.Count < 3) continue;
             shapes.Add((strip.ToArray(), f1));

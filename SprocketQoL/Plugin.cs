@@ -16,22 +16,26 @@ public sealed class Plugin : BasePlugin
     internal static ManualLogSource ModLog = null!;
     internal static ConfigEntry<string>? Folded;
     internal static ConfigEntry<bool>? ShowHotkeys;
-    internal static ConfigEntry<float>? ExplodeSpread;
+    internal static ConfigEntry<float>? ExplodeSpread, FlashlightPercent, FullbrightPercent;
+    internal static ConfigEntry<int>? BackupsKept;
     public override void Load()
     {
         ModLog = Log;
         Folded = Config.Bind("Panels", "Folded sections", "", "Quality of Life sections folded away in the editor panels, separated by |");
         ShowHotkeys = Config.Bind("Panels", "Show hotkeys box", true, "The Hotkeys box beside a hand-made structure's panel (F1 in the editor shows or hides it)");
         ExplodeSpread = Config.Bind("Panels", "Exploded view spread", 0.5f, "How far apart the exploded view (F2) moves parts, in metres (F3 / F4 change it)");
+        FlashlightPercent = Config.Bind("Panels", "Flashlight brightness", 80f, "How bright the flashlight (F6) is where it lands, in percent of the sun");
+        FullbrightPercent = Config.Bind("Panels", "Fullbright brightness", 25f, "How bright each of fullbright's (F7) 14 lights is, in percent of the sun");
+        BackupsKept = Config.Bind("Backups", "Backups kept", 50, "How many design backups (BepInEx\\SprocketQoLBackups, one per edit) to keep; the oldest go first. 0 keeps them all.");
         AddComponent<DesignEditor>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds) };
+        var features = new[] { typeof(InspectorSection), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(ImageAddresses) };
         foreach (var feature in features)
         {
             try { harmony.PatchAll(feature); }
             catch (Exception ex) { Log.LogError($"{feature.Name} disabled, could not attach to the game: {ex}"); }
         }
-        Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo.");
+        Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo, Own paint.");
     }
 }
 
@@ -41,8 +45,22 @@ internal static class Ui
     internal static void Guard(string feature, Action draw)
     {
         try { draw(); }
-        catch (Exception ex) { Plugin.ModLog.LogError($"{feature}: {ex}"); }
+        catch (Exception ex)
+        {
+            // The same error again (a GUI drawn every frame) is counted, not logged again: no wall of red.
+            string text = ex.ToString();
+            if (lastErrors.TryGetValue(feature, out var last) && last.Text == text)
+            {
+                lastErrors[feature] = (text, ++last.Count);
+                if (last.Count % 1000 == 0) Plugin.ModLog.LogError($"{feature}: the same error again, {last.Count} times so far");
+                return;
+            }
+            lastErrors[feature] = (text, 1);
+            Plugin.ModLog.LogError($"{feature}: {ex}");
+        }
     }
+
+    static readonly Dictionary<string, (string Text, int Count)> lastErrors = new();
 
     internal static UnityAction Callback(Action action) => DelegateSupport.ConvertDelegate<UnityAction>(action)!;
 

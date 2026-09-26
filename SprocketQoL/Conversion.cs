@@ -88,7 +88,7 @@ public static class Conversion
                     if (operated[j] is JsonValue v && v.TryGetValue<int>(out int refId) && deadComponents.Contains(refId)) operated.RemoveAt(j);
         }
         foreach (var o in survivors)
-            if (o["transform"]?["mirrorVuid"] is JsonValue m && m.TryGetValue<int>(out int mirror) && removed.Contains(mirror)) o["transform"]!["mirrorVuid"] = -1;
+            if (o["transform"]?["mirrorVuid"] is JsonValue m && m.TryGetValue<int>(out int mirror) && removed.Contains(mirror)) AddonEdits.Unlink(o);
         var after = WorldMatrices(Objects(b));
         foreach (var (id, matrix) in after)
             if (!Near(before[id], matrix)) throw new Exception($"Part {id} would move or distort; conversion cancelled.");
@@ -98,16 +98,132 @@ public static class Conversion
         return new ConversionResult(b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), bodyId, removed.Count, survivors.Length);
     }
 
-    public static Matrix4x4 Local(JsonNode transform)
+    /// A part's own numbers (its components: "cannon", "turretRing", ...), keyed by name; not links to other parts or settings.
+    static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && char.IsLetter(kv.Key[0])
+        && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList();
+
+    /// Fills a mirrored turret's twin: the game's Mirror copies only the ring, so every part on ring `ringId` (turret body,
+    /// guns, seats, decals, ...) gets a mirrored copy on the twin ring, linked to it as a mirror pair, as Mirror places
+    /// parts (a body pair shares its shape, so later edits go to both). If the ring is saved once, marked mirrored (the
+    /// game draws its twin itself), the parts on it are marked the same way instead.
+    public static (string Json, int Mirrored, string How) MirrorTurret(string json, int ringId)
+    {
+        var b = Parse(json);
+        var objects = Objects(b);
+        if (!objects.TryGetValue(ringId, out var ring) || GuidOf(ring) != RingGuid) throw new Exception("That turret is no longer present.");
+        var children = objects.Values.GroupBy(o => Id(o, "pvuid")).ToDictionary(g => g.Key, g => g.Select(o => Id(o, "vuid")).ToList());
+        List<int> Below(int top)
+        {
+            var found = new List<int>();
+            for (var queue = new Queue<int>(new[] { top }); queue.Count > 0;)
+                foreach (int c in children.GetValueOrDefault(queue.Dequeue()) ?? new()) { found.Add(c); queue.Enqueue(c); }
+            return found;
+        }
+        int Flags(JsonObject o) => o["flags"]?.GetValue<int>() ?? 0;
+        int? TwinOf(JsonObject o) => o["transform"]?["mirrorVuid"]?.GetValue<int>() is int m && m != Id(o, "vuid") && objects.ContainsKey(m) ? m : null;
+        var parts = Below(ringId);
+        if (parts.Count == 0) throw new Exception("Nothing on this turret to mirror yet.");
+
+        if (TwinOf(ring) is not int twinRing)
+        {
+            if ((Flags(ring) & 4) == 0) throw new Exception("This turret has no mirror twin: place it with Mirror on.");
+            int marked = 0;
+            foreach (int v in parts)
+                if (TwinOf(objects[v]) == null && (Flags(objects[v]) & 4) == 0) { objects[v]["flags"] = Flags(objects[v]) | 4; marked++; }
+            return (b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), marked, "marked mirrored");
+        }
+
+        // New numbers for each copy and its components; the ring's map to the twin ring's.
+        int next = objects.Values.SelectMany(o => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && kv.Key is not ("pvuid" or "flags"))
+                                                   .Select(kv => kv.Value!.GetValue<int>())).DefaultIfEmpty(0).Max() + 1;
+        var map = new Dictionary<int, int> { [ringId] = twinRing };
+        foreach (var key in ComponentKeys(ring)) if (objects[twinRing][key] is JsonValue tv) map[Id(ring, key)] = tv.GetValue<int>();
+        var onTwin = Below(twinRing).ToHashSet();
+        var copy = new List<int>();
+        foreach (int v in parts)
+        {
+            var o = objects[v];
+            if (TwinOf(o) is int t && onTwin.Contains(t)) { map[v] = t; continue; } // already mirrored onto the twin
+            copy.Add(v);
+            map[v] = next++;
+            foreach (var key in ComponentKeys(o)) map[Id(o, key)] = next++;
+        }
+        if (copy.Count == 0) throw new Exception("Everything on this turret is already on its twin.");
+
+        var blocks = b["blueprints"]!.AsArray();
+        int nextBlock = blocks.Select(x => x!["id"]?.GetValue<int>() ?? 0).DefaultIfEmpty(0).Max() + 1;
+        var list = b["objects"]!.AsArray();
+        foreach (int v in copy)
+        {
+            var o = objects[v];
+            var d = JsonNode.Parse(o.ToJsonString())!.AsObject();
+            d["vuid"] = map[v];
+            d["pvuid"] = map.TryGetValue(Id(o, "pvuid"), out int p) ? p : Id(o, "pvuid");
+            foreach (var key in ComponentKeys(o)) d[key] = map[Id(o, key)];
+            if (o["structureID"] is JsonValue s && map.TryGetValue(s.GetValue<int>(), out int body)) d["structureID"] = body;
+            // Mirrored across the vehicle's centre: seen from its (mirrored) parent, x the other way and the turn mirrored.
+            var t = d["transform"]!.AsObject();
+            var pos = t["pos"]!.AsArray();
+            pos[0] = -pos[0]!.GetValue<float>();
+            var rot = t["rot"]!.AsArray();
+            rot[1] = -rot[1]!.GetValue<float>();
+            rot[2] = -rot[2]!.GetValue<float>();
+            // Settings that name other parts (a seat's guns, a gun's barrels) get their own copy naming the copies.
+            foreach (var key in d.Where(kv => kv.Key.EndsWith("BlueprintVuid")).Select(kv => kv.Key).ToList())
+            {
+                var block = blocks.First(x => x!["id"]?.GetValue<int>() == d[key]!.GetValue<int>())!;
+                var named = block["blueprint"]?.AsObject().Where(kv => kv.Key is "operatedBehaviours" or "barrelVuids" && kv.Value is JsonArray).Select(kv => kv.Key).ToList() ?? new();
+                if (named.Count == 0) continue;
+                var own = JsonNode.Parse(block.ToJsonString())!.AsObject();
+                own["id"] = nextBlock;
+                foreach (var name in named)
+                {
+                    var ids = own["blueprint"]![name]!.AsArray();
+                    for (int i = 0; i < ids.Count; i++) if (ids[i] is JsonValue iv && map.TryGetValue(iv.GetValue<int>(), out int to)) ids[i] = to;
+                }
+                blocks.Add(own);
+                d[key] = nextBlock++;
+            }
+            if (TwinOf(o) == null)
+            {
+                t["mirrorVuid"] = v;
+                o["transform"]!["mirrorVuid"] = map[v];
+                d["flags"] = (Flags(o) ^ 1) | 4;
+                o["flags"] = Flags(o) | 4;
+            }
+            else
+            {
+                t["mirrorVuid"] = -1; // mirrored inside its own turret already: its copy stands on its own
+                d["flags"] = (Flags(o) ^ 1) & ~4;
+            }
+            list.Add(d);
+        }
+        // The twin ring's turret body is the copy of this ring's.
+        if (ring["structureID"] is JsonValue rb && map.TryGetValue(rb.GetValue<int>(), out int twinBody)) objects[twinRing]["structureID"] = twinBody;
+        if (ring["compartmentBodyID"]?["structureVuid"] is JsonValue cb && map.TryGetValue(cb.GetValue<int>(), out int twinCompartment) && objects[twinRing]["compartmentBodyID"] is JsonObject tc)
+            tc["structureVuid"] = twinCompartment;
+
+        // Each copy must show as the mirror image of its part, or the twin ring isn't a true mirror of this one.
+        var world = WorldMatrices(Objects(b));
+        var flip = Matrix4x4.CreateScale(-1, 1, 1);
+        Matrix4x4 Shape(JsonObject o) => ((o["flags"]?.GetValue<int>() ?? 0) & 1) != 0 ? flip * world[Id(o, "vuid")] : world[Id(o, "vuid")];
+        var all = Objects(b);
+        foreach (int v in copy)
+            if (!Near(Shape(all[v]) * flip, Shape(all[map[v]]))) throw new Exception($"The twin turret isn't a mirror image of this one (part {v}); nothing changed.");
+        return (b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), copy.Count, "copied onto the twin ring");
+    }
+
+    public static Matrix4x4 Local(JsonNode transform, bool scaled = true)
     {
         Vector3 Vec(string k) => new(transform[k]![0]!.GetValue<float>(), transform[k]![1]!.GetValue<float>(), transform[k]![2]!.GetValue<float>());
         var r = Vec("rot") * (MathF.PI / 180f);
         // Unity Euler order: Z, then X, then Y. System.Numerics uses row vectors.
-        return Matrix4x4.CreateScale(Vec("scale")) * Matrix4x4.CreateRotationZ(r.Z) * Matrix4x4.CreateRotationX(r.X) * Matrix4x4.CreateRotationY(r.Y) * Matrix4x4.CreateTranslation(Vec("pos"));
+        return Matrix4x4.CreateScale(scaled ? Vec("scale") : Vector3.One) * Matrix4x4.CreateRotationZ(r.Z) * Matrix4x4.CreateRotationX(r.X) * Matrix4x4.CreateRotationY(r.Y) * Matrix4x4.CreateTranslation(Vec("pos"));
     }
     public static Dictionary<int, Matrix4x4> WorldMatrices(Dictionary<int, JsonObject> objects)
     {
         var cache = new Dictionary<int, Matrix4x4>();
+        var frames = new Dictionary<int, Matrix4x4>();
         var visiting = new HashSet<int>();
         Matrix4x4 Get(int id)
         {
@@ -115,8 +231,17 @@ public static class Conversion
             if (!visiting.Add(id)) throw new Exception("Cyclic blueprint hierarchy.");
             if (!objects.TryGetValue(id,out var o)) throw new Exception($"Missing parent part {id}.");
             int parent = Id(o,"pvuid");
-            var matrix = Local(o["transform"]!) * (parent < 0 ? Matrix4x4.Identity : Get(parent));
+            var matrix = Local(o["transform"]!) * (parent < 0 ? Matrix4x4.Identity : Frame(parent));
             visiting.Remove(id); cache[id] = matrix; return matrix;
+        }
+        // What parts on `id` hang from: the part itself, but a mantlet's scale sizes the mantlet only (the game puts a tank
+        // built on a mantlet scaled 2.77 where unscaled maths does, not 2.77 times as far out).
+        Matrix4x4 Frame(int id)
+        {
+            if (frames.TryGetValue(id, out var ready)) return ready;
+            var o = objects.TryGetValue(id, out var found) ? found : throw new Exception($"Missing parent part {id}.");
+            int parent = Id(o, "pvuid");
+            return frames[id] = o.ContainsKey("mantlet") ? Local(o["transform"]!, scaled: false) * (parent < 0 ? Matrix4x4.Identity : Frame(parent)) : Get(id);
         }
         foreach (int id in objects.Keys) Get(id);
         return cache;

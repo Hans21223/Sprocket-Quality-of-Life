@@ -1,3 +1,4 @@
+using BepInEx.Unity.IL2CPP.Utils.Collections;
 using Il2CppInterop.Runtime;
 using Sprocket;
 using Sprocket.Photomode;
@@ -58,14 +59,23 @@ internal static class PhotoShot
             frames++;
             if (step == 0 && frames >= SettleFrames)
             {
-                ScreenCapture.CaptureScreenshot(file); // written at the end of this frame
+                shotDone = false; shotError = null;
+                DesignEditor.Instance!.StartCoroutine(Shoot().WrapToIl2Cpp());
                 step = 1; frames = 0;
             }
-            else if (step == 1 && frames >= 3)
+            else if (step == 1 && (shotDone || frames > 120))
             {
                 Restore();
-                Plugin.ModLog.LogInfo($"QOL_PHOTO saved {file} ({(File.Exists(file) ? new FileInfo(file).Length / 1024 + " KB" : "not written yet")})");
-                DesignEditor.Instance?.Say("Photo saved: " + file, 6);
+                if (shotDone && shotError == null)
+                {
+                    Plugin.ModLog.LogInfo($"QOL_PHOTO saved {file} ({new FileInfo(file).Length / 1024} KB)");
+                    DesignEditor.Instance?.Say("Photo saved: " + file, 6);
+                }
+                else
+                {
+                    Plugin.ModLog.LogError($"QOL_PHOTO not saved: {shotError?.ToString() ?? "the frame never came"}");
+                    DesignEditor.Instance?.Say("Photo not saved: " + (shotError?.Message ?? "the frame never came"), 6);
+                }
             }
         }
         catch (Exception ex)
@@ -73,6 +83,25 @@ internal static class PhotoShot
             Plugin.ModLog.LogError($"QOL_PHOTO failed: {ex}");
             Restore();
         }
+    }
+
+    static bool shotDone;
+    static Exception? shotError;
+
+    /// The finished frame, as shown on screen, saved as a PNG. (The game's own ScreenCapture.CaptureScreenshot can't be
+    /// called from a mod: its file name doesn't pass through.)
+    static System.Collections.IEnumerator Shoot()
+    {
+        yield return new WaitForEndOfFrame(); // after everything is drawn
+        try
+        {
+            var shot = ScreenCapture.CaptureScreenshotAsTexture();
+            byte[] png = ImageConversion.EncodeToPNG(shot);
+            UnityEngine.Object.Destroy(shot);
+            File.WriteAllBytes(file, png);
+        }
+        catch (Exception ex) { shotError = ex; }
+        shotDone = true;
     }
 
     /// Settings back as they were, and the overlay if it was showing.
@@ -115,15 +144,14 @@ internal static class PhotoShot
         g.AntiAliasingQuality = 2;
         g.DynamicResolutionMode = DynamicResolutionMode.Off; // full resolution, no upscaling
         g.DLSS = false;
-        // Levels without a known top value: as in the game's best preset.
+        // Levels without a known top value: the game's "Maximum" preset's, unless the player's are better already
+        // (the presets run quality 3 at Minimum to 0 at Maximum, terrain and shader the other way).
         var presets = Resources.FindObjectsOfTypeAll(Il2CppType.Of<GraphicsSettingsContainer>())
             .Select(o => o.TryCast<GraphicsSettingsContainer>()).Where(p => p?.Settings != null).ToList();
-        if (presets.Count == 0) return;
-        var best = presets.OrderBy(p => (int)p!.Settings.ShadowQuality + (int)p.Settings.TextureResolution + (int)p.Settings.AmbientOcclusionMode
-                                        + (int)p.Settings.ScreenSpaceReflectionMode + (int)p.Settings.DistantObjectDetail).Last()!.Settings;
-        g.QualityLevel = best.QualityLevel;
-        g.ShaderQualityLevel = best.ShaderQualityLevel;
-        g.TerrainQualityLevel = best.TerrainQualityLevel;
+        if (presets.FirstOrDefault(p => p!.Name == "Maximum")?.Settings is not { } best) return;
+        g.QualityLevel = Math.Min(g.QualityLevel, best.QualityLevel);
+        g.ShaderQualityLevel = Math.Max(g.ShaderQualityLevel, best.ShaderQualityLevel);
+        g.TerrainQualityLevel = Math.Max(g.TerrainQualityLevel, best.TerrainQualityLevel);
         Plugin.ModLog.LogInfo($"QOL_PHOTO presets {string.Join(", ", presets.Select(p => $"{p!.Name} (quality {p.Settings.QualityLevel}, shader {p.Settings.ShaderQualityLevel}, terrain {p.Settings.TerrainQualityLevel})"))}");
     }
 }
