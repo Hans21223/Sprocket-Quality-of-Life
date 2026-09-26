@@ -14,6 +14,10 @@ Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with
 The kit doesn't include the loader, the game's `BepInEx\interop` files, or any game code. Those come from your own
 game install.
 
+**New to modding Sprocket?** Read [Making Mods for Sprocket](docs/Making-Mods-for-Sprocket.pdf) (PDF, 22 pages): how
+mods work, setting up, a first mod step by step, Harmony patches, UI, data mods, testing, sharing, and the pitfalls
+found while building Quality of Life and the Battle Editor.
+
 ## What's in the kit
 
 | Folder | What it is |
@@ -27,6 +31,7 @@ game install.
 | `tools\ApiLister\` | Lists the game's classes and methods from `BepInEx\interop` (reads files only) |
 | `tools\deploy.ps1` | Builds a mod and copies it into `Sprocket\BepInEx\plugins` |
 | `SprocketMod.props` | Shared build settings: target framework and where your Sprocket folder is |
+| `docs\` | The modding guide: `Making-Mods-for-Sprocket.pdf`, and its source `.html` (open it in a browser and print to PDF to rebuild it) |
 | `Release\BepInEx\plugins\` | The built Quality of Life mod and its user guide, ready to use (also on the Releases page as a zip) |
 
 ## Just want the Quality of Life mod?

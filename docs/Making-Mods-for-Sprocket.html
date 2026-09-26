@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Making Mods for Sprocket</title>
+<style>
+  @page { size: A4; margin: 15mm 15mm 17mm 15mm;
+    @bottom-right { content: counter(page); font: 9pt "Segoe UI", sans-serif; color: #7a8290; }
+    @bottom-left { content: "Making Mods for Sprocket"; font: 9pt "Segoe UI", sans-serif; color: #7a8290; } }
+  @page :first { @bottom-right { content: none; } @bottom-left { content: none; } }
+  :root { --ink: #1d232b; --muted: #5b6573; --accent: #b5561b; --accent-soft: #fbefe6; --line: #d9dde3;
+          --code-bg: #f4f5f7; --tip: #2f6f4e; --tip-bg: #eaf5ef; --warn: #9a3412; --warn-bg: #fdf0e8; --note-bg: #eef3fb; --note: #2c4f86; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 9.8pt; line-height: 1.45; color: var(--ink); margin: 0; }
+  h1, h2, h3, h4 { font-family: "Segoe UI Semibold", "Segoe UI", sans-serif; color: var(--ink); line-height: 1.25; }
+  h1.chapter { font-size: 21pt; margin: 0 0 4mm; padding-bottom: 2.5mm; border-bottom: 2.5pt solid var(--accent); page-break-after: avoid; margin-top: 10mm; }
+  h1.chapter.newpage { page-break-before: always; margin-top: 0; }
+  h1.chapter .num { color: var(--accent); margin-right: 3mm; }
+  h2 { font-size: 13.5pt; margin: 6mm 0 2mm; color: #27313d; }
+  h3 { font-size: 11pt; margin: 4.5mm 0 1.5mm; color: #33404f; }
+  p { margin: 0 0 2.6mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+  li { margin-bottom: 1mm; }
+  a { color: var(--accent); text-decoration: none; }
+  code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 8.9pt; background: var(--code-bg); padding: 0.2mm 1.1mm; border-radius: 1mm; }
+  pre { font-family: "Cascadia Mono", Consolas, monospace; font-size: 7.7pt; line-height: 1.42; background: var(--code-bg);
+        border: 0.6pt solid var(--line); border-left: 2.5pt solid var(--accent); border-radius: 1.2mm; padding: 2.8mm 3.5mm; margin: 0 0 3.5mm;
+        white-space: pre-wrap; word-break: break-word; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: #6a7482; }
+  pre .k { color: #8a3b12; font-weight: 600; }
+  pre .s { color: #2f6f4e; }
+  .file { font-family: "Cascadia Mono", Consolas, monospace; font-size: 8pt; color: var(--muted); margin: 0 0 1mm; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 4mm; font-size: 9pt; }
+  tr { page-break-inside: avoid; }
+  h2, h3 { page-break-after: avoid; }
+  .file { page-break-after: avoid; }
+  th { text-align: left; background: #eceff3; color: #27313d; font-family: "Segoe UI Semibold", "Segoe UI", sans-serif; }
+  th, td { border: 0.6pt solid var(--line); padding: 1.6mm 2.2mm; vertical-align: top; }
+  td code, th code { font-size: 8.2pt; }
+  .box { border-radius: 1.5mm; padding: 2.8mm 3.8mm; margin: 0 0 4mm; page-break-inside: avoid; }
+  .box p:last-child, .box ul:last-child { margin-bottom: 0; }
+  .box .t { font-family: "Segoe UI Semibold", "Segoe UI", sans-serif; display: block; margin-bottom: 1mm; }
+  .tip { background: var(--tip-bg); border-left: 2.5pt solid var(--tip); } .tip .t { color: var(--tip); }
+  .warn { background: var(--warn-bg); border-left: 2.5pt solid var(--warn); } .warn .t { color: var(--warn); }
+  .note { background: var(--note-bg); border-left: 2.5pt solid var(--note); } .note .t { color: var(--note); }
+  .lead { font-size: 11pt; color: #33404f; page-break-after: avoid; }
+  .muted { color: var(--muted); }
+  .steps { counter-reset: step; list-style: none; padding-left: 0; }
+  .steps > li { counter-increment: step; position: relative; padding-left: 9mm; margin-bottom: 2.5mm; }
+  .steps > li::before { content: counter(step); position: absolute; left: 0; top: 0.2mm; width: 6mm; height: 6mm; border-radius: 50%;
+        background: var(--accent); color: #fff; font: 600 9pt "Segoe UI", sans-serif; text-align: center; line-height: 6mm; }
+  /* cover */
+  .cover { height: 255mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .cover .band { background: #1f2630; color: #fff; padding: 16mm 14mm 14mm; border-radius: 2.5mm; margin-top: 22mm; }
+  .cover .kicker { color: #f0a36f; font: 600 10pt "Segoe UI", sans-serif; letter-spacing: 0.8pt; text-transform: uppercase; }
+  .cover h1 { color: #fff; font-size: 32pt; margin: 3mm 0 4mm; border: none; }
+  .cover .sub { color: #d5dbe3; font-size: 12.5pt; line-height: 1.45; max-width: 150mm; }
+  .cover .meta { color: var(--muted); font-size: 9.5pt; line-height: 1.7; }
+  .cover .meta b { color: var(--ink); }
+  /* contents */
+  .toc { list-style: none; padding: 0; margin: 2mm 0 0; }
+  .toc li { display: flex; gap: 3mm; padding: 1.5mm 0; border-bottom: 0.5pt dotted var(--line); font-size: 10.5pt; }
+  .toc .n { color: var(--accent); font-family: "Segoe UI Semibold", "Segoe UI", sans-serif; min-width: 9mm; }
+  .toc .d { color: var(--muted); font-size: 9pt; margin-left: auto; text-align: right; max-width: 95mm; }
+  /* flow diagram */
+  .flow { display: flex; align-items: stretch; gap: 1.8mm; margin: 2mm 0 4mm; page-break-inside: avoid; }
+  .flow .n { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; background: #f7f8fa; border: 0.7pt solid var(--line); border-top: 2.5pt solid var(--accent); border-radius: 1.2mm; padding: 2.2mm 2.4mm; font-size: 8.4pt; line-height: 1.35; }
+  .flow .n b { display: block; font-size: 9pt; margin-bottom: 0.8mm; }
+  .flow .a { align-self: center; color: var(--accent); font-weight: 700; font-size: 12pt; }
+  .keep { page-break-inside: avoid; }
+  .two { display: flex; gap: 5mm; } .two > div { flex: 1; }
+</style>
+</head>
+<body>
+
+<!-- ============================ COVER ============================ -->
+<section class="cover">
+  <div class="band">
+    <div class="kicker">Sprocket Mod Kit · Guide</div>
+    <h1>Making Mods for Sprocket</h1>
+    <div class="sub">How Sprocket mods work, and how to build, test and share your own, step by step: from a first
+      "hello" mod to patching the game, drawing your own panels, and the traps we fell into so you don't have to.</div>
+  </div>
+  <div class="meta">
+    <b>Written for:</b> Sprocket 0.2.55.5 (Unity 6000.3), BepInEx 6 IL2CPP, .NET 8 SDK<br>
+    <b>Based on:</b> the Sprocket Mod Kit, the Quality of Life mod and the Battle Editor mod (real code, real bugs)<br>
+    <b>Kit:</b> github.com/Hans21223/Sprocket-Quality-of-Life (MIT licence)<br>
+    <b>Date:</b> September 2026. Game updates can change class names; the method in this guide still applies.
+  </div>
+</section>
+
+<!-- ============================ CONTENTS ============================ -->
+<h1 class="chapter newpage" style="border-bottom-color:#1f2630">Contents</h1>
+<ul class="toc">
+  <li><span class="n">1</span>How Sprocket mods work<span class="d">Data mods, code mods, the loader chain</span></li>
+  <li><span class="n">2</span>Setting up your tools<span class="d">Loader, .NET SDK, editor, the kit</span></li>
+  <li><span class="n">3</span>Your first mod<span class="d">Build, install, see it run</span></li>
+  <li><span class="n">4</span>Exploring the game's code<span class="d">Finding the class you need</span></li>
+  <li><span class="n">5</span>Changing the game with Harmony patches<span class="d">Prefix, postfix, and when hooks don't fire</span></li>
+  <li><span class="n">6</span>Running your own code every frame<span class="d">MonoBehaviours, input, time</span></li>
+  <li><span class="n">7</span>Working with game objects (IL2CPP rules)<span class="d">Casts, lists, delegates, missing methods</span></li>
+  <li><span class="n">8</span>Adding user interface<span class="d">Game panels, menus, overlays, the mouse</span></li>
+  <li><span class="n">9</span>Settings, files and logs<span class="d">Config, saving data, tracing</span></li>
+  <li><span class="n">10</span>Data mods: new parts without code<span class="d">Part files, names, blueprints</span></li>
+  <li><span class="n">11</span>Testing and debugging<span class="d">The loop, logs, offline tests</span></li>
+  <li><span class="n">12</span>Packaging and sharing<span class="d">Zip layout, versions, licence</span></li>
+  <li><span class="n">13</span>Pitfalls we hit, and the fixes<span class="d">Symptom → cause → fix</span></li>
+  <li><span class="n">14</span>Case study: how the Battle Editor is built<span class="d">A whole mod, file by file</span></li>
+  <li><span class="n">A</span>Cheat sheet<span class="d">Snippets to copy</span></li>
+  <li><span class="n">B</span>Troubleshooting<span class="d">"My mod doesn't…"</span></li>
+</ul>
+
+<!-- ============================ 1 ============================ -->
+<h1 class="chapter newpage"><span class="num">1</span>How Sprocket mods work</h1>
+<p class="lead">A mod is anything that changes the game without the game's makers shipping it. Sprocket has two very
+different kinds, and it's worth knowing which one you need before you start.</p>
+
+<table>
+  <tr><th style="width:22%">Kind</th><th>What it is</th><th style="width:30%">Needs</th></tr>
+  <tr><td><b>Data mod</b></td><td>Extra or changed game files: part definitions (JSON), their names (XML), and so on.
+    The game reads them like its own. Example: the kit's <i>Round Add-on Parts</i>, which adds 16- and 32-sided add-ons to the editor.</td>
+    <td>Nothing extra. Works on an unmodded game.</td></tr>
+  <tr><td><b>Code mod</b> (plugin)</td><td>A .NET DLL with your own C# code, loaded into the running game. It can read and change
+    anything the game does: add buttons, tools, whole editors. Examples: <i>Quality of Life</i>, <i>Battle Editor</i>.</td>
+    <td>A mod loader (BepInEx 6 IL2CPP), the .NET SDK to build.</td></tr>
+</table>
+
+<h2>Why code mods need a loader</h2>
+<p>Sprocket is a Unity game built with <b>IL2CPP</b>: the game's C# code was turned into C++ and compiled into one native
+file, <code>GameAssembly.dll</code>. There are no normal .NET DLLs of the game to reference or edit. A loader bridges
+that gap: it starts before the game, puts a .NET runtime inside it, builds .NET "stand-in" classes for every game class,
+and then loads your plugin. Your code calls those stand-ins, and each call is passed through to the real game code.</p>
+
+<div class="flow">
+  <div class="n"><b>1. Game starts</b>Sprocket.exe loads a small proxy DLL that BepInEx put beside it (Doorstop).</div><div class="a">→</div>
+  <div class="n"><b>2. BepInEx starts</b>It starts a .NET 6 runtime inside the game process, before any game code runs.</div><div class="a">→</div>
+  <div class="n"><b>3. Interop</b>Il2CppInterop reads the game's metadata and writes <code>BepInEx\interop\*.dll</code>: the game's classes as .NET types (first start only; slow).</div><div class="a">→</div>
+  <div class="n"><b>4. Your plugin</b>DLLs in <code>BepInEx\plugins</code> are loaded; each one's <code>Load()</code> runs.</div><div class="a">→</div>
+  <div class="n"><b>5. Inside the game</b>Your Harmony patches and MonoBehaviours now run as part of the game.</div>
+</div>
+
+<p>Nothing on disk is changed: <code>GameAssembly.dll</code> stays exactly as Steam installed it. Remove the plugin DLL
+(or BepInEx) and the game is vanilla again. That is the rule for every mod in this guide: <b>change the running game,
+never the game's files.</b></p>
+
+<h2>The words you'll see</h2>
+<table>
+  <tr><th style="width:24%">Term</th><th>Meaning</th></tr>
+  <tr><td>IL2CPP</td><td>Unity's way of compiling C# to native code. Why the game's classes are "stand-ins" in your code.</td></tr>
+  <tr><td>BepInEx</td><td>The mod loader. The IL2CPP edition (version 6) is the one Sprocket needs.</td></tr>
+  <tr><td>Interop assemblies</td><td>The .NET files in <code>BepInEx\interop</code>. You compile against them. They contain
+    every class and method signature, but no real code: calls go to the game.</td></tr>
+  <tr><td>Plugin</td><td>Your mod: a DLL with a class marked <code>[BepInPlugin]</code>.</td></tr>
+  <tr><td>Harmony</td><td>The library that lets your code run before or after any game method (a <i>patch</i>). Comes with BepInEx.</td></tr>
+  <tr><td>Prefix / Postfix</td><td>A patch that runs before / after the game's method. A prefix can also skip the method.</td></tr>
+  <tr><td>MonoBehaviour</td><td>A Unity script: its <code>Update()</code> runs every frame, <code>OnGUI()</code> draws on screen.</td></tr>
+  <tr><td>HDRP</td><td>Unity's High Definition Render Pipeline, which Sprocket uses. Matters for materials, lights and cameras.</td></tr>
+</table>
+
+<!-- ============================ 2 ============================ -->
+<h1 class="chapter"><span class="num">2</span>Setting up your tools</h1>
+
+<h2>What to install</h2>
+<ol class="steps">
+  <li><b>Sprocket</b> from Steam. For modding, work on a <b>copy of the game folder</b> (a "test copy"): your normal game stays
+    clean, and a broken mod can't spoil your evening of playing.</li>
+  <li><b>BepInEx 6, IL2CPP edition</b> (bleeding-edge builds at <code>builds.bepinex.dev</code>). Extract it into the game folder, so the
+    <code>BepInEx</code> folder sits next to <code>Sprocket.exe</code>. Start the game once and wait: the first start builds
+    <code>BepInEx\interop</code> and takes several minutes. Close the game when the main menu appears.
+    <div class="box warn" style="margin-top:2mm"><span class="t">Check the loader reaches the main menu</span>
+    Not every BepInEx build runs every Unity version. On Sprocket 0.2.55.5 (Unity 6000.3.21) the official build be.788 froze
+    at the main menu. Use a loader that other Sprocket modders confirm works on your game version, and check the menu appears
+    before you write any code.</div></li>
+  <li><b>.NET 8 SDK</b> from <code>dotnet.microsoft.com/download</code>. (Mods target <code>net6.0</code>, which the .NET 8 SDK builds.)
+    Check it with <code>dotnet --version</code>.</li>
+  <li><b>A code editor</b>: Visual Studio 2022 Community, VS Code with the C# Dev Kit, or Rider. Any of them gives you
+    autocomplete on the game's classes once the project builds.</li>
+  <li><b>The Sprocket Mod Kit</b> (the Quality of Life repository): <code>SprocketMod.props</code>, a starter mod, a class
+    lister and a deploy script. Download it or <code>git clone</code> it.</li>
+  <li><i>Optional:</i> <b>UnityExplorer</b> (a BepInEx plugin that lets you browse the live game's objects and components) and
+    <b>Sprocket Mod Manager</b> (turns mods on and off without copying files by hand).</li>
+</ol>
+
+<h2>The game folder after installing BepInEx</h2>
+<table>
+  <tr><th style="width:38%">Path (inside the Sprocket folder)</th><th>What's there</th></tr>
+  <tr><td><code>BepInEx\core\</code></td><td>BepInEx itself, Harmony, Il2CppInterop. You compile against these.</td></tr>
+  <tr><td><code>BepInEx\interop\</code></td><td>The game's classes as .NET files (made on first start). You compile against these too.</td></tr>
+  <tr><td><code>BepInEx\plugins\</code></td><td>Where mods go. Each <code>.dll</code> here is loaded at start.</td></tr>
+  <tr><td><code>BepInEx\config\</code></td><td>Settings files, one per mod (<code>&lt;mod id&gt;.cfg</code>).</td></tr>
+  <tr><td><code>BepInEx\LogOutput.log</code></td><td>The loader's log, including every line your mod logs. Your first stop when anything goes wrong.</td></tr>
+  <tr><td><code>Sprocket_Data\StreamingAssets\</code></td><td>The game's data files (parts, localisation). Data mods add files here.</td></tr>
+  <tr><td><code>%USERPROFILE%\AppData\LocalLow\HD\Sprocket\Player.log</code></td><td>Unity's own log (outside the game folder): scene changes, game warnings and errors.</td></tr>
+  <tr><td><code>Documents\My Games\Sprocket\</code></td><td>Your designs (<code>Factions\&lt;faction&gt;\Blueprints\Vehicles\*.blueprint</code>) and other player files.</td></tr>
+</table>
+
+<!-- ============================ 3 ============================ -->
+<h1 class="chapter"><span class="num">3</span>Your first mod</h1>
+<p class="lead">In this chapter you build a mod, put it in the game and see it load. After that, every other chapter is
+"the same, with more code".</p>
+
+<h2>Step 1: make the project</h2>
+<p>Copy the kit's <code>MyFirstMod</code> folder to a new folder, for example <code>HelloSprocket</code>, and rename the
+<code>.csproj</code> inside to <code>HelloSprocket.csproj</code>. The project file is tiny, because the shared settings
+live in the kit's <code>SprocketMod.props</code>:</p>
+<div class="file">HelloSprocket\HelloSprocket.csproj</div>
+<pre><code>&lt;Project Sdk="Microsoft.NET.Sdk"&gt;
+  &lt;Import Project="..\SprocketMod.props" /&gt;
+  &lt;PropertyGroup&gt;
+    &lt;AssemblyName&gt;HelloSprocket&lt;/AssemblyName&gt;
+  &lt;/PropertyGroup&gt;
+&lt;/Project&gt;</code></pre>
+
+<h3>What SprocketMod.props does</h3>
+<table>
+  <tr><th style="width:36%">Setting</th><th>Why</th></tr>
+  <tr><td><code>TargetFramework net6.0</code></td><td>BepInEx 6 IL2CPP runs mods on .NET 6.</td></tr>
+  <tr><td><code>GameDir</code></td><td>Your Sprocket folder (default: the Steam folder). Change it for a test copy:
+    <code>dotnet build -p:GameDir="D:\Games\Sprocket"</code>.</td></tr>
+  <tr><td>References to <code>BepInEx\core\*.dll</code> and <code>BepInEx\interop\*.dll</code> with <code>Private=false</code></td>
+    <td>You compile against the game and the loader, but don't copy them into your mod: they're already in every player's game.</td></tr>
+  <tr><td><code>PathMap</code></td><td>Stops your own folder path (and your Windows user name) being written into the DLL.</td></tr>
+  <tr><td>A check target</td><td>Stops the build with a clear message if <code>GameDir</code> has no BepInEx or no interop folder yet.</td></tr>
+</table>
+
+<h2>Step 2: the plugin class</h2>
+<div class="file">HelloSprocket\Plugin.cs (the smallest possible mod)</div>
+<pre><code><span class="k">using</span> BepInEx;
+<span class="k">using</span> BepInEx.Unity.IL2CPP;
+
+<span class="k">namespace</span> HelloSprocket;
+
+[BepInPlugin(<span class="s">"yourname.sprocket.hello"</span>, <span class="s">"Hello Sprocket"</span>, <span class="s">"1.0.0"</span>)]   <span class="c">// id, name, version</span>
+<span class="k">public sealed class</span> Plugin : BasePlugin
+{
+    <span class="k">public override void</span> Load() =&gt; Log.LogInfo(<span class="s">"Hello Sprocket loaded!"</span>);
+}</code></pre>
+<ul>
+  <li>The <b>id</b> (<code>yourname.sprocket.hello</code>) must be unique and must <b>never change</b> between versions, or
+    players end up with two copies. The <b>name</b> is what people see; the <b>version</b> goes up with each release.</li>
+  <li><code>Load()</code> runs once, while the game is starting. There's no game world yet (no tanks, no menus), so here
+    you only set things up: settings, patches, components.</li>
+</ul>
+
+<h2>Step 3: build it</h2>
+<pre><code>cd HelloSprocket
+dotnet build -c Release</code></pre>
+<p>The mod is <code>HelloSprocket\bin\Release\net6.0\HelloSprocket.dll</code>. From the kit folder, <code>.\tools\deploy.ps1 HelloSprocket</code>
+builds <i>and</i> copies it into the game (add <code>-GameDir "..."</code> for a test copy).</p>
+
+<h2>Step 4: install and run</h2>
+<ul>
+  <li><b>By hand:</b> copy the DLL into <code>Sprocket\BepInEx\plugins\</code>.</li>
+  <li><b>With Mod Manager:</b> the mod goes in <code>ModManager\mods\&lt;game&gt;\&lt;mod name&gt;\</code> laid out like the game
+    folder (<code>…\Hello Sprocket\BepInEx\plugins\HelloSprocket.dll</code>), then you enable it in the manager.</li>
+</ul>
+<div class="box warn"><span class="t">Close the game first</span>A running game locks every mod DLL, so copying over it fails.
+(The kit's deploy script waits for the game to close.)</div>
+<p>Start the game and open <code>BepInEx\LogOutput.log</code>. You should find:</p>
+<pre><code>[Info   :   BepInEx] Loading [Hello Sprocket 1.0.0]
+[Info   :Hello Sprocket] Hello Sprocket loaded!</code></pre>
+<p>That's a working mod. Everything else builds on these four steps.</p>
+
+<h2>Step 5: a mod that does something</h2>
+<p>This version shows all three building blocks at once: a <b>setting</b>, a <b>component</b> that runs every frame
+(press F10 to show a message) and a <b>Harmony patch</b> (a "Say hello" button added to the menu, under Custom Battle).
+It is compiled and checked against Sprocket 0.2.55.5.</p>
+<div class="file">HelloSprocket\Plugin.cs (full example)</div>
+<pre><code><span class="k">using</span> BepInEx; <span class="k">using</span> BepInEx.Configuration; <span class="k">using</span> BepInEx.Logging; <span class="k">using</span> BepInEx.Unity.IL2CPP;
+<span class="k">using</span> HarmonyLib; <span class="k">using</span> Il2CppInterop.Runtime; <span class="k">using</span> Sprocket;
+<span class="k">using</span> UnityEngine; <span class="k">using</span> UnityEngine.Events; <span class="k">using</span> UnityEngine.InputSystem;
+
+<span class="k">namespace</span> HelloSprocket;
+
+[BepInPlugin(<span class="s">"yourname.sprocket.hello"</span>, <span class="s">"Hello Sprocket"</span>, <span class="s">"1.0.0"</span>)]
+<span class="k">public sealed class</span> Plugin : BasePlugin
+{
+    <span class="k">internal static</span> ManualLogSource ModLog = <span class="k">null</span>!;
+    <span class="k">internal static</span> ConfigEntry&lt;<span class="k">string</span>&gt; Greeting = <span class="k">null</span>!;
+
+    <span class="k">public override void</span> Load()
+    {
+        ModLog = Log;
+        <span class="c">// A setting the player can change in BepInEx\config\yourname.sprocket.hello.cfg</span>
+        Greeting = Config.Bind(<span class="s">"General"</span>, <span class="s">"Greeting"</span>, <span class="s">"Hello from my first mod!"</span>,
+                               <span class="s">"Text shown by F10 and the menu button."</span>);
+        <span class="c">// Code that runs every frame lives in a MonoBehaviour; AddComponent registers it and starts it.</span>
+        AddComponent&lt;Overlay&gt;();
+        <span class="c">// Harmony patches: one try per patch class, so one failure can't stop the rest.</span>
+        <span class="k">try</span> { <span class="k">new</span> Harmony(<span class="s">"yourname.sprocket.hello"</span>).PatchAll(<span class="k">typeof</span>(MenuButton)); }
+        <span class="k">catch</span> (Exception ex) { Log.LogError($<span class="s">"Could not attach to the main menu: {ex}"</span>); }
+        Log.LogInfo(<span class="s">"Hello Sprocket loaded: press F10 in game."</span>);
+    }
+}
+
+<span class="k">public sealed class</span> Overlay : MonoBehaviour
+{
+    <span class="k">public</span> Overlay(IntPtr pointer) : <span class="k">base</span>(pointer) { }   <span class="c">// every injected MonoBehaviour needs this</span>
+
+    <span class="k">internal static float</span> ShowUntil;
+
+    <span class="k">public void</span> Update()
+    {
+        <span class="k">var</span> keys = Keyboard.current;                       <span class="c">// the game uses Unity's Input System</span>
+        <span class="k">if</span> (keys != <span class="k">null</span> &amp;&amp; keys.f10Key.wasPressedThisFrame) ShowUntil = Time.unscaledTime + 3;
+    }
+
+    <span class="k">public void</span> OnGUI()
+    {
+        <span class="k">if</span> (Time.unscaledTime &lt; ShowUntil)
+            GUI.Box(<span class="k">new</span> Rect((Screen.width - 500) / 2f, 20, 500, 30), Plugin.Greeting.Value);
+    }
+}
+
+[HarmonyPatch]
+<span class="k">static class</span> MenuButton
+{
+    <span class="k">static</span> UnityAction? onClick;   <span class="c">// kept in a field: the game holds on to it</span>
+
+    [HarmonyPostfix, HarmonyPatch(<span class="k">typeof</span>(MenuPanel), <span class="k">nameof</span>(MenuPanel.Button))]
+    <span class="k">static void</span> Added(MenuPanel __instance, <span class="k">string</span> label, <span class="k">bool</span> interactable)
+    {
+        <span class="k">try</span>
+        {
+            <span class="k">if</span> (label == <span class="k">null</span>) <span class="k">return</span>;
+            <span class="k">if</span> (label.IndexOf(<span class="s">"custom battle"</span>, StringComparison.OrdinalIgnoreCase) &lt; 0) <span class="k">return</span>;
+            onClick ??= DelegateSupport.ConvertDelegate&lt;UnityAction&gt;(
+                <span class="k">new</span> Action(() =&gt; Overlay.ShowUntil = Time.unscaledTime + 3))!;
+            __instance.Button(<span class="s">"Say hello"</span>, onClick, interactable);
+        }
+        <span class="k">catch</span> (Exception ex) { Plugin.ModLog.LogError($<span class="s">"Menu button: {ex}"</span>); }   <span class="c">// never reaches the game</span>
+    }
+}</code></pre>
+<p>Chapters 5–8 explain each part of this in detail.</p>
+
+<!-- ============================ 4 ============================ -->
+<h1 class="chapter"><span class="num">4</span>Exploring the game's code</h1>
+<p class="lead">Most modding time is spent finding out <i>which</i> game class does the thing you want to change. Here's how.</p>
+
+<h2>The interop files are your map</h2>
+<p>Every game class is in <code>BepInEx\interop</code> with its fields, properties and methods. These files hold
+<b>signatures only</b>: the method bodies are stubs that call into the native game. So they tell you <i>what exists
+and what it's called</i>, not <i>how it works</i>. You learn how it works by trying things and logging what happens.</p>
+
+<h3>List classes with the kit's ApiLister</h3>
+<pre><code><span class="c"># classes whose name contains "Turret"</span>
+dotnet run --project tools\ApiLister -- "C:\...\Sprocket\BepInEx\interop" ~Turret
+<span class="c"># one class: its base class, fields and methods</span>
+dotnet run --project tools\ApiLister -- "C:\...\Sprocket\BepInEx\interop" TurretRingEditor</code></pre>
+<p>It only reads the files; no game code runs. Any .NET decompiler (ILSpy, dnSpy) can also open the interop DLLs if you prefer browsing.</p>
+
+<h3>Reading what you find</h3>
+<ul>
+  <li>Game classes appear twice, as <code>Sprocket.X</code> and <code>Il2CppSprocket.X</code>. <b>Use <code>Sprocket.X</code></b>.</li>
+  <li>Fields show up as properties (<code>get_x</code> / <code>set_x</code>), and you use them like properties: <code>mode.vehicleSpawns</code>.</li>
+  <li>Compiler-made classes get plain names: the state machine of <code>async Load()</code>, <code>&lt;Load&gt;d__38</code>,
+    appears as <code>_Load_d__38</code>. Seeing one tells you the method is <code>async</code> (see chapter 5 on why that matters).</li>
+  <li>Enums keep their values; the kit's tools (or a decompiler) show them.</li>
+</ul>
+
+<h2>Finding the right class</h2>
+<ol>
+  <li><b>Start from what you see.</b> The editor's right-hand panel for cannons? Search <code>~CannonEditor</code>. The custom
+    battle screen? <code>~CustomBattle</code>. The main menu? <code>~MainMenu</code>, <code>~MenuPanel</code>.</li>
+  <li><b>Look at the scene.</b> <code>Player.log</code> prints scene changes ("Scene transition from 'MainMenu' to 'Defence'"),
+    and UnityExplorer shows the live objects and the components on them, which are classes you can search for.</li>
+  <li><b>Follow the fields.</b> Once you have one object, its fields lead to the rest. Example from the Battle Editor:
+    <code>DeathmatchGameMode</code> → <code>context.SetupContext.SetupConfig</code> → a <code>BattleConfig</code> → <code>Teams[i].Units</code>.</li>
+  <li><b>Prove it with a log line</b> before building on it (chapter 5).</li>
+</ol>
+
+<h2>Classes the kit's mods use (Sprocket 0.2.55.5)</h2>
+<table>
+  <tr><th style="width:42%">Class</th><th>Used for</th></tr>
+  <tr><td><code>Sprocket.VehicleDesigner.VehicleDesignerCore</code></td><td>The vehicle editor: the open design, loading a blueprint.</td></tr>
+  <tr><td><code>Sprocket.Vehicles.VehicleBlueprintSerializer</code></td><td>Design ↔ blueprint JSON (<code>ToBlueprint</code>, <code>SerializeToJSON</code>, <code>DeserializeJSON</code>).</td></tr>
+  <tr><td>Part editors, e.g. <code>…Cannons.Editor.CannonEditor</code>,<br><code>…PlateStructures.Design.PlateStructureEditor</code></td><td>The right-hand panels; <code>OnGUI(IGUILayout layout)</code> draws them.</td></tr>
+  <tr><td><code>Sprocket.UI.IGUIElementDrawer</code></td><td>Drawing in those panels: <code>Header</code>, <code>InfoField</code>, <code>Button</code>, <code>ToggleField</code>.</td></tr>
+  <tr><td><code>Sprocket.MenuPanel</code></td><td>Main-menu style button lists: <code>Button(label, UnityAction, interactable)</code>.</td></tr>
+  <tr><td><code>Sprocket.DeathmatchGameMode</code></td><td>A running custom battle: <code>vehicleSpawns</code>, <code>context</code>, <code>RetryAsyncVoid()</code>.</td></tr>
+  <tr><td><code>Sprocket.CustomBattles.BattleConfig</code>, <code>TeamDefinition</code>, <code>UnitDefinition</code></td><td>A custom battle's map, teams and tanks.</td></tr>
+  <tr><td><code>Sprocket.Vehicles.IVehicleGateway</code></td><td>A vehicle: its <code>transform</code>, <code>gameObject</code>, design info.</td></tr>
+</table>
+
+<!-- ============================ 5 ============================ -->
+<h1 class="chapter"><span class="num">5</span>Changing the game with Harmony patches</h1>
+<p class="lead">A patch is your method that Harmony runs before (<b>prefix</b>) or after (<b>postfix</b>) one of the game's
+methods. It's how a mod changes what the game does without touching its files.</p>
+
+<h2>The shapes of a patch</h2>
+<pre><code>[HarmonyPatch]                                        <span class="c">// this class holds patches</span>
+<span class="k">static class</span> MyPatches
+{
+    <span class="c">// After the game draws the Cannon panel: add a line to it.</span>
+    [HarmonyPostfix, HarmonyPatch(<span class="k">typeof</span>(CannonEditor), <span class="k">nameof</span>(CannonEditor.OnGUI))]
+    <span class="k">static void</span> AfterPanel(CannonEditor __instance, IGUILayout layout) { … }
+
+    <span class="c">// Before the game ends a battle: return false to stop it (the game's method is skipped).</span>
+    [HarmonyPrefix, HarmonyPatch(<span class="k">typeof</span>(DeathmatchGameMode), <span class="k">nameof</span>(DeathmatchGameMode.CompleteMission))]
+    <span class="k">static bool</span> BeforeWin(DeathmatchGameMode __instance) =&gt; !keepBattleGoing;
+
+    <span class="c">// A method with several versions (overloads): name the parameter types.</span>
+    [HarmonyPrefix, HarmonyPatch(<span class="k">typeof</span>(VehicleMaterialPainter), <span class="k">nameof</span>(VehicleMaterialPainter.Process),
+                               <span class="k">new</span>[] { <span class="k">typeof</span>(VehicleMaterial) })]
+    <span class="k">static void</span> BeforePaint(VehicleMaterialPainter __instance, VehicleMaterial material) { … }
+}</code></pre>
+<table>
+  <tr><th style="width:30%">In your patch method</th><th>Gets you</th></tr>
+  <tr><td><code>__instance</code></td><td>The object the game's method was called on.</td></tr>
+  <tr><td>A parameter with <b>the same name</b> as the game's</td><td>That argument (names must match exactly; types must match).</td></tr>
+  <tr><td><code>__result</code> (postfix; <code>ref</code> to change it)</td><td>The game method's return value.</td></tr>
+  <tr><td>Prefix returns <code>bool</code></td><td><code>false</code> skips the game's method (and the other prefixes after yours).</td></tr>
+</table>
+<p>You can leave out any parameter you don't need. Apply the patches in <code>Load()</code>, one class at a time:</p>
+<pre><code><span class="k">var</span> harmony = <span class="k">new</span> Harmony(<span class="s">"yourname.sprocket.mymod"</span>);
+<span class="k">foreach</span> (<span class="k">var</span> feature <span class="k">in new</span>[] { <span class="k">typeof</span>(PanelPatches), <span class="k">typeof</span>(BattlePatches) })
+    <span class="k">try</span> { harmony.PatchAll(feature); }
+    <span class="k">catch</span> (Exception ex) { Log.LogError($<span class="s">"{feature.Name} could not attach: {ex.Message}"</span>); }</code></pre>
+
+<h2>Rule 1: prove the patch runs</h2>
+<p>A patch that attaches without an error is <b>not</b> proof that it runs. Log from inside it the first time it fires.
+In a native (IL2CPP) build, the compiler often copies small methods into their callers ("inlining"). Calls that were
+inlined never reach the method you patched, so your patch silently does nothing.</p>
+<div class="box note"><span class="t">Real examples</span>
+<ul>
+  <li>The Battle Editor first patched <code>DeathmatchGameMode.LoadGameSetup</code> and <code>Load</code> (both <code>async</code>, so their
+    bodies are tiny starter stubs). The patches attached, but never ran once. The fix was to stop hooking and change the
+    battle's own data instead: edit the custom battle's team list, then call the game's own <code>Retry</code>.</li>
+  <li>The Sprocket Tweaks mod found that <code>EngineRules.CalculateMass</code> is merged into its callers, so hooking it alone did
+    nothing. It hooks <code>VehicleComponent.SetMass</code> instead, which every part goes through.</li>
+</ul></div>
+<p><b>Good places to patch:</b> methods the game calls through an interface or as virtual methods (<code>OnGUI</code>, <code>Update</code>-like
+methods, event handlers), methods passed as callbacks (menu buttons), and bigger methods that every path goes through.
+<b>Risky:</b> tiny getters, <code>async</code> methods, and helpers that are only called from one place.</p>
+
+<h2>Rule 2: never let an exception escape</h2>
+<p>An exception thrown from your patch lands in the game's native code, and can crash it. Wrap every patch body:</p>
+<pre><code><span class="k">static void</span> AfterPanel(CannonEditor __instance, IGUILayout layout)
+{
+    <span class="k">try</span> { <span class="c">/* your code */</span> }
+    <span class="k">catch</span> (Exception ex) { Plugin.ModLog.LogError(ex); }
+}</code></pre>
+
+<h2>Rule 3: be careful with small structs passed by value</h2>
+<p>The Battle Editor's first version patched <code>VehicleSpawner.Spawn(…, CancellationToken)</code>. The game crashed the moment a
+battle spawned its tanks, and the crash stopped when that one patch was removed. Methods taking small <code>struct</code> parameters by value
+(a <code>CancellationToken</code> is one pointer inside a struct) are the likely trouble for the IL2CPP patching layer.
+If a patch like that crashes, patch another method, or do the work before or after the call instead.</p>
+
+<h2>Rule 4: keep patches light</h2>
+<p>Some game methods run thousands of times: the painter paints every material of every part when a tank loads.
+Quality of Life's paint patch reads its part list <b>once per frame</b> and reuses it, not on every call. Heavy work
+(loading, saving, rebuilding a design) never goes in a patch or in <code>OnGUI</code>: queue it, and do it from a
+MonoBehaviour's <code>Update()</code> (chapter 6).</p>
+
+<!-- ============================ 6 ============================ -->
+<h1 class="chapter"><span class="num">6</span>Running your own code every frame</h1>
+<p class="lead">Patches react to the game. For your own behaviour (a key press, a tool, an editor), you need a
+<b>MonoBehaviour</b>: a Unity script whose methods Unity calls every frame.</p>
+
+<h2>Adding one</h2>
+<pre><code><span class="k">public sealed class</span> MyTool : MonoBehaviour
+{
+    <span class="k">public</span> MyTool(IntPtr pointer) : <span class="k">base</span>(pointer) { }   <span class="c">// required for every injected MonoBehaviour</span>
+
+    <span class="k">public void</span> Update()   { <span class="c">/* every frame: read keys, move things, run queued work */</span> }
+    <span class="k">public void</span> OnGUI()    { <span class="c">/* draw on screen (called several times a frame) */</span> }
+}
+
+<span class="c">// in Plugin.Load():</span>
+AddComponent&lt;MyTool&gt;();</code></pre>
+<ul>
+  <li><code>AddComponent&lt;T&gt;()</code> registers your class with the game's runtime and attaches it to a BepInEx object that
+    survives scene changes, so one instance lives from the main menu to every battle.</li>
+  <li>The log line <code>Registered mono type YourMod.MyTool in il2cpp domain</code> means it worked.</li>
+  <li>You may also see warnings like <i>"Method … has unsupported parameter …"</i> for your own helper methods. They're harmless:
+    it only means the game can't call those methods, and it doesn't need to. Keep Unity's own methods (<code>Update</code>,
+    <code>OnGUI</code>…) without parameters.</li>
+</ul>
+
+<h2>Reading keys and the mouse</h2>
+<p>Sprocket uses Unity's <b>Input System</b>. Read devices directly; it always works, even when the game's own controls are off:</p>
+<pre><code><span class="k">var</span> keys = Keyboard.current; <span class="k">var</span> mouse = Mouse.current;
+<span class="k">if</span> (keys.f9Key.wasPressedThisFrame) Toggle();                     <span class="c">// pressed this frame</span>
+<span class="k">if</span> (keys.shiftKey.isPressed) speed *= 2;                            <span class="c">// held down</span>
+Vector2 at = mouse.position.ReadValue();                              <span class="c">// pixels, from the BOTTOM-left</span>
+Vector2 moved = mouse.delta.ReadValue();                              <span class="c">// movement this frame</span>
+<span class="k">float</span> wheel = mouse.scroll.ReadValue().y;                            <span class="c">// wheel</span>
+<span class="k">if</span> (mouse.leftButton.wasPressedThisFrame) Click(at);</code></pre>
+<div class="box tip"><span class="t">Screen corners</span>The mouse counts from the <b>bottom</b>-left corner; on-screen GUI rectangles
+count from the <b>top</b>-left. Convert with <code>new Vector2(at.x, Screen.height - at.y)</code>.</div>
+
+<h2>Time and pausing</h2>
+<ul>
+  <li><code>Time.timeScale = 0</code> freezes the game (physics, AI, animations) but not your <code>Update</code>. The Battle Editor
+    freezes the battle this way while you edit, and puts the old value back after.</li>
+  <li>While frozen, use <code>Time.unscaledTime</code> and <code>Time.unscaledDeltaTime</code>: the normal ones stop.</li>
+  <li>Frozen also means <b>no physics steps</b>: objects you move aren't where raycasts look for them until you call
+    <code>Physics.SyncTransforms()</code> (see chapter 13).</li>
+</ul>
+
+<h2>Finding game objects</h2>
+<pre><code><span class="k">var</span> mode = Object.FindObjectOfType&lt;DeathmatchGameMode&gt;();   <span class="c">// null outside a custom battle</span></code></pre>
+<p><code>FindObjectOfType</code> searches the whole scene, so it's slow. Don't call it every frame for something that
+doesn't change: find it once and keep it, or search only while you're waiting for it to appear.</p>
+
+<!-- ============================ 7 ============================ -->
+<h1 class="chapter"><span class="num">7</span>Working with game objects (IL2CPP rules)</h1>
+<p class="lead">Game objects in your code are .NET wrappers around objects that really live in the native game.
+They behave like normal C# objects, but with a few rules worth learning early.</p>
+
+<table>
+  <tr><th style="width:26%">Topic</th><th>Do this</th><th style="width:30%">Not this</th></tr>
+  <tr><td>Casting</td><td><code>obj.TryCast&lt;T&gt;()</code> (null if it isn't a <code>T</code>) or <code>obj.Cast&lt;T&gt;()</code>. Works for interfaces too:
+    <code>spawn.Vehicle.TryCast&lt;IVehicleGateway&gt;()</code></td><td><code>obj is T</code>, <code>obj as T</code>, <code>(T)obj</code>: they check the wrapper, not the game object.</td></tr>
+  <tr><td>Game lists</td><td><code>Il2CppSystem.Collections.Generic.List&lt;T&gt;</code>: loop with <code>for (int i = 0; i &lt; list.Count; i++) list[i]</code>.</td><td>LINQ directly on game lists: copy to a normal list first.</td></tr>
+  <tr><td>Game arrays</td><td><code>Il2CppReferenceArray&lt;T&gt;</code> (objects), <code>Il2CppStructArray&lt;T&gt;</code> (numbers, structs). Make one from a
+    C# array: <code>new Il2CppReferenceArray&lt;T&gt;(array)</code>.</td><td></td></tr>
+  <tr><td>Callbacks</td><td><code>DelegateSupport.ConvertDelegate&lt;UnityAction&gt;(new Action(…))</code>, and <b>keep it in a field</b> as long
+    as the game might call it.</td><td>A temporary delegate: .NET can clean it up while the game still holds it, and the next call crashes.</td></tr>
+  <tr><td>Same object?</td><td>Compare <code>a.Pointer == b.Pointer</code> (the native address), or Unity's <code>GetInstanceID()</code>.</td><td><code>ReferenceEquals</code>: two wrappers can wrap one game object.</td></tr>
+  <tr><td>Destroyed Unity objects</td><td><code>if (obj == null)</code>: Unity's <code>==</code> knows about destroyed objects.</td><td><code>obj?.x</code> or <code>obj ?? y</code> on Unity objects: they miss destroyed ones.</td></tr>
+  <tr><td>Your own component types</td><td><code>AddComponent&lt;T&gt;()</code> from the plugin registers <code>T</code> for you.</td><td></td></tr>
+  <tr><td>Strings, numbers, <code>Vector3</code>, <code>Color</code>…</td><td>Just use them: they convert automatically.</td><td></td></tr>
+</table>
+
+<h2>Not every Unity method exists</h2>
+<p>When the game was built, Unity <b>removed code the game never used</b>. The interop files only contain what's left.
+For example, <code>GUI.Button</code>, <code>GUI.Toggle</code> and <code>GUI.TextField</code> exist in Sprocket, but <code>GUI.BeginScrollView</code>
+doesn't, so the Battle Editor's design list scrolls by hand. Before you plan a feature around a Unity method, check it's in
+the interop files (the kit's <code>ApiLister</code> will tell you). If it isn't, your code won't even compile against it.</p>
+
+<h2>Async game methods</h2>
+<p>Many game methods return a <code>Task</code> (loading a design, restarting a battle). Calling one starts the work and returns
+at once. The work finishes later, over several frames. The simple and safe pattern: call it, then check in
+<code>Update()</code> each frame until the result is there. The Battle Editor restarts a battle this way, then waits
+until every new tank reports <code>Spawned</code> before it moves them.</p>
+
+<!-- ============================ 8 ============================ -->
+<h1 class="chapter"><span class="num">8</span>Adding user interface</h1>
+<p class="lead">There are three ways to put your own controls on screen. Pick by where the player is.</p>
+
+<h2>A. Inside the game's own panels (editor)</h2>
+<p>Best in the vehicle editor: your controls look like the game's, and clicks work normally. Postfix a part editor's
+<code>OnGUI</code> and draw with <code>IGUIElementDrawer</code>. From Quality of Life's gun length feature:</p>
+<pre><code>[HarmonyPostfix, HarmonyPatch(<span class="k">typeof</span>(CannonEditor), <span class="k">nameof</span>(CannonEditor.OnGUI))]
+<span class="k">static void</span> Draw(CannonEditor __instance, IGUILayout layout)
+{
+    <span class="k">try</span>
+    {
+        <span class="k">var</span> gun = __instance.Component?.Blueprint;
+        <span class="k">var</span> ui = layout.TryCast&lt;IGUIElementDrawer&gt;();
+        <span class="k">if</span> (gun == <span class="k">null</span> || ui == <span class="k">null</span> || gun.Caliber == 0) <span class="k">return</span>;
+        ui.Header(<span class="s">"Gun length"</span>);
+        ui.InfoField($<span class="s">"Barrel  L/{gun.BarrelLength / (float)gun.Caliber:0.#}"</span>, 1);
+    }
+    <span class="k">catch</span> (Exception ex) { Plugin.ModLog.LogError(ex); }
+}</code></pre>
+<ul>
+  <li><code>InfoField(text, lines)</code>: give it exactly as many lines as the text has (use <code>\n</code>).</li>
+  <li>Buttons: <code>ui.Button(label, unityAction, ref tooltip)</code> with a kept <code>UnityAction</code> (chapter 7).</li>
+  <li>The panel only redraws when asked: after a click that changes what's shown, call the editor's <code>RequestRedraw()</code>.</li>
+  <li><code>layout.BeginDropdown(title, expanded, Action&lt;bool&gt;)</code> makes a section the player can fold away.</li>
+</ul>
+
+<h2>B. In the game's menus</h2>
+<p>Menu screens build their button lists with <code>MenuPanel.Button(label, onClick, interactable)</code>. A postfix on it can add
+your button right after a game button (chapter 3's example; the Battle Editor button works this way). Your button's action can
+even call the game button's own action, so it opens the game's screen with your mod "armed".</p>
+
+<h2>C. Your own overlay (IMGUI)</h2>
+<p>Anywhere else (in a battle, over the map), draw in your MonoBehaviour's <code>OnGUI</code> with <code>GUI.Box</code>,
+<code>GUI.Label</code> and <code>GUI.Button</code>. It's quick, plain-looking, and has two traps in Sprocket:</p>
+<div class="box warn"><span class="t">Trap 1: in battles, IMGUI buttons never get the click</span>
+They draw and highlight, but <code>GUI.Button</code> never returns <code>true</code>, because the game keeps the mouse events. The fix the
+Battle Editor uses: draw the buttons as usual, <b>remember each button's rectangle and action</b>, and handle the click
+yourself in <code>Update()</code> with <code>Mouse.current</code>.</div>
+<pre><code><span class="k">readonly</span> List&lt;(Rect Area, Action Act)&gt; buttons = <span class="k">new</span>();
+
+<span class="k">void</span> Button(Rect area, <span class="k">string</span> text, Action act) { GUI.Button(area, text); buttons.Add((area, act)); }
+
+<span class="k">public void</span> OnGUI() { buttons.Clear(); Button(<span class="k">new</span> Rect(20, 60, 120, 26), <span class="s">"Save"</span>, Save); <span class="c">/* … */</span> }
+
+<span class="k">public void</span> Update()
+{
+    <span class="k">var</span> mouse = Mouse.current;
+    <span class="k">if</span> (mouse == <span class="k">null</span> || !mouse.leftButton.wasPressedThisFrame) <span class="k">return</span>;
+    <span class="k">var</span> m = mouse.position.ReadValue();
+    <span class="k">var</span> p = <span class="k">new</span> Vector2(m.x, Screen.height - m.y);            <span class="c">// GUI counts from the top</span>
+    <span class="k">foreach</span> (<span class="k">var</span> (area, act) <span class="k">in</span> buttons.ToList())
+        <span class="k">if</span> (area.Contains(p)) { act(); <span class="k">return</span>; }
+}</code></pre>
+<div class="box warn"><span class="t">Trap 2: clicks go through to the game</span>
+A click on your overlay also reaches whatever is behind it (the editor, or your own "click the ground" code).
+Keep the rectangles of your panels, and ignore map clicks while the mouse is over one.</div>
+
+<h2>The mouse pointer and the game's controls</h2>
+<ul>
+  <li>While you're driving a tank, the game <b>hides and locks the pointer every frame</b>. To show it, set
+    <code>Cursor.lockState = CursorLockMode.None</code> and <code>Cursor.visible = true</code> every frame (in <code>Update</code>
+    <i>and</i> <code>OnGUI</code>, which runs last), and stop when your tool closes.</li>
+  <li>The game's controls keep working under your UI (in the Battle Editor, right-dragging to look also aimed the gun and opened the
+    command wheel). Switch them off while your tool is open, and back on after:</li>
+</ul>
+<pre><code><span class="k">var</span> on = InputSystem.ListEnabledActions();                       <span class="c">// every game control that's on</span>
+<span class="k">for</span> (<span class="k">int</span> i = 0; i &lt; on.Count; i++) { on[i].Disable(); switchedOff.Add(on[i]); }
+<span class="c">// later: foreach (var a in switchedOff) a.Enable();</span></code></pre>
+<p>Your own <code>Keyboard.current</code> / <code>Mouse.current</code> reads still work while the game's controls are off.</p>
+
+<!-- ============================ 9 ============================ -->
+<h1 class="chapter"><span class="num">9</span>Settings, files and logs</h1>
+
+<h2>Settings the player can change</h2>
+<pre><code><span class="k">internal static</span> ConfigEntry&lt;<span class="k">float</span>&gt; Brightness = <span class="k">null</span>!;
+<span class="c">// in Load():</span>
+Brightness = Config.Bind(<span class="s">"Lights"</span>, <span class="s">"Flashlight brightness"</span>, 80f, <span class="s">"Percent of the sun"</span>);
+<span class="c">// anywhere:</span>
+<span class="k">float</span> b = Brightness.Value;   Brightness.Value = 120f;   <span class="c">// setting it saves the file</span></code></pre>
+<p>The file is <code>BepInEx\config\&lt;your mod id&gt;.cfg</code>, created on first start with your defaults and descriptions.
+Quality of Life also uses settings to <i>remember</i> things (folded sections, the last brightness used).</p>
+
+<h2>Your own files</h2>
+<p>Put player data next to the game's, under <code>Documents\My Games\Sprocket\&lt;your folder&gt;</code>. The Battle Editor saves
+battles as <code>Battles\&lt;map&gt;.json</code>. .NET's <code>System.Text.Json</code> works normally in mods. Keep a version number in your
+file format from day one, so you can read old files after you change it.</p>
+<pre><code><span class="k">var</span> documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+<span class="k">var</span> folder = Path.Combine(documents, <span class="s">"My Games"</span>, <span class="s">"Sprocket"</span>, <span class="s">"Battles"</span>);
+Directory.CreateDirectory(folder);
+File.WriteAllText(Path.Combine(folder, map + <span class="s">".json"</span>), JsonSerializer.Serialize(battle));</code></pre>
+
+<h2>Logging</h2>
+<table>
+  <tr><th style="width:34%">Log</th><th>What's in it</th></tr>
+  <tr><td><code>BepInEx\LogOutput.log</code></td><td>Your <code>Log.LogInfo / LogWarning / LogError</code> lines, plugin loading, patch errors.</td></tr>
+  <tr><td><code>…\LocalLow\HD\Sprocket\Player.log</code></td><td>Unity and the game: scene changes, player states ("Entering player state 'Vehicle Control'"), game errors. The previous run is <code>Player-prev.log</code>.</td></tr>
+  <tr><td>Your own trace file</td><td>For crashes: see below.</td></tr>
+</table>
+<div class="box warn"><span class="t">A crash loses the end of the log</span>
+BepInEx writes its log in batches. When the game crashes, the last lines, the ones you need, may never reach the file.
+While hunting a crash, also write each important step to your own file straight away:</div>
+<pre><code><span class="k">static void</span> Trace(<span class="k">string</span> line)
+{
+    Plugin.ModLog.LogInfo(line);
+    <span class="k">var</span> file = Path.Combine(Paths.BepInExRootPath, <span class="s">"MyMod-trace.log"</span>);
+    <span class="k">try</span> { File.AppendAllText(file, $<span class="s">"{DateTime.Now:HH:mm:ss.fff} {line}\n"</span>); }
+    <span class="k">catch</span> (Exception) { }
+}</code></pre>
+<p>Log <b>events</b> (a tool opened, a battle restarted with 11 tanks), never every frame. A trace like
+<code>placing: moved 11 tanks to where they were placed</code> tells you more than any debugger in a native game.</p>
+
+<!-- ============================ 10 ============================ -->
+<h1 class="chapter"><span class="num">10</span>Data mods: new parts without code</h1>
+<p class="lead">If you only want new parts (a new add-on shape, a new part to place), you may not need code at all.</p>
+
+<h2>Where the game reads parts</h2>
+<table>
+  <tr><th style="width:52%">File</th><th>Holds</th></tr>
+  <tr><td><code>Sprocket_Data\StreamingAssets\Parts\&lt;name&gt;Part.json</code></td><td>The part: id, tags, its components (for a structure, its mesh).</td></tr>
+  <tr><td><code>Sprocket_Data\StreamingAssets\Localization\en-UK\Parts\&lt;name&gt;.xml</code></td><td>The name players see in the editor.</td></tr>
+</table>
+
+<div class="file">Parts\roundAddon16PlateStructurePart.json (start of the file)</div>
+<pre><code>{
+  <span class="s">"v"</span>: <span class="s">"0.0"</span>,
+  <span class="s">"guid"</span>: <span class="s">"3f1c6a9e-7b2d-4e58-9c14-2a6b8d0e4f16"</span>,     <span class="c">// the part's id: new, unique, never changes</span>
+  <span class="s">"name"</span>: <span class="s">"roundAddon16PlateStructure"</span>,
+  <span class="s">"tags"</span>: [ <span class="s">"plateStructurePrefab"</span> ],                <span class="c">// where it appears (the Addon Structures palette)</span>
+  <span class="s">"components"</span>: [ { <span class="s">"type"</span>: <span class="s">"plateStructurePrefab"</span>,
+      <span class="s">"info"</span>: { <span class="s">"mesh"</span>: { <span class="s">"smoothAngle"</span>: 23.5, <span class="s">"format"</span>: <span class="s">"freeform"</span>,
+        <span class="s">"mesh"</span>: { <span class="s">"vertices"</span>: [ 0.125, 0, 0, … ] … } } } } ]
+}</code></pre>
+
+<h2>Making one</h2>
+<ol class="steps">
+  <li><b>Copy a game part</b> that's close to what you want (the add-on cube, for example) into your mod's own
+    <code>Sprocket_Data\StreamingAssets\Parts\</code> folder, under a new file name.</li>
+  <li><b>Give it a new <code>guid</code></b> (any GUID generator, e.g. PowerShell's <code>[guid]::NewGuid()</code>) and a new <code>name</code>.
+    Never reuse the game's ids.</li>
+  <li><b>Change the data</b>: the mesh, the size. For generated shapes, write a small program; the kit's
+    <code>tools\RoundAddonParts</code> generates the round add-ons.</li>
+  <li><b>Add the name file</b> in <code>Localization\en-UK\Parts\</code>, copied from the original part's.</li>
+  <li><b>Install</b>: copy your <code>Sprocket_Data</code> folder into the game folder, or add the folder as a mod in Mod Manager.</li>
+</ol>
+<div class="box warn"><span class="t">The id is forever</span>Saved designs remember each part by its <code>guid</code>. Change it (or remove the
+part) and every design that used it stops loading that part. Keep ids stable across versions.</div>
+
+<h2>Blueprint files, in one paragraph</h2>
+<p><code>.blueprint</code> files are JSON. <code>header</code> has the name, mass and version. <code>objects</code> lists the parts:
+<code>guid</code> is the part type (from the Parts files), <code>vuid</code>/<code>pvuid</code> are its id and its parent's id,
+and <code>transform</code> has the position, rotation (Unity Euler angles plus a 4th "placement spin" value) and scale.
+<code>blueprints</code> holds settings blocks, referenced by <code>…BlueprintVuid</code>, and <code>meshes</code> holds hand-made shapes.
+Code mods convert between a design and this JSON with <code>VehicleBlueprintSerializer</code>, the same way the game saves.</p>
+
+<!-- ============================ 11 ============================ -->
+<h1 class="chapter"><span class="num">11</span>Testing and debugging</h1>
+
+<h2>The loop</h2>
+<div class="flow">
+  <div class="n"><b>Edit</b>Change one thing.</div><div class="a">→</div>
+  <div class="n"><b>Build</b><code>dotnet build -c Release</code>. Fix every warning too.</div><div class="a">→</div>
+  <div class="n"><b>Install</b>Close the game, copy the DLL (or <code>deploy.ps1</code>).</div><div class="a">→</div>
+  <div class="n"><b>Run</b>Do exactly the thing you changed.</div><div class="a">→</div>
+  <div class="n"><b>Read the logs</b>Your trace, <code>LogOutput.log</code>, <code>Player.log</code>.</div>
+</div>
+<p>Change <b>one thing at a time</b>. When five changes go in together and the game crashes, you don't know which one did it.</p>
+
+<h2>Test without the game</h2>
+<p>Starting Sprocket takes time, so keep logic that doesn't need the game (geometry, file formats, maths) in files that
+don't use Unity or game classes. Then a plain console project can include those same files and test them in seconds.
+The kit's <code>SprocketQoL.Tests</code> does this: it links Quality of Life's mesh-cutting and conversion code and runs it on
+real saved designs, with no game running.</p>
+<pre><code>&lt;ItemGroup&gt;   <span class="c">&lt;!-- in the test project: use the mod's own source file --&gt;</span>
+  &lt;Compile Include="..\SprocketQoL\MeshCut.cs" Link="MeshCut.cs" /&gt;
+&lt;/ItemGroup&gt;</code></pre>
+
+<h2>Looking inside the running game</h2>
+<ul>
+  <li><b>UnityExplorer</b>: browse scenes, objects and components live; see values change; find the class behind anything on screen.</li>
+  <li><b>Log what you find</b>: counts, names, positions. For example, <i>"editor open on 'Defence': 1 of the battle's tanks moved away,
+    59 game controls, 5 HUD canvases, 1 fog off"</i> told us at once what the editor had switched off.</li>
+  <li><b>Screenshots</b> of what's wrong, with the log lines from the same moment, are the fastest way to explain a bug to yourself or anyone else.</li>
+</ul>
+
+<h2>When the game crashes</h2>
+<ol>
+  <li>Read the end of <code>Player.log</code> (or <code>Player-prev.log</code> after restarting): the last scene and player state tell you <i>when</i> it happened.</li>
+  <li>Read your trace file: the last step your mod reached.</li>
+  <li>Turn patches off one class at a time until the crash stops. The last one you turned off is where to look.</li>
+  <li>Suspect, in this order: patches on methods with struct parameters, exceptions escaping a patch, and objects used after the game destroyed them.</li>
+</ol>
+
+<!-- ============================ 12 ============================ -->
+<h1 class="chapter"><span class="num">12</span>Packaging and sharing</h1>
+
+<h2>Before each release</h2>
+<ul>
+  <li>Raise the version in <code>[BepInPlugin(…)]</code>. Keep the <b>id</b> the same forever.</li>
+  <li>Build <code>-c Release</code>, and test that build in the game, not an older one.</li>
+  <li>Check your DLL doesn't contain your folder paths: the kit's <code>PathMap</code> setting does this. You can check with
+    <code>findstr /c:"YourWindowsName" YourMod.dll</code>, which should find nothing.</li>
+</ul>
+
+<h2>The zip</h2>
+<p>Lay the zip out <b>like the game folder</b>, so it can be unzipped straight into it, and so Mod Manager knows where each file goes:</p>
+<pre><code>YourMod-1.0.0.zip
+└── BepInEx
+    └── plugins
+        ├── YourMod.dll
+        ├── YourMod-README.txt      <span class="c">← inside plugins, not at the zip's root</span>
+        └── YourMod-LICENSE.txt</code></pre>
+<p>A README at the zip's root would be copied into the game's own folder. A data mod's zip holds its <code>Sprocket_Data\…</code> tree instead.</p>
+
+<h2>What not to ship</h2>
+<ul>
+  <li><b>No game files</b>, no <code>BepInEx\interop</code> DLLs (they're made from the game's code, and every player makes their own), no copy of BepInEx itself.</li>
+  <li><b>No changed game files.</b> Mods change the running game, never <code>GameAssembly.dll</code> or other game files on disk.</li>
+</ul>
+
+<h2>Publishing</h2>
+<ul>
+  <li>A GitHub repository with a release per version is the easy way: players download the zip, and you keep the source.</li>
+  <li>Say which <b>Sprocket version</b> and <b>loader</b> you tested with. Release untested features as a <i>pre-release</i> until
+    you've tried them in the game.</li>
+  <li>Pick a licence. The kit uses MIT: anyone can use and change the code if they keep the notice.</li>
+  <li>Write the README for players: what each feature does, where to click, and how to undo it.</li>
+</ul>
+
+<h2>When Sprocket updates</h2>
+<p>The loader rebuilds <code>BepInEx\interop</code> for the new game version. Rebuild your mod against it: if a class or
+method was renamed, the build tells you where. Then check in the game that each patch still <i>fires</i> (your
+log lines), because a method can still exist but no longer be called, or be inlined now.</p>
+
+<div class="box note"><span class="t">For players</span>A code mod runs with the same rights as the game, so it can do anything a
+program on your PC can. Only install DLL mods from people you trust, ideally with their source code published.</div>
+
+<!-- ============================ 13 ============================ -->
+<h1 class="chapter"><span class="num">13</span>Pitfalls we hit, and the fixes</h1>
+<p class="lead">Every row here cost at least one test run. Each came from building Quality of Life or the Battle Editor.</p>
+<table>
+  <tr><th style="width:28%">Symptom</th><th style="width:34%">Cause</th><th>Fix</th></tr>
+  <tr><td>Patch attaches, but nothing happens</td><td>The method was inlined into its callers (small or <code>async</code> methods).</td><td>Log inside every patch. Patch a method every caller goes through, or change the game's data instead.</td></tr>
+  <tr><td>Game crashes as soon as a patched method runs</td><td>A patch on a method with a small struct parameter passed by value (<code>CancellationToken</code>).</td><td>Remove that patch; do the work before or after the call.</td></tr>
+  <tr><td>Crash, no clue in the log</td><td>BepInEx writes its log in batches; the end is lost.</td><td>Your own trace file, written line by line.</td></tr>
+  <tr><td>IMGUI buttons draw but don't click (in battle)</td><td>The game keeps the mouse events.</td><td>Record button rectangles; click them yourself from <code>Mouse.current</code>.</td></tr>
+  <tr><td>Clicks on your overlay also do things in the game</td><td>IMGUI doesn't stop the click reaching the game.</td><td>Skip map clicks while the mouse is over your panels.</td></tr>
+  <tr><td>Mouse pointer invisible</td><td>The game hides and locks it every frame while driving.</td><td>Show and unlock it every frame while your tool is open.</td></tr>
+  <tr><td>Right-drag in your tool also aims, fires, opens menus</td><td>The game's controls are still on.</td><td>Disable every enabled <code>InputAction</code>; enable them again on leaving.</td></tr>
+  <tr><td>Your camera moves snap back</td><td>The game camera is moved every frame by a rig following the tank.</td><td>Use your own camera: <code>CopyFrom(gameCamera)</code> and copy its <code>HDAdditionalCameraData</code> (<code>CopyTo</code>); switch the game's off.</td></tr>
+  <tr><td>Objects you create are pink</td><td>A new object's default material uses a shader HDRP can't draw.</td><td>A shader the game ships, e.g. <code>Shader.Find("HDRP/Unlit")</code> (check it isn't null), colour in <code>_UnlitColor</code>. One material per colour, not one per object.</td></tr>
+  <tr><td>Clicking your objects misses them while the game is frozen</td><td><code>Time.timeScale = 0</code>: no physics step, colliders stay where they were made.</td><td><code>Physics.SyncTransforms()</code> after moving them.</td></tr>
+  <tr><td>A hidden tank still shows its tracks, and the log fills with audio warnings</td><td>A central updater keeps driving tracks and sound of switched-off tanks.</td><td>Move the tank far out of sight while hidden, and put it back after.</td></tr>
+  <tr><td>Extra directional lights do nothing</td><td>HDRP draws only one directional light (the sun).</td><td>Use point lights for extra light (Quality of Life's fullbright does).</td></tr>
+  <tr><td>Fog hides the ground from high up</td><td>The map's HDRP fog volume.</td><td>Set the volume's <code>Fog</code> component <code>active = false</code> while needed; put it back after.</td></tr>
+  <tr><td>A Unity method "doesn't exist"</td><td>Stripped from the game build because the game never used it.</td><td>Check with ApiLister; build it from methods that exist (e.g. scroll a list by hand).</td></tr>
+  <tr><td>Game screen refuses to start ("Player team has no units")</td><td>The game's own checks still apply to screens you reuse.</td><td>Fill in what it checks (the Battle Editor adds a placeholder tank), or don't reuse that screen.</td></tr>
+  <tr><td>Copying the DLL fails</td><td>The running game locks mod DLLs.</td><td>Close the game first; a tiny leftover <code>Sprocket.exe</code> (under 1 MB) isn't a running game.</td></tr>
+  <tr><td>Things from the last battle reappear</td><td>Your component and static fields live as long as the game runs, across battles.</td><td>Reset per battle: remember which battle (<code>GetInstanceID()</code>) your data belongs to.</td></tr>
+</table>
+
+<!-- ============================ 14 ============================ -->
+<h1 class="chapter"><span class="num">14</span>Case study: how the Battle Editor is built</h1>
+<p class="lead">The Battle Editor lets you open a map, place any tank for either team, set its facing and who drives it,
+and play the battle as placed. It's about 1,000 lines, and it uses almost everything in this guide. Its source is in its
+own repository, apart from the kit.</p>
+
+<h2>Files</h2>
+<table>
+  <tr><th style="width:22%">File</th><th>Job</th><th style="width:30%">Techniques</th></tr>
+  <tr><td><code>Plugin.cs</code></td><td>Starts everything: adds the editor component and applies two patch classes, each in its own <code>try</code>.</td><td>Ch. 3, 5</td></tr>
+  <tr><td><code>Menu.cs</code></td><td>Adds a <b>Battle Editor</b> button under the game's Custom Battle button. Clicking it runs the game's own Custom Battle action and "arms" the editor.</td><td>Postfix on <code>MenuPanel.Button</code>; kept <code>UnityAction</code></td></tr>
+  <tr><td><code>BattleEditor.cs</code></td><td>The editor itself: opens when the battle's tanks are in, freezes the battle, gives you a camera, markers, panels and keys; puts everything back on leaving.</td><td>MonoBehaviour, Input System, own camera, IMGUI with self-handled clicks</td></tr>
+  <tr><td><code>Battle.cs</code></td><td>Plays the battle: rewrites the custom battle's team list with your tanks, restarts it, then moves each new tank to its place. Holds back win or loss when a team is empty.</td><td>Changing game data, async wait in <code>Update</code>, prefix returning <code>false</code></td></tr>
+  <tr><td><code>BattleFile.cs</code></td><td>The battle file (JSON): map, and per tank an id, team, design, position, facing, who drives it, and orders.</td><td>Plain C#, tested without the game</td></tr>
+</table>
+
+<h2>What happens when you use it</h2>
+<ol class="steps">
+  <li><b>Main menu → Battle Editor.</b> The postfix added the button; its action sets <code>EditNext</code> and invokes the game's Custom Battle action.
+    The game's own screen opens: you pick the map there. An empty team gets a placeholder tank, because the screen won't start without one.</li>
+  <li><b>The battle loads.</b> Each frame, the editor checks for a <code>DeathmatchGameMode</code> whose <code>vehicleSpawns</code> are all <code>Spawned</code>, then opens.</li>
+  <li><b>Opening</b> saves everything it will change, then:
+    <code>Time.timeScale = 0</code>; its own camera (copied from the game's), looking straight down; the game's controls, HUD and fog off;
+    the battle's tanks moved 1 km under the map; the mouse pointer shown every frame.</li>
+  <li><b>Editing.</b> Clicks are read from <code>Mouse.current</code>: on a panel, they run the button under the pointer; on the map, they place or pick a tank
+    (raycast against the ground and the marker boxes). The markers use an HDRP unlit material, and <code>Physics.SyncTransforms()</code> keeps them clickable while frozen.</li>
+  <li><b>Play.</b> Save the file, put everything back, write your tanks into <code>BattleConfig.Teams[t].Units</code>, call the game's <code>RetryAsyncVoid()</code>.
+    Then, each frame: once all <i>new</i> spawns report <code>Spawned</code>, move each tank to its place and zero its speed.</li>
+</ol>
+
+<h2>Decisions worth copying</h2>
+<ul>
+  <li><b>Use the game's own flows.</b> The editor doesn't load maps or spawn tanks itself: the game's Custom Battle screen and its Retry do it. The mod only changes the inputs and fixes up the result.</li>
+  <li><b>Data over hooks.</b> When hooks on loading didn't fire, changing the battle's data (its team list) did the job with no hook at all.</li>
+  <li><b>Put back exactly what you changed.</b> Every change on opening (time scale, camera, controls, HUD, fog, tanks, cursor) is remembered and undone on leaving.</li>
+  <li><b>Trace every step.</b> The trace file made each test run readable:
+    <code>play 'Defence': 11 tanks in 2 teams, restarting</code> → <code>placing: moved 11 tanks to where they were placed</code>.</li>
+  <li><b>Build for later.</b> Each tank's control is stored as <code>"player"</code>, <code>"ai"</code> or <code>"slot:N"</code>, so future multiplayer slots fit in the same file format.</li>
+</ul>
+
+<!-- ============================ A ============================ -->
+<h1 class="chapter newpage"><span class="num">A</span>Cheat sheet</h1>
+<div class="two">
+<div>
+<h3>Plugin</h3>
+<pre><code>[BepInPlugin(<span class="s">"me.sprocket.mod"</span>,
+  <span class="s">"My Mod"</span>, <span class="s">"1.0.0"</span>)]
+<span class="k">public sealed class</span> Plugin : BasePlugin
+{
+  <span class="k">public override void</span> Load()
+  {
+    AddComponent&lt;MyTool&gt;();
+    <span class="k">new</span> Harmony(<span class="s">"me.sprocket.mod"</span>)
+      .PatchAll(<span class="k">typeof</span>(MyPatches));
+  }
+}</code></pre>
+<h3>Postfix / prefix</h3>
+<pre><code>[HarmonyPostfix, HarmonyPatch(<span class="k">typeof</span>(T),
+  <span class="k">nameof</span>(T.Method))]
+<span class="k">static void</span> After(T __instance) { }
+
+[HarmonyPrefix, HarmonyPatch(<span class="k">typeof</span>(T),
+  <span class="k">nameof</span>(T.Method))]
+<span class="k">static bool</span> Before() =&gt; <span class="k">true</span>; <span class="c">// false skips</span></code></pre>
+<h3>MonoBehaviour</h3>
+<pre><code><span class="k">public sealed class</span> MyTool : MonoBehaviour
+{
+  <span class="k">public</span> MyTool(IntPtr p) : <span class="k">base</span>(p) { }
+  <span class="k">public void</span> Update() { }
+  <span class="k">public void</span> OnGUI() { }
+}</code></pre>
+<h3>Setting</h3>
+<pre><code><span class="k">var</span> e = Config.Bind(<span class="s">"Section"</span>, <span class="s">"Key"</span>,
+  5f, <span class="s">"Description"</span>);
+<span class="k">float</span> v = e.Value;</code></pre>
+</div>
+<div>
+<h3>Input</h3>
+<pre><code><span class="k">var</span> k = Keyboard.current;
+k.f9Key.wasPressedThisFrame
+k.shiftKey.isPressed
+<span class="k">var</span> m = Mouse.current;
+m.position.ReadValue()  <span class="c">// from bottom</span>
+m.leftButton.wasPressedThisFrame
+m.scroll.ReadValue().y</code></pre>
+<h3>Game objects</h3>
+<pre><code>x.TryCast&lt;T&gt;()      <span class="c">// null if not T</span>
+x.Cast&lt;T&gt;()
+x.Pointer            <span class="c">// identity</span>
+<span class="k">for</span> (<span class="k">int</span> i = 0; i &lt; list.Count; i++)
+Object.FindObjectOfType&lt;T&gt;()</code></pre>
+<h3>Callback for the game</h3>
+<pre><code><span class="k">static</span> UnityAction? a;  <span class="c">// keep it!</span>
+a ??= DelegateSupport
+  .ConvertDelegate&lt;UnityAction&gt;(
+    <span class="k">new</span> Action(OnClick));</code></pre>
+<h3>Visible, clickable objects (HDRP)</h3>
+<pre><code><span class="k">var</span> m = <span class="k">new</span> Material(
+  Shader.Find(<span class="s">"HDRP/Unlit"</span>));
+m.SetColor(<span class="s">"_UnlitColor"</span>, Color.red);
+renderer.sharedMaterial = m;
+Physics.SyncTransforms(); <span class="c">// if frozen</span></code></pre>
+<h3>Build and install</h3>
+<pre><code>dotnet build -c Release
+.\tools\deploy.ps1 MyMod</code></pre>
+</div>
+</div>
+
+<!-- ============================ B ============================ -->
+<h1 class="chapter newpage"><span class="num">B</span>Troubleshooting</h1>
+<table>
+  <tr><th style="width:30%">Problem</th><th>Check</th></tr>
+  <tr><td>Build: "has no working BepInEx 6 IL2CPP"</td><td><code>GameDir</code> points at a folder without <code>BepInEx\core</code> or <code>BepInEx\interop</code>. Install the loader there and start the game once, or build with <code>-p:GameDir="…"</code>.</td></tr>
+  <tr><td>Build: type or namespace not found</td><td>Use the <code>Sprocket.X</code> name, not <code>Il2CppSprocket.X</code>; add the <code>using</code> for its namespace (ApiLister shows it); the class may be renamed after a game update.</td></tr>
+  <tr><td>The mod isn't in <code>LogOutput.log</code> at all</td><td>Is the DLL in <code>BepInEx\plugins</code> (or enabled in Mod Manager)? Built for <code>net6.0</code>? Does the class have <code>[BepInPlugin]</code> and inherit <code>BasePlugin</code>? Is the id the same as another mod's?</td></tr>
+  <tr><td>"Loading [My Mod]" appears, then an error</td><td>An exception in <code>Load()</code>: the log shows it. Keep <code>Load()</code> to setup only; the game world doesn't exist yet.</td></tr>
+  <tr><td>A patch never runs</td><td>Chapter 5, rule 1: inlined or never called. Try another method along the same path, or change the game's data.</td></tr>
+  <tr><td>"could not attach" when patching</td><td>The method name or overload doesn't match (use <code>nameof</code> and the parameter types); a patch parameter's name doesn't match the game's.</td></tr>
+  <tr><td>Update/OnGUI never runs</td><td>Did you call <code>AddComponent&lt;T&gt;()</code>? Does the class have the <code>(IntPtr)</code> constructor? Look for "Registered mono type" in the log.</td></tr>
+  <tr><td>Keys do nothing</td><td>Read <code>Keyboard.current</code> (the game uses the Input System, not the old <code>Input</code> class); check it isn't null.</td></tr>
+  <tr><td>My buttons don't respond</td><td>In a battle, IMGUI clicks never arrive: handle clicks yourself (chapter 8).</td></tr>
+  <tr><td>The game freezes at the main menu with BepInEx</td><td>The loader build doesn't run on this Sprocket version (chapter 2). Try a build other Sprocket modders confirm.</td></tr>
+  <tr><td>It worked before a game update</td><td>Rebuild against the new <code>interop</code>, then check each patch still logs that it fires.</td></tr>
+</table>
+<p class="muted" style="margin-top:6mm">This guide is part of the Sprocket Mod Kit (MIT licence). Class names are from Sprocket 0.2.55.5.
+If something here stops matching your game version, the method in chapter 4 finds the new name.</p>
+
+</body>
+</html>
