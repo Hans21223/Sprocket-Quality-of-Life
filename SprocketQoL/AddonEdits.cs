@@ -66,6 +66,29 @@ public static class AddonEdits
         return Conversion.Near(Shape(o, world[v]) * Flip, Shape(twin, world[t])) ? t : null;
     }
 
+    /// A part saved once that the game shows twice: marked mirrored, with no twin part. The second one (its image) is its
+    /// shape reflected across the vehicle's centre plane.
+    static bool Imaged(Dictionary<int, JsonObject> objects, int v) =>
+        ((objects[v]["flags"]?.GetValue<int>() ?? 0) & 4) != 0
+        && !(objects[v]["transform"]?["mirrorVuid"] is JsonValue m && m.TryGetValue<int>(out int t) && t != v && objects.ContainsKey(t));
+
+    /// A part stops being one of a mirror pair: no twin, and no mirrored mark (with the mark and no twin the game would
+    /// show an image of it on the other side).
+    internal static void Unlink(JsonObject o)
+    {
+        o["transform"]!["mirrorVuid"] = -1;
+        o["flags"] = (o["flags"]?.GetValue<int>() ?? 0) & ~4;
+    }
+
+    /// Part `o` stops being shown twice: its image, `source` (its shape before the edit) placed by `imageIntoShape` (the
+    /// image's place in the part's own shape coordinates), becomes part of its own shape instead, so what shows stays the same.
+    static void BakeImage(JsonObject o, Matrix4x4 imageIntoShape, JsonObject meshData, JsonObject source, List<JsonObject> structures, double armour)
+    {
+        Append(meshData["mesh"]!.AsObject(), meshData["rivets"]?.AsObject(), source["mesh"]!.AsObject(), source["rivets"]?.AsObject(), imageIntoShape);
+        foreach (var s in structures) s["armourVolume"] = s["armourVolume"]!.GetValue<double>() + armour;
+        Unlink(o);
+    }
+
     /// Face count of every part's hand-made shape in a design (parts without one are left out).
     public static Dictionary<int, int> FaceCounts(string json)
     {
@@ -95,7 +118,7 @@ public static class AddonEdits
     /// its armour), parts attached to them move onto target, and the emptied parts are removed.
     public static string MergeAddons(string json, int target, IEnumerable<int> others) => PlanMerge(json, target, others).DesignJson;
 
-    public static EditPlan PlanMerge(string json, int target, IEnumerable<int> others)
+    public static EditPlan PlanMerge(string json, int target, IEnumerable<int> others, LiveShapes? live = null)
     {
         var b = Conversion.Parse(json);
         var objects = Conversion.Objects(b);
@@ -120,56 +143,79 @@ public static class AddonEdits
         foreach (int v in merge) if (Twin(objects, blocks, before, v) is int t && t != target) { twin[v] = t; twin[t] = v; }
         var newParent = new Dictionary<int, int>(); // each part that goes -> the part its attached parts move onto
         var shapes = new List<int>();               // the parts whose shapes go into the target's
+        var images = new List<int>();               // parts shown twice by the game whose image goes in as well
+        bool targetImaged = Imaged(objects, target), bake = false;
+        bool Mirrored(int v) => twin.ContainsKey(v) || Imaged(objects, v);
         string mirror;
-        if (targetTwin is int other && merge.All(twin.ContainsKey))
+        if ((targetTwin != null || targetImaged) && merge.All(Mirrored))
         {
-            // Pair into pair: the add-on on the target's side goes into the target's shape, which its twin shares, so the
-            // other side gets its mirror image, just as the add-on's twin looked.
+            // Mirrored into mirrored: the add-on on the target's side goes into the target's shape, and the target's twin
+            // (which shares it) or image shows it mirrored on the other side, just as the add-on's twin or image looked.
             float Distance(int v) => Vector3.Distance(before[v].Translation, before[target].Translation);
-            foreach (int v in merge.Select(v => Distance(v) <= Distance(twin[v]) ? v : twin[v]).Distinct())
+            foreach (int v in merge.Select(v => twin.TryGetValue(v, out int t) && Distance(t) < Distance(v) ? t : v).Distinct())
             {
                 shapes.Add(v);
                 newParent[v] = target;
-                newParent[twin[v]] = other;
+                if (twin.TryGetValue(v, out int t)) newParent[t] = targetTwin ?? target;
             }
             mirror = "both sides";
         }
-        else if (targetTwin == null)
+        else if (targetTwin == null && !targetImaged)
         {
-            // Into a part on the centre line (or without a twin): each add-on brings its twin, mirrored into place.
+            // Into a part on the centre line (or one not mirrored): each add-on brings its twin or image, mirrored into place.
             foreach (int v in merge.Concat(merge.Where(twin.ContainsKey).Select(v => twin[v])).Distinct()) { shapes.Add(v); newParent[v] = target; }
-            mirror = shapes.Count > merge.Count ? "with twins" : "no twins";
+            images.AddRange(merge.Where(v => Imaged(objects, v)));
+            mirror = shapes.Count > merge.Count || images.Count > 0 ? "with twins" : "no twins";
         }
         else
         {
-            // Some add-ons have no twin: the target stops being a mirror pair and takes just the selected add-ons.
+            // Some add-ons aren't mirrored: the target stops being mirrored and takes just the selected add-ons (with their
+            // images). Its twin stays as it is; its image becomes part of its own shape.
+            // A flipped part that stops being mirrored can show unflipped afterwards (seen in the game: a skirt's image,
+            // made part of its shape, showed metres away), so this merge never takes the mirror mark off a flipped one.
+            var unmarked = new[] { target }.Concat(targetTwin is int t2 ? new[] { t2 } : System.Array.Empty<int>())
+                .Concat(merge.Where(twin.ContainsKey).Select(v => twin[v]).Where(t => !merge.Contains(t)));
+            if (unmarked.Any(v => ((objects[v]["flags"]?.GetValue<int>() ?? 0) & 1) != 0))
+                throw new Exception("The target is mirrored and some add-ons aren't: a flipped part would stop being mirrored. Select the add-ons' twins too (Mirror on), or merge into an unmirrored part.");
             foreach (int v in merge) { shapes.Add(v); newParent[v] = target; }
-            targetObject["transform"]!["mirrorVuid"] = -1;
-            objects[targetTwin.Value]["transform"]!["mirrorVuid"] = -1;
-            targetTwin = null;
-            mirror = "target unpaired";
+            images.AddRange(merge.Where(v => Imaged(objects, v)));
+            if (targetTwin is int pair)
+            {
+                Unlink(targetObject);
+                Unlink(objects[pair]);
+                targetTwin = null;
+                mirror = "target unpaired";
+            }
+            else { bake = true; mirror = "target's image kept in its shape"; }
         }
         var gone = newParent.Keys.ToList();
         var owners = targetTwin is int keep ? new[] { target, keep } : new[] { target };
         foreach (int start in owners)
             for (int p = Conversion.Id(objects[start], "pvuid"); objects.TryGetValue(p, out var up); p = Conversion.Id(up, "pvuid"))
                 if (gone.Contains(p)) throw new Exception("Open the outermost add-on's panel and merge into that one.");
-        if (!Matrix4x4.Invert(Shape(targetObject, before[target]), out var intoTarget)) throw new Exception("The add-on's transform can't be inverted.");
+        var (At, ImageAt, differ) = Placement(objects, before, live);
+        if (!Matrix4x4.Invert(At(target), out var intoTarget)) throw new Exception("The add-on's transform can't be inverted.");
 
-        bool live = OwnsMesh(objects, owners);
+        bool inPlace = OwnsMesh(objects, owners);
         var reparent = new List<(int Child, int Parent)>();
         var (targetStructures, targetMesh) = OwnMesh(b, objects, owners, "merged");
         var into = targetMesh["mesh"]!.AsObject();
         var intoRivets = targetMesh["rivets"]?.AsObject();
         int facesBefore = into["faces"]!.AsArray().Count;
+        if (bake)
+        {
+            BakeImage(targetObject, ImageAt(target) * intoTarget, targetMesh, Clone(targetMesh).AsObject(), targetStructures, targetStructures[0]["armourVolume"]?.GetValue<double>() ?? 0);
+            inPlace = false; // the game's mirrored mark changes, which only a reload shows
+        }
 
-        foreach (int v in shapes)
+        // Each shape as it shows in the vehicle (mirrored if flipped; an image reflected across the centre), then into
+        // the target's shape (mirrored if the target is).
+        foreach (var (v, image) in shapes.Select(v => (v, false)).Concat(images.Select(v => (v, true))))
         {
             var structure = Block(blocks, Conversion.Id(objects[v], "structureBlueprintVuid"))["blueprint"]!;
             var meshData = MeshOf(meshes, Conversion.Id(structure, "bodyMeshVuid"));
             var mesh = meshData?["mesh"] ?? throw new Exception("Only hand-made (freeform) add-ons can be merged.");
-            // Its shape as it shows in the vehicle (mirrored if flipped), then into the target's shape (mirrored if the target is).
-            Append(into, intoRivets, mesh.AsObject(), meshData!["rivets"]?.AsObject(), Shape(objects[v], before[v]) * intoTarget);
+            Append(into, intoRivets, mesh.AsObject(), meshData!["rivets"]?.AsObject(), (image ? ImageAt(v) : At(v)) * intoTarget);
             foreach (var s in targetStructures)
                 s["armourVolume"] = s["armourVolume"]!.GetValue<double>() + (structure["armourVolume"]?.GetValue<double>() ?? 0);
         }
@@ -206,60 +252,94 @@ public static class AddonEdits
             if (!Conversion.Near(before[id], matrix)) throw new Exception($"Part {id} would move; merge cancelled.");
         int meshId = Conversion.Id(targetStructures[0], "bodyMeshVuid");
         return new EditPlan(b.ToJsonString(Indented), owners.ToDictionary(v => v, _ => meshId), owners.ToDictionary(v => v, _ => facesBefore),
-                            gone, reparent, live, target, $"target={string.Join("+", owners)}, merged={string.Join(",", shapes)}, removed={string.Join(",", gone)}, mirror={mirror}, moved parts={reparent.Count}");
+                            gone, reparent, inPlace, target, $"target={string.Join("+", owners)}, merged={string.Join(",", shapes)}, images={string.Join(",", images)}, removed={string.Join(",", gone)}, mirror={mirror}, moved parts={reparent.Count}"
+                            + differ(owners.Concat(shapes).Concat(images)));
     }
+
+    /// Where the game really shows each part's shape (shape coordinates to vehicle space), read from the running game:
+    /// saved parts by number, and the images of parts shown twice by the part they mirror. Where a part is missing the
+    /// design's own maths is used.
+    public sealed record LiveShapes(IReadOnlyDictionary<int, Matrix4x4> Parts, IReadOnlyDictionary<int, Matrix4x4> Images);
 
     /// Boolean cut: the shape of add-on `cutter` (and its mirror twin, if any) is cut out of the other selected
     /// structures, or out of the structure it sits on when nothing else is selected. Any closed shape works. With
     /// `pocket`, the add-on's surface inside the structure becomes walls and a floor (a recess instead of a hole).
-    public static EditPlan PlanCut(string json, int cutter, IEnumerable<int> selected, bool removeCutter, bool pocket, bool light = true)
+    /// A mirrored target (a twin pair sharing its shape, or a part shown twice) is cut on both sides, as the game's own
+    /// shape editing does: its mirror marks are never changed.
+    public static EditPlan PlanCut(string json, int cutter, IEnumerable<int> selected, bool removeCutter, bool pocket, Fill.Mode fill = Fill.Mode.Fewest, LiveShapes? live = null)
     {
         var b = Conversion.Parse(json);
         var objects = Conversion.Objects(b);
         if (!objects.TryGetValue(cutter, out var cutObj) || Conversion.GuidOf(cutObj) != Conversion.AddonGuid)
             throw new Exception("Only an add-on can cut; refresh your selection.");
+        var blocks = b["blueprints"]!.AsArray();
+        var meshes = b["meshes"]!.AsArray();
+        var before = Conversion.WorldMatrices(objects);
         var cutters = new List<int> { cutter };
-        if (cutObj["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int twin) && objects.TryGetValue(twin, out var twinObj)
-            && Conversion.GuidOf(twinObj) == Conversion.AddonGuid) cutters.Add(twin);
+        if (Twin(objects, blocks, before, cutter) is int twin && Conversion.GuidOf(objects[twin]) == Conversion.AddonGuid) cutters.Add(twin);
         bool Structure(int v) => !cutters.Contains(v) && objects.TryGetValue(v, out var o) && o["structureBlueprintVuid"] != null;
         var targets = selected.Where(Structure).Distinct().ToList();
         if (targets.Count == 0) targets = cutters.Select(c => Conversion.Id(objects[c], "pvuid")).Where(Structure).Distinct().ToList();
         if (targets.Count == 0) throw new Exception("Select the shape to cut as well (this add-on isn't sitting on one).");
+        var (At, ImageAt, differ) = Placement(objects, before, live);
 
-        var blocks = b["blueprints"]!.AsArray();
-        var meshes = b["meshes"]!.AsArray();
-        var before = Conversion.WorldMatrices(objects);
-        var shapes = cutters.Select(c =>
+        // A cutter the game shows twice cuts with its image too; with a twin or an image the cut is mirrored.
+        bool imagedCutter = Imaged(objects, cutter), mirroredCut = cutters.Count == 2 || imagedCutter;
+        var placed = cutters.Select(c => (Part: c, At: At(c))).ToList(); // where each shape shows
+        if (imagedCutter) placed.Add((cutter, ImageAt(cutter)));
+        var shapes = placed.Select(pc =>
         {
+            var (c, at) = pc;
             var mesh = MeshOf(meshes, Conversion.Id(Block(blocks, Conversion.Id(objects[c], "structureBlueprintVuid"))["blueprint"]!, "bodyMeshVuid"))?["mesh"]
                        ?? throw new Exception("The cutting add-on has no hand-made shape.");
             var raw = mesh["vertices"]!.AsArray().Select(x => MeshCut.F(x)).ToArray();
-            var world = Enumerable.Range(0, raw.Length / 3).Select(i => Vector3.Transform(new Vector3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2]), before[c])).ToList();
+            var world = Enumerable.Range(0, raw.Length / 3).Select(i => Vector3.Transform(new Vector3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2]), at)).ToList();
             var faces = mesh["faces"]!.AsArray().Select(f => f!.AsObject()).ToList();
+            if (OpenEdges(world, faces.Select(f => f["v"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray()).ToList()) is int open and > 0)
+                throw new Exception($"The cutting add-on isn't a closed shape ({open} edges have a face on one side only), so it has no inside to cut with. Close its open sides, or cut with a closed add-on.");
             return (World: world,
                     Faces: faces.Select(f => f["v"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray()).ToList(),
                     Thickness: faces.Select(f => f["t"]!.AsArray().Select(x => MeshCut.F(x)).ToArray()).ToList(),
                     Modes: faces.Select(f => Enumerable.Range(0, f["v"]!.AsArray().Count).Select(k => (byte)((ulong)MeshCut.L(f["tm"]) >> (8 * k))).ToArray()).ToList());
         }).ToList();
 
-        bool live = true;
+        bool inPlace = true;
         var meshIds = new Dictionary<int, int>();
         var oldFaces = new Dictionary<int, int>();
         var report = new List<string>();
-        foreach (int target in targets)
+        // A mirror pair of targets shares one shape, and a target the game shows twice shares it with its image: the shape
+        // is cut once and both sides show the cut. A mirrored cut uses the target's side only (the twin cutter makes the
+        // other side's cut); a cut on one side looks from both sides, so the hole lands wherever the cutter is.
+        var groups = new List<int[]>();
+        foreach (int t in targets)
         {
-            if (!Matrix4x4.Invert(before[target], out var intoTarget)) throw new Exception($"Part {target}'s transform can't be inverted.");
-            var solids = shapes.Select(s => Outward(s.World.Select(p => Vector3.Transform(p, intoTarget)).ToList(), s.Faces, s.Thickness, s.Modes)).ToList();
-            live &= OwnsMesh(objects, new[] { target }); // a part sharing its settings with a twin only gets its own by reloading
-            var (owned, meshData) = OwnMesh(b, objects, new[] { target }, "cut");
-            var structure = owned[0];
+            if (groups.Any(g => g.Contains(t))) continue;
+            groups.Add(Twin(objects, blocks, before, t) is int tt && !cutters.Contains(tt) ? new[] { t, tt } : new[] { t });
+        }
+        foreach (var group in groups)
+        {
+            int target = group[0];
+            var views = new List<Matrix4x4> { At(target) };
+            if (!mirroredCut && group.Length == 2) views.Add(At(group[1]));
+            else if (!mirroredCut && Imaged(objects, target)) views.Add(ImageAt(target));
+            var solids = new List<MeshCut.Solid>();
+            foreach (var view in views)
+            {
+                if (!Matrix4x4.Invert(view, out var intoTarget)) throw new Exception($"Part {target}'s transform can't be inverted.");
+                foreach (var s in shapes.Select(s => Outward(s.World.Select(p => Vector3.Transform(p, intoTarget)).ToList(), s.Faces, s.Thickness, s.Modes)))
+                    // A cutter on the centre line looks the same from both sides: cut with it once.
+                    if (!solids.Any(o => o.Verts.Count == s.Verts.Count && s.Verts.All(p => o.Verts.Any(q => Vector3.DistanceSquared(p, q) < 1e-8f)))) solids.Add(s);
+            }
+            inPlace &= OwnsMesh(objects, group); // a part sharing its settings with another only gets its own by reloading
+            var (owned, meshData) = OwnMesh(b, objects, group, "cut");
             int facesBefore = meshData["mesh"]!["faces"]!.AsArray().Count;
-            var result = MeshCut.Cut(meshData, solids, pocket, light);
-            oldFaces[target] = facesBefore;
+            var result = MeshCut.Cut(meshData, solids, pocket, fill);
+            foreach (int t in group) oldFaces[t] = facesBefore;
             if (result.FacesCut == 0) continue;
-            structure["armourVolume"] = Math.Max(0, (structure["armourVolume"]?.GetValue<double>() ?? 0) + result.ArmourChange);
-            meshIds[target] = Conversion.Id(structure, "bodyMeshVuid");
-            report.Add($"{result.FacesCut} faces of part {target}" + (pocket ? $" ({result.PocketFaces} pocket plates)" : "")
+            foreach (var structure in owned)
+                structure["armourVolume"] = Math.Max(0, (structure["armourVolume"]?.GetValue<double>() ?? 0) + result.ArmourChange);
+            foreach (int t in group) meshIds[t] = Conversion.Id(owned[0], "bodyMeshVuid");
+            report.Add($"{result.FacesCut} faces of part {string.Join(" and its twin ", group)}" + (pocket ? $" ({result.PocketFaces} pocket plates)" : "")
                        + (result.RivetsMoved + result.RivetsDropped > 0 ? $", rivets {result.RivetsMoved} moved {result.RivetsDropped} removed" : ""));
         }
         if (report.Count == 0) throw new Exception("The add-on doesn't overlap the shape it would cut; move it into the plate first.");
@@ -274,8 +354,229 @@ public static class AddonEdits
         var after = Conversion.WorldMatrices(Conversion.Objects(b));
         foreach (var (id, matrix) in after)
             if (!Conversion.Near(before[id], matrix)) throw new Exception($"Part {id} would move; cut cancelled.");
-        return new EditPlan(b.ToJsonString(Indented), meshIds, oldFaces, remove, new(), live, remove.Count > 0 ? meshIds.Keys.First() : cutter,
-                           "Cut " + string.Join(", ", report) + "." + removed);
+        return new EditPlan(b.ToJsonString(Indented), meshIds, oldFaces, remove, new(), inPlace, remove.Count > 0 ? meshIds.Keys.First() : cutter,
+                           "Cut " + string.Join(", ", report) + "." + removed + differ(cutters.Concat(groups.SelectMany(g => g))));
+    }
+
+    /// Where shapes show: as the running game reports (when it did), else by the design's maths (a flipped part mirrored
+    /// along its own x; an image reflected across the centre). The third function names parts where the two disagree, for
+    /// the log.
+    static (Func<int, Matrix4x4> At, Func<int, Matrix4x4> ImageAt, Func<IEnumerable<int>, string> Differ) Placement(
+        Dictionary<int, JsonObject> objects, Dictionary<int, Matrix4x4> world, LiveShapes? live)
+    {
+        Matrix4x4 Model(int v) => Shape(objects[v], world[v]);
+        Matrix4x4 At(int v) => live != null && live.Parts.TryGetValue(v, out var m) ? m : Model(v);
+        Matrix4x4 ImageAt(int v) => live != null && live.Images.TryGetValue(v, out var m) ? m : At(v) * Flip;
+        // How far apart the two put the corners of a 1 m cube at the shape's origin.
+        float Gap(Matrix4x4 a, Matrix4x4 c) => Enumerable.Range(0, 8).Select(i => new Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1))
+            .Max(p => Vector3.Distance(Vector3.Transform(p, a), Vector3.Transform(p, c)));
+        string Differ(IEnumerable<int> parts)
+        {
+            if (live == null) return "";
+            var off = parts.Distinct().Where(live.Parts.ContainsKey).Select(v => (v, d: Gap(Model(v), live.Parts[v]))).Where(x => x.d > 0.001f).ToList();
+            return off.Count == 0 ? " [placement: game and design maths agree]"
+                : " [placement from the game; the design maths had " + string.Join(", ", off.Select(x => $"part {x.v} (flags {objects[x.v]["flags"]}) off by {x.d * 1000:0} mm")) + "]";
+        }
+        return (At, ImageAt, Differ);
+    }
+
+    /// Separate, as Blender's P: the faces of `part` matching `selected` (each face's corners in the shape's own
+    /// coordinates, as the editor has them) move into a new add-on at the same place. The new add-on hangs where the part
+    /// does (same parent, place and flip; on a hull, attached to it), so it shows exactly where the faces were. A mirror
+    /// twin sharing the shape gives up the same faces to a new twin; a part the game shows twice makes one shown twice.
+    public static (string Json, List<(int Source, int Added)> Parts, string Log) Separate(string json, int part, IReadOnlyList<Vector3[]> selected)
+    {
+        var b = Conversion.Parse(json);
+        var objects = Conversion.Objects(b);
+        if (!objects.TryGetValue(part, out var source) || source["structureBlueprintVuid"] == null) throw new Exception("That part has no hand-made shape; refresh your selection.");
+        var blocks = b["blueprints"]!.AsArray();
+        var meshes = b["meshes"]!.AsArray();
+        var owners = Twin(objects, blocks, Conversion.WorldMatrices(objects), part) is int twin ? new[] { part, twin } : new[] { part };
+        var (structures, meshData) = OwnMesh(b, objects, owners, "separated");
+        var mesh = meshData["mesh"]!.AsObject();
+        var raw = mesh["vertices"]!.AsArray().Select(x => MeshCut.F(x)).ToArray();
+        var pos = Enumerable.Range(0, raw.Length / 3).Select(i => new Vector3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2])).ToList();
+        var faces = mesh["faces"]!.AsArray().Select(f => f!["v"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray()).ToList();
+
+        // The editor's faces found in the saved shape by their corners (to 0.1 mm), looked up in 1 cm slices along x.
+        Vector3 Middle(IEnumerable<Vector3> ps) => ps.Aggregate(Vector3.Zero, (s, p) => s + p) / ps.Count();
+        var slices = Enumerable.Range(0, faces.Count).ToLookup(f => (int)MathF.Floor(Middle(faces[f].Select(i => pos[i])).X * 100));
+        var moved = new HashSet<int>();
+        int missing = 0;
+        foreach (var corners in selected)
+        {
+            int slice = (int)MathF.Floor(Middle(corners).X * 100), before = moved.Count;
+            foreach (int f in Enumerable.Range(slice - 1, 3).SelectMany(s => slices[s]))
+                if (faces[f].Length == corners.Length && corners.All(p => faces[f].Any(i => Vector3.DistanceSquared(p, pos[i]) < 1e-8f))) moved.Add(f);
+            if (moved.Count == before) missing++;
+        }
+        if (moved.Count == 0) throw new Exception("The selected faces weren't found in the saved shape; click the part again and retry.");
+        if (moved.Count == faces.Count) throw new Exception("Every face is selected: leave at least one on the part (to copy the whole part, use Alt).");
+
+        var tList = mesh["faces"]!.AsArray().Select(f => f!["t"]!.AsArray().Select(x => MeshCut.F(x)).ToArray()).ToList();
+        double armour = moved.Sum(f => Area(pos, faces[f]) * tList[f].Average() / 1000.0);
+        foreach (var s in structures) s["armourVolume"] = Math.Max(0, (s["armourVolume"]?.GetValue<double>() ?? 0) - armour);
+        var entry = meshes.First(m => m!["vuid"]!.GetValue<int>() == Conversion.Id(structures[0], "bodyMeshVuid"))!;
+        var newMesh = Clone(entry).AsObject();
+        newMesh["vuid"] = NextId(meshes, "vuid");
+        newMesh["meshData"] = Subset(meshData, moved.Contains, false);
+        var rest = Subset(meshData, f => !moved.Contains(f), true);
+        meshData["mesh"] = Clone(rest["mesh"]);
+        if (rest["rivets"] is JsonNode rivets) meshData["rivets"] = Clone(rivets);
+        meshes.Add(newMesh);
+
+        // New numbers for each new add-on and its structure component, past every number the parts use.
+        int next = objects.Values.SelectMany(o => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && kv.Key is not ("pvuid" or "flags"))
+                                                   .Select(kv => kv.Value!.GetValue<int>())).DefaultIfEmpty(0).Max() + 1;
+        var made = new List<int>();
+        var list = b["objects"]!.AsArray();
+        var newBlocks = new Dictionary<int, int>(); // the part's settings block -> the new add-on's (twins sharing one share the copy)
+        foreach (int owner in owners)
+        {
+            var o = objects[owner];
+            int sourceBlock = Conversion.Id(o, "structureBlueprintVuid");
+            if (!newBlocks.ContainsKey(sourceBlock))
+            {
+                var block = Clone(Block(blocks, sourceBlock)).AsObject();
+                block["id"] = newBlocks[sourceBlock] = NextId(blocks, "id");
+                var settings = block["blueprint"]!.AsObject();
+                settings["bodyMeshVuid"] = newMesh["vuid"]!.GetValue<int>();
+                settings["armourVolume"] = armour;
+                if (Conversion.GuidOf(o) != Conversion.AddonGuid) { settings["partRepositioning"] = true; settings["collisionEnabled"] = false; } // an add-on's usual settings
+                blocks.Add(block);
+            }
+            int flags = o["flags"]?.GetValue<int>() ?? 0;
+            JsonObject transform;
+            int parent = Conversion.Id(o, "pvuid");
+            if (parent >= 0) transform = Clone(o["transform"]).AsObject();
+            else
+            {
+                // The hull: nothing to hang beside, so the add-on goes on it, at its place.
+                if ((flags & 1) != 0) throw new Exception("This hull is flipped; separate from an add-on instead.");
+                parent = owner;
+                transform = new JsonObject { ["mirrorVuid"] = -1, ["pos"] = Array(0, 0, 0), ["rot"] = Array(0, 0, 0, 0), ["scale"] = Array(1, 1, 1) };
+            }
+            if (owners.Length == 1 && !Imaged(objects, owner)) flags &= ~4; // mirrored only if it has a twin or an image
+            transform["mirrorVuid"] = -1;
+            var added = new JsonObject
+            {
+                ["guid"] = Conversion.AddonGuid, ["vuid"] = next++, ["pvuid"] = parent, ["flags"] = flags, ["plateStructure"] = next++,
+                ["transform"] = transform, ["structureBlueprintVuid"] = newBlocks[sourceBlock],
+            };
+            list.Add(added);
+            made.Add(added["vuid"]!.GetValue<int>());
+        }
+        if (made.Count == 2)
+        {
+            var pair = Conversion.Objects(b);
+            pair[made[0]]["transform"]!["mirrorVuid"] = made[1];
+            pair[made[1]]["transform"]!["mirrorVuid"] = made[0];
+        }
+        return (b.ToJsonString(Indented), owners.Zip(made).ToList(), $"part {string.Join(" and its twin ", owners)}: {moved.Count} of {faces.Count} faces into new add-on {string.Join(" and its twin ", made)}"
+                                                    + (missing > 0 ? $" ({missing} selected faces not found)" : ""));
+    }
+
+    /// A copy of `meshData` with only the faces `keep` picks, and the points, lines, thickening and rivets they use (loose
+    /// points and lines too, with `loose`). A corner thickening along a line that isn't kept goes back to Auto.
+    static JsonObject Subset(JsonObject meshData, Func<int, bool> keep, bool loose)
+    {
+        var copy = Clone(meshData).AsObject();
+        var mesh = copy["mesh"]!.AsObject();
+        var raw = mesh["vertices"]!.AsArray().Select(x => MeshCut.F(x)).ToArray();
+        var ends = mesh["edges"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray();
+        var edgeFlags = mesh["edgeFlags"]!.AsArray();
+        var faceNodes = mesh["faces"]!.AsArray();
+        static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
+        var kept = Enumerable.Range(0, faceNodes.Count).Where(keep).ToList();
+        var corners = faceNodes.Select(f => f!["v"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray()).ToList();
+        IEnumerable<(int, int)> Sides(int[] c) => c.Select((v, k) => Key(v, c[(k + 1) % c.Length]));
+        var used = kept.SelectMany(f => Sides(corners[f])).ToHashSet();
+        var anyFace = corners.SelectMany(Sides).ToHashSet();
+        var points = kept.SelectMany(f => corners[f]).ToHashSet();
+        var edgeMap = new Dictionary<int, int>();
+        for (int e = 0; e < ends.Length / 2; e++)
+        {
+            var key = Key(ends[2 * e], ends[2 * e + 1]);
+            if (!used.Contains(key) && !(loose && !anyFace.Contains(key))) continue;
+            edgeMap[e] = edgeMap.Count;
+            points.Add(key.Item1); points.Add(key.Item2);
+        }
+        if (loose) points.UnionWith(Enumerable.Range(0, raw.Length / 3).Except(corners.SelectMany(c => c)));
+        var order = points.OrderBy(i => i).ToList();
+        var renumber = order.Select((v, i) => (v, i)).ToDictionary(x => x.v, x => x.i);
+        mesh["vertices"] = new JsonArray(order.SelectMany(i => new[] { raw[3 * i], raw[3 * i + 1], raw[3 * i + 2] }).Select(x => (JsonNode?)x).ToArray());
+        var edgeOrder = edgeMap.OrderBy(kv => kv.Value).Select(kv => kv.Key).ToList();
+        mesh["edges"] = new JsonArray(edgeOrder.SelectMany(e => new[] { renumber[ends[2 * e]], renumber[ends[2 * e + 1]] }).Select(x => (JsonNode?)x).ToArray());
+        mesh["edgeFlags"] = new JsonArray(edgeOrder.Select(e => Clone(edgeFlags[e])).ToArray());
+
+        var faceMap = new Dictionary<int, int>();
+        var outFaces = new JsonArray();
+        foreach (int f in kept)
+        {
+            var node = Clone(faceNodes[f]).AsObject();
+            node["v"] = new JsonArray(corners[f].Select(v => (JsonNode?)renumber[v]).ToArray());
+            // Thicken edge per corner (first four): 16 bits each, an index into the edges (0xFFFF = none), renumbered.
+            if (node["te"] != null)
+            {
+                ulong te = (ulong)MeshCut.L(node["te"]), tm = (ulong)MeshCut.L(node["tm"]);
+                for (int k = 0; k < Math.Min(corners[f].Length, 4); k++)
+                {
+                    ulong r = (te >> (16 * k)) & 0xFFFF;
+                    if (r == 0xFFFF) continue;
+                    ulong to = edgeMap.TryGetValue((int)r, out int n) ? (ulong)n : 0xFFFF;
+                    te = te & ~(0xFFFFUL << (16 * k)) | to << (16 * k);
+                    if (to == 0xFFFF && ((tm >> (8 * k)) & 0xFF) == 4) tm = tm & ~(0xFFUL << (8 * k)) | 1UL << (8 * k); // Manual -> Auto
+                }
+                node["te"] = (long)te;
+                if (node["tm"] != null) node["tm"] = (int)tm;
+            }
+            faceMap[f] = outFaces.Count;
+            outFaces.Add(node);
+        }
+        mesh["faces"] = outFaces;
+
+        if (copy["rivets"]?["nodes"] is JsonArray nodes)
+        {
+            var keepNodes = Enumerable.Range(0, nodes.Count).Where(i => faceMap.ContainsKey(nodes[i]!["face"]!.GetValue<int>())).ToList();
+            var nodeMap = keepNodes.Select((n, i) => (n, i)).ToDictionary(x => x.n, x => x.i);
+            copy["rivets"]!["nodes"] = new JsonArray(keepNodes.Select(i =>
+            {
+                var n = Clone(nodes[i]).AsObject();
+                n["face"] = faceMap[n["face"]!.GetValue<int>()];
+                foreach (var link in new[] { "next", "prev" })
+                    if (n[link]?.GetValue<int>() is int to && to >= 0) n[link] = nodeMap.TryGetValue(to, out int ni) ? ni : -1;
+                return (JsonNode?)n;
+            }).ToArray());
+        }
+        return copy;
+    }
+
+    /// How many edges of a shape have a face on one side only (0: closed). Points at the same place count as one, and an
+    /// edge split on the other side by a point of its own line (the faces are still joined) counts as closed.
+    internal static int OpenEdges(IReadOnlyList<Vector3> verts, IReadOnlyList<int[]> faces)
+    {
+        var same = new Dictionary<(long, long, long), int>();
+        var rep = verts.Select((p, i) => same.TryGetValue(((long)MathF.Round(p.X * 1e5f), (long)MathF.Round(p.Y * 1e5f), (long)MathF.Round(p.Z * 1e5f)), out int r) ? r
+            : same[((long)MathF.Round(p.X * 1e5f), (long)MathF.Round(p.Y * 1e5f), (long)MathF.Round(p.Z * 1e5f))] = i).ToArray();
+        var sides = new HashSet<(int, int)>();
+        foreach (var f in faces)
+            for (int k = 0; k < f.Length; k++)
+                if (rep[f[k]] != rep[f[(k + 1) % f.Length]]) sides.Add((rep[f[k]], rep[f[(k + 1) % f.Length]]));
+        var open = sides.Where(s => !sides.Contains((s.Item2, s.Item1))).ToList();
+        if (open.Count > 400) return open.Count; // not worth looking for split edges: it's open
+        bool Covered((int A, int B) s)
+        {
+            var mid = (verts[s.A] + verts[s.B]) / 2;
+            var dir = verts[s.B] - verts[s.A];
+            return open.Any(o =>
+            {
+                var e = verts[o.Item2] - verts[o.Item1];
+                if (Vector3.Dot(e, dir) >= 0) return false;
+                float t = Vector3.Dot(mid - verts[o.Item1], e) / Math.Max(e.LengthSquared(), 1e-18f);
+                return t >= -1e-6f && t <= 1 + 1e-6f && Vector3.Distance(verts[o.Item1] + e * t, mid) < 1e-5f;
+            });
+        }
+        return open.Count(s => !Covered(s));
     }
 
     /// A cutting shape with its faces turned to face outward (a mirrored add-on's faces point inward).
@@ -344,7 +645,7 @@ public static class AddonEdits
             if (goneMeshes.Contains(id) && !liveMeshes.Contains(id)) meshes.RemoveAt(i);
         }
         foreach (var o in list)
-            if (o!["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int mirror) && gone.Contains(mirror)) o["transform"]!["mirrorVuid"] = -1;
+            if (o!["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int mirror) && gone.Contains(mirror)) Unlink(o.AsObject());
     }
 
     // Adds `mesh` (vertices mapped through `m`) to `into`, keeping each face's armour, thickening settings and any rivets.

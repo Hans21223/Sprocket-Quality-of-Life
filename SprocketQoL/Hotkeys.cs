@@ -72,19 +72,32 @@ public static class Hotkeys
         lines = null; // read the keys again, in case they were rebound
     });
 
+    static Rect closeRect; // where the × was drawn last (from the screen's top left); empty while the box is hidden
+
     internal static void DrawBox()
     {
-        var e = Event.current;
-        if (e != null && e.type == EventType.KeyDown && e.keyCode == KeyCode.F1) { Show(!(Plugin.ShowHotkeys?.Value ?? true)); e.Use(); }
-        if (!(Plugin.ShowHotkeys?.Value ?? true) || !StructureSelected()) return;
+        if (!(Plugin.ShowHotkeys?.Value ?? true) || !StructureSelected()) { closeRect = default; return; }
         lines ??= Lines();
-        if (lines.Count == 0) return;
+        if (lines.Count == 0) { closeRect = default; return; }
         // Left of the game's panel (about the right 23% of the screen), under the top bar.
         const float width = 470, lineHeight = 20;
         var box = new Rect(Screen.width * 0.765f - width - 12, 90, width, 30 + lines.Count * lineHeight);
         GUI.Box(box, "Hotkeys  (F1 shows / hides)");
-        if (GUI.Button(new Rect(box.xMax - 26, box.y + 3, 22, 20), "×")) Show(false);
+        closeRect = new Rect(box.xMax - 26, box.y + 3, 22, 20);
+        GUI.Box(closeRect, "×");
         for (int i = 0; i < lines.Count; i++) GUI.Label(new Rect(box.x + 10, box.y + 26 + i * lineHeight, width - 20, lineHeight), lines[i]);
+    }
+
+    /// From DesignEditor.Update: F1 and a click on the ×, read from the keyboard and mouse themselves (the simple
+    /// on-screen GUI's own key and button events don't reach mods in this game).
+    internal static void Keys()
+    {
+        if (Keyboard.current?.f1Key.wasPressedThisFrame == true) Show(!(Plugin.ShowHotkeys?.Value ?? true));
+        if (closeRect.width > 0 && Mouse.current is { } mouse && mouse.leftButton.wasPressedThisFrame)
+        {
+            var p = mouse.position.ReadValue();
+            if (closeRect.Contains(new Vector2(p.x, Screen.height - p.y))) Show(false);
+        }
     }
 
     static void Show(bool show)
@@ -125,7 +138,7 @@ public static class Hotkeys
         found.Add("Numpad 5  orthographic view     Numpad + / -  zoom it   [mod]");
         found.Add("Numpad 1 / 3 / 7  front / side / top     Numpad 9  opposite (below, back...)   [mod]");
         found.Add("F2  exploded view     F3 / F4  closer / further apart   [mod]");
-        found.Add("F5  shadows off / on     F6  flashlight at the mouse   [mod]");
+        found.Add("F5  shadows off / on     F6  flashlight at the mouse     F7  fullbright   [mod]");
         found.Add("F8 (photo mode)  photo at the best graphics settings   [mod]");
         return found;
     }

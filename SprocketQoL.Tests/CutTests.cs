@@ -76,12 +76,12 @@ static class CutTests
     static readonly Matrix4x4 Side = Matrix4x4.CreateRotationZ(1.2f) * Matrix4x4.CreateTranslation(0.45f, 0.5f, 0.1f);
 
     /// A 1 m tall box (20 mm plate) cut by `tool`; returns the box's mesh data, the result and the plate area removed.
-    static (JsonObject Box, MeshCut.Result Result, double Removed) CutBox(string what, MeshCut.Solid tool, bool pocket, Action<JsonObject>? prepare = null)
+    static (JsonObject Box, MeshCut.Result Result, double Removed) CutBox(string what, MeshCut.Solid tool, bool pocket, Action<JsonObject>? prepare = null, Fill.Mode fill = Fill.Mode.Fewest)
     {
         var (box, _) = AddonEdits.Cylinder(0.5f, 1f, 4, 20);
         prepare?.Invoke(box);
         double before = MeshArea(box["mesh"]!.AsObject());
-        var result = MeshCut.Cut(box, new[] { tool }, pocket);
+        var result = MeshCut.Cut(box, new[] { tool }, pocket, fill);
         CheckMesh(box["mesh"]!.AsObject(), what, 0);
         return (box, result, before - MeshArea(box["mesh"]!.AsObject()));
     }
@@ -130,10 +130,10 @@ static class CutTests
     /// The fill on its own: a square with a round hole, and a many-sided polygon. Faces must exactly cover the region.
     static void CheckFill()
     {
-        foreach (bool light in new[] { true, false })
+        foreach (var mode in new[] { Fill.Mode.Fewest, Fill.Mode.Light, Fill.Mode.Smooth })
         foreach (var (shape, holeSides, offset) in new[] { ("square with a round hole", 32, new Vector2(0, 0)), ("square with an off-centre hole", 16, new Vector2(0.15f, -0.1f)), ("many-sided polygon", 0, Vector2.Zero) })
         {
-            string what = (light ? "light: " : "smooth: ") + shape;
+            string what = Fill.ModeNames[(int)mode] + ": " + shape;
             var pos = new List<Vector3>();
             var outer = new List<int>();
             if (holeSides == 0) for (int i = 0; i < 24; i++) { pos.Add(new Vector3(MathF.Cos(i * MathF.PI / 12), 0, -MathF.Sin(i * MathF.PI / 12))); outer.Add(i); }
@@ -144,7 +144,9 @@ static class CutTests
             double Signed(IList<int> f) => Vector3.Dot(HoleRing.Normal(f.Select(i => pos[i]).ToList()), normal) / 2;
             double want = Signed(outer) + (hole.Count > 0 ? -Math.Abs(Signed(hole)) : 0);
             int before = pos.Count;
-            var faces = Fill.Region(pos, outer, hole.Count > 0 ? new List<List<int>> { Enumerable.Reverse(hole).ToList() } : new(), normal, new List<Fill.Added>(), light);
+            var faces = Fill.Region(pos, outer, hole.Count > 0 ? new List<List<int>> { Enumerable.Reverse(hole).ToList() } : new(), normal,
+                                    mode == Fill.Mode.Fewest ? null : new List<Fill.Added>(), mode == Fill.Mode.Light);
+            if (mode == Fill.Mode.Fewest) Check(pos.Count == before && faces.SelectMany(f => f).All(i => i < before), $"fill {what}: no new points");
             double got = faces.Sum(Signed), unsigned = faces.Sum(f => Math.Abs(Signed(f)));
             if (Math.Abs(got - want) > 1e-5 || Math.Abs(unsigned - want) > 1e-5)
             {
@@ -235,25 +237,36 @@ static class CutTests
             if (block > 0) o["structureBlueprintVuid"] = block;
             objects.Add(o);
         }
-        void Shape(int block, float radius, bool rivet)
+        void Shape(int block, float radius, bool rivet, float height = 0.2f)
         {
-            var (md, _) = AddonEdits.Cylinder(radius, 0.2f, 5, 10);
+            var (md, _) = AddonEdits.Cylinder(radius, height, 5, 10);
             var vs = md["mesh"]!["vertices"]!.AsArray();
             for (int i = 0; i < vs.Count; i += 3) vs[i] = vs[i]!.GetValue<float>() + 0.15f;
             if (rivet) md["rivets"]!["nodes"]!.AsArray().Add(new JsonObject { ["next"] = -1, ["prev"] = -1, ["face"] = 0, ["u"] = 0.2f, ["v"] = 0.3f, ["w"] = 0.5f, ["faceOffset"] = 2, ["profile"] = 0, ["flags"] = 2 });
             meshes.Add(new JsonObject { ["vuid"] = 100 + block, ["meshData"] = md });
             blocks.Add(new JsonObject { ["id"] = block, ["type"] = "structure", ["blueprint"] = new JsonObject { ["bodyMeshVuid"] = 100 + block, ["armourVolume"] = 1.0 } });
         }
-        Shape(10, 0.8f, false); Shape(11, 0.2f, false); Shape(12, 0.1f, true); Shape(13, 0.1f, false);
+        Shape(10, 0.8f, false); Shape(11, 0.2f, false); Shape(12, 0.1f, true); Shape(13, 0.1f, false); Shape(14, 0.05f, false, 0.3f);
         const string other = "11111111-2222-3333-4444-555555555555";
         Part(1, -1, Conversion.CompartmentGuid, 2, -1, new[] { 0f, 0, 0 }, new[] { 0f, 0, 0 }, 10);
-        Part(2, 1, Conversion.AddonGuid, 2, 3, new[] { -1f, 0.5f, 0.2f }, new[] { 0f, 30, 10 }, 11);
-        Part(3, 1, Conversion.AddonGuid, 3, 2, new[] { 1f, 0.5f, 0.2f }, new[] { 0f, -30, -10 }, 11);
-        Part(4, 1, Conversion.AddonGuid, 2, 5, new[] { -1.3f, 0.9f, 0.4f }, new[] { 5f, 12, 0 }, 12);
-        Part(5, 1, Conversion.AddonGuid, 3, 4, new[] { 1.3f, 0.9f, 0.4f }, new[] { 5f, -12, 0 }, 12);
-        Part(6, 4, other, 2, 7, new[] { 0.1f, 0.2f, 0 }, new[] { 0f, 20, 0 });
-        Part(7, 5, other, 2, 6, new[] { -0.1f, 0.2f, 0 }, new[] { 0f, -20, 0 });
+        Part(2, 1, Conversion.AddonGuid, 6, 3, new[] { -1f, 0.5f, 0.2f }, new[] { 0f, 30, 10 }, 11);
+        Part(3, 1, Conversion.AddonGuid, 7, 2, new[] { 1f, 0.5f, 0.2f }, new[] { 0f, -30, -10 }, 11);
+        Part(4, 1, Conversion.AddonGuid, 6, 5, new[] { -1.3f, 0.9f, 0.4f }, new[] { 5f, 12, 0 }, 12);
+        Part(5, 1, Conversion.AddonGuid, 7, 4, new[] { 1.3f, 0.9f, 0.4f }, new[] { 5f, -12, 0 }, 12);
+        Part(6, 4, other, 6, 7, new[] { 0.1f, 0.2f, 0 }, new[] { 0f, 20, 0 });
+        Part(7, 5, other, 6, 6, new[] { -0.1f, 0.2f, 0 }, new[] { 0f, -20, 0 });
         Part(8, 1, Conversion.AddonGuid, 2, -1, new[] { 0f, 1.2f, 0 }, new[] { 0f, 0, 0 }, 13);
+        // Cutters through the top of pair 2/3: a mirror pair 9/10, and 11 alone on the flipped side (where 3's shape shows).
+        Part(9, 2, Conversion.AddonGuid, 6, 10, new[] { 0f, 0.1f, 0 }, new[] { 0f, 0, 0 }, 14);
+        Part(10, 3, Conversion.AddonGuid, 7, 9, new[] { 0f, 0.1f, 0 }, new[] { 0f, 0, 0 }, 14);
+        Part(11, 3, Conversion.AddonGuid, 2, -1, new[] { -0.3f, 0.1f, 0 }, new[] { 0f, 0, 0 }, 14);
+        // Parts saved once that the game shows twice (mirrored mark, no twin): 12 and 13 on the hull, cutters 14 (shown
+        // twice too) and 15 (plain) through the top of 13.
+        Shape(15, 0.1f, true); Shape(16, 0.2f, false);
+        Part(12, 1, Conversion.AddonGuid, 6, -1, new[] { -0.9f, 0.2f, 0.8f }, new[] { 0f, 15, 0 }, 15);
+        Part(13, 1, Conversion.AddonGuid, 6, -1, new[] { -0.6f, 0.3f, -0.5f }, new[] { 0f, -20, 5 }, 16);
+        Part(14, 13, Conversion.AddonGuid, 6, -1, new[] { 0f, 0.1f, 0 }, new[] { 0f, 0, 0 }, 14);
+        Part(15, 13, Conversion.AddonGuid, 2, -1, new[] { 0.05f, 0.1f, 0.03f }, new[] { 0f, 0, 0 }, 14);
         return new JsonObject { ["objects"] = objects, ["blueprints"] = blocks, ["meshes"] = meshes }.ToJsonString();
     }
 
@@ -271,13 +284,18 @@ static class CutTests
             var m = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world[v] : world[v];
             var vs = MeshVerts(md["mesh"]!.AsObject());
             var faces = MeshFaces(md["mesh"]!.AsObject());
-            points.AddRange(vs.Select(p => Vector3.Transform(p, m)));
-            foreach (var n in md["rivets"]!["nodes"]!.AsArray())
+            // A part saved once and shown twice (mirrored mark, no twin part) shows its image too, across the centre.
+            bool imaged = (o["flags"]!.GetValue<int>() & 4) != 0 && !(o["transform"]!["mirrorVuid"]!.GetValue<int>() is int t && objects.ContainsKey(t));
+            foreach (var shown in imaged ? new[] { m, m * Matrix4x4.CreateScale(-1, 1, 1) } : new[] { m })
             {
-                var tri = MeshCut.RivetTriangles[n!["faceOffset"]!.GetValue<int>()];
-                var f = faces[n["face"]!.GetValue<int>()];
-                var at = n["u"]!.GetValue<float>() * vs[f[tri[0]]] + n["v"]!.GetValue<float>() * vs[f[tri[1]]] + n["w"]!.GetValue<float>() * vs[f[tri[2]]];
-                points.Add(Vector3.Transform(at, m) + new Vector3(0, 100, 0)); // rivets kept apart from shape points
+                points.AddRange(vs.Select(p => Vector3.Transform(p, shown)));
+                foreach (var n in md["rivets"]!["nodes"]!.AsArray())
+                {
+                    var tri = MeshCut.RivetTriangles[n!["faceOffset"]!.GetValue<int>()];
+                    var f = faces[n["face"]!.GetValue<int>()];
+                    var at = n["u"]!.GetValue<float>() * vs[f[tri[0]]] + n["v"]!.GetValue<float>() * vs[f[tri[1]]] + n["w"]!.GetValue<float>() * vs[f[tri[2]]];
+                    points.Add(Vector3.Transform(at, shown) + new Vector3(0, 100, 0)); // rivets kept apart from shape points
+                }
             }
         }
         return points;
@@ -324,13 +342,172 @@ static class CutTests
             Check(Math.Abs(Volume(hull) - Volume(hullBefore) - 2 * Volume(piece)) < 1e-4, "into the centre: the mirrored copy isn't inside out");
         }
         {
-            var plan = AddonEdits.PlanMerge(design, 2, new[] { 4, 8 });
-            var now = AddonEdits.FaceCounts(plan.DesignJson);
-            Check(SamePoints(points, WorldPoints(plan.DesignJson)), "mixed: every shape stays where it was");
-            Check(now[2] == faces[2] + faces[4] + faces[8] && now[3] == faces[3] && now.ContainsKey(5) && !plan.Live, "mixed: only the target takes the selected add-ons");
-            Check(Mirror(plan.DesignJson, 2) == -1 && Mirror(plan.DesignJson, 3) == -1 && Mirror(plan.DesignJson, 5) == -1, "mixed: no twin link is left pointing at a changed pair or a removed part");
+            // Mirrored and unmirrored mixed would take the mirror off flipped twins (which can then show unflipped): refused.
+            bool refused = false;
+            try { AddonEdits.PlanMerge(design, 2, new[] { 4, 8 }); } catch (Exception ex) { refused = ex.Message.Contains("mirrored"); }
+            Check(refused, "mixed: a merge that would unmirror a flipped twin is refused");
         }
-        Console.WriteLine("mirror merges: pair into pair, into the centre, mixed checked");
+        int Flags(string json, int v) => Obj(json, v)["flags"]!.GetValue<int>();
+        // Parts the game shows twice.
+        foreach (var (what, target, others, removed, live, keepsMark) in new (string, int, int[], int[], bool, bool)[]
+        {
+            ("shown twice, into the hull", 1, new[] { 12 }, new[] { 12 }, true, false),
+            ("shown twice, into one shown twice", 13, new[] { 12 }, new[] { 12 }, true, true),
+            ("pair into one shown twice", 13, new[] { 4 }, new[] { 4, 5 }, true, true),
+            ("plain add-on into one shown twice", 13, new[] { 8 }, new[] { 8 }, false, false),
+        })
+        {
+            var plan = AddonEdits.PlanMerge(design, target, others);
+            Check(SamePoints(points, WorldPoints(plan.DesignJson)), $"{what}: everything shows where it did ({plan.Summary})");
+            Check(plan.Remove.OrderBy(x => x).SequenceEqual(removed) && plan.Live == live && ((Flags(plan.DesignJson, target) & 4) != 0) == keepsMark, $"{what}: parts removed, in place, mark ({plan.Summary})");
+        }
+        Console.WriteLine("mirror merges: pair into pair, into the centre, mixed, parts shown twice checked");
+
+        // Cuts: points of a part's shape where they show, and whether a cutter's hole ring is among a part's new points.
+        List<Vector3> Shown(string json, int v)
+        {
+            var b = Conversion.Parse(json);
+            var o = Conversion.Objects(b)[v];
+            var w = Conversion.WorldMatrices(Conversion.Objects(b))[v];
+            var md = AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), o["structureBlueprintVuid"]!.GetValue<int>())["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!;
+            var m = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * w : w;
+            return MeshVerts(md["mesh"]!.AsObject()).Select(p => Vector3.Transform(p, m)).ToList();
+        }
+        bool HoleAt(string json, int part, int cutterPart)
+        {
+            var axis = Shown(design, cutterPart); // the cutter's points: its axis is their middle, top to bottom
+            var mid = axis.Aggregate(Vector3.Zero, (a, p) => a + p) / axis.Count;
+            var fresh = Shown(json, part).Where(p => Shown(design, part).All(q => Vector3.Distance(p, q) > 1e-4f)).ToList();
+            return fresh.Any(p => { var d = p - mid; var up = Vector3.Normalize(axis.MaxBy(q => q.Y)! - axis.MinBy(q => q.Y)!); return (d - up * Vector3.Dot(d, up)).Length() < 0.08f; });
+        }
+        List<Vector3> Mirrored(List<Vector3> ps) => ps.Select(p => new Vector3(-p.X, p.Y, p.Z)).ToList();
+        {
+            var cut = AddonEdits.PlanCut(design, 9, System.Array.Empty<int>(), true, false);
+            Check(cut.MeshIds.Keys.OrderBy(x => x).SequenceEqual(new[] { 2, 3 }) && cut.MeshIds[2] == cut.MeshIds[3] && cut.Live, "mirrored cut: the pair is cut once, in place");
+            Check(Mirror(cut.DesignJson, 2) == 3 && cut.Remove.OrderBy(x => x).SequenceEqual(new[] { 9, 10 }), "mirrored cut: the pair stays linked, both cutters go");
+            Check(HoleAt(cut.DesignJson, 2, 9) && HoleAt(cut.DesignJson, 3, 10), "mirrored cut: each side has its hole where its cutter was");
+            Check(SamePoints(Mirrored(Shown(cut.DesignJson, 2)), Shown(cut.DesignJson, 3)), "mirrored cut: the sides are mirror images");
+        }
+        {
+            // One cutter on the flipped side of a pair: the shared shape is cut, so both sides show it; marks untouched.
+            var cut = AddonEdits.PlanCut(design, 11, System.Array.Empty<int>(), true, false);
+            Check(cut.MeshIds.Keys.OrderBy(x => x).SequenceEqual(new[] { 2, 3 }) && cut.Live && HoleAt(cut.DesignJson, 3, 11), "one-sided cut on a flipped part: the hole is where the cutter shows, in place");
+            Check(SamePoints(Mirrored(Shown(cut.DesignJson, 2)), Shown(cut.DesignJson, 3)) && Mirror(cut.DesignJson, 2) == 3 && Flags(cut.DesignJson, 2) == 6 && Flags(cut.DesignJson, 3) == 7,
+                  "one-sided cut: the other side shows it mirrored, the pair stays linked and marked");
+        }
+        {
+            // A cutter shown twice through a target shown twice: one cut, the image follows.
+            var cut = AddonEdits.PlanCut(design, 14, System.Array.Empty<int>(), true, false);
+            Check(cut.MeshIds.Keys.SequenceEqual(new[] { 13 }) && cut.Live && (Flags(cut.DesignJson, 13) & 4) != 0 && HoleAt(cut.DesignJson, 13, 14), "cut shown twice: one cut in place, the image follows");
+        }
+        {
+            // A plain cutter through a target shown twice: the shared shape is cut where the cutter is; the image shows it
+            // mirrored, and the part stays shown twice.
+            var cut = AddonEdits.PlanCut(design, 15, System.Array.Empty<int>(), true, false);
+            var fresh = Shown(cut.DesignJson, 13).Where(p => Shown(design, 13).All(q => Vector3.Distance(p, q) > 1e-4f)).ToList();
+            var cutterAxis = Shown(design, 15);
+            var mid = cutterAxis.Aggregate(Vector3.Zero, (a, q) => a + q) / cutterAxis.Count;
+            Check(cut.Live && Flags(cut.DesignJson, 13) == 6 && fresh.Count > 0 && fresh.All(q => Vector3.Distance(q, mid) < 0.25f),
+                  $"one-sided cut on a part shown twice: in place, still shown twice, the hole where the cutter is ({fresh.Count} new points)");
+            // The same cutter on the image's side (mirrored across the centre) makes the same hole.
+            var design2 = Conversion.Parse(design);
+            var c15 = Conversion.Objects(design2)[15];
+            var flip = Matrix4x4.CreateScale(-1, 1, 1);
+            c15["pvuid"] = 1; // on the hull, flipped, its shape the mirror image of where it was
+            Conversion.WriteTransform(c15["transform"]!.AsObject(), flip * Conversion.WorldMatrices(Conversion.Objects(Conversion.Parse(design)))[15] * flip);
+            c15["flags"] = 3;
+            var viaImage = AddonEdits.PlanCut(design2.ToJsonString(), 15, new[] { 13 }, true, false);
+            Check(viaImage.MeshIds.Keys.SequenceEqual(new[] { 13 }) && Flags(viaImage.DesignJson, 13) == 6 && Shown(viaImage.DesignJson, 13).Count > Shown(design, 13).Count,
+                  "a cutter where the image shows cuts the shared shape too");
+        }
+        Console.WriteLine("mirror cuts: mirrored pair, one side of a flipped part, parts shown twice checked");
+    }
+
+    /// Mirrored turrets: a real turret gets a twin ring as the game's Mirror makes it (the ring alone), then everything on
+    /// the turret is mirrored onto it: each copy the exact mirror image of its part, linked to it, with its own numbers,
+    /// seats and guns naming the copies. A ring saved once and marked mirrored marks its parts instead.
+    static void CheckMirrorTurret(string factions, Action<JsonObject, string> checkRefs)
+    {
+        foreach (var file in Directory.GetFiles(factions, "*.blueprint", SearchOption.AllDirectories).OrderBy(f => new FileInfo(f).Length))
+        {
+            string json = File.ReadAllText(file);
+            if (!json.Contains("\"objects\"")) continue;
+            var b = Conversion.Parse(json);
+            var objects = Conversion.Objects(b);
+            int Under(int top) => objects.Values.Count(o => { for (int p = o["pvuid"]!.GetValue<int>(); objects.TryGetValue(p, out var up); p = up["pvuid"]!.GetValue<int>()) if (p == top) return true; return false; });
+            var ring = objects.Values.FirstOrDefault(o => Conversion.GuidOf(o) == Conversion.RingGuid && o["structureID"] != null && Under(o["vuid"]!.GetValue<int>()) >= 3
+                                                        && o["transform"]!["mirrorVuid"]!.GetValue<int>() == -1 && objects.Values.All(x => x["transform"]!["mirrorVuid"]!.GetValue<int>() == -1 || x["pvuid"]!.GetValue<int>() != o["vuid"]!.GetValue<int>()));
+            if (ring == null) continue;
+            int r = ring["vuid"]!.GetValue<int>(), parts = Under(r);
+
+            // The twin ring, as Mirror makes it: the ring alone, mirrored across the centre, linked, its own numbers.
+            int next = objects.Values.SelectMany(o => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _)).Select(kv => kv.Value!.GetValue<int>())).Max() + 1;
+            var twin = JsonNode.Parse(ring.ToJsonString())!.AsObject();
+            int t = next++;
+            twin["vuid"] = t;
+            foreach (var key in twin.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && char.IsLetter(kv.Key[0]) && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList())
+                twin[key] = next++;
+            var tr = twin["transform"]!;
+            tr["pos"]![0] = -tr["pos"]![0]!.GetValue<float>();
+            tr["rot"]![1] = -tr["rot"]![1]!.GetValue<float>();
+            tr["rot"]![2] = -tr["rot"]![2]!.GetValue<float>();
+            tr["mirrorVuid"] = r;
+            ring["transform"]!["mirrorVuid"] = t;
+            twin["flags"] = (ring["flags"]!.GetValue<int>() ^ 1) | 4;
+            ring["flags"] = ring["flags"]!.GetValue<int>() | 4;
+            b["objects"]!.AsArray().Add(twin);
+            string design = b.ToJsonString();
+
+            var (result, count, how) = Conversion.MirrorTurret(design, r);
+            var after = Conversion.Parse(result);
+            checkRefs(after, "mirrored turret");
+            var all = Conversion.Objects(after);
+            var world = Conversion.WorldMatrices(all);
+            var flip = Matrix4x4.CreateScale(-1, 1, 1);
+            Matrix4x4 Shape(JsonObject o) => (o["flags"]!.GetValue<int>() & 1) != 0 ? flip * world[o["vuid"]!.GetValue<int>()] : world[o["vuid"]!.GetValue<int>()];
+            int onTwin = all.Values.Count(o => { for (int p = o["pvuid"]!.GetValue<int>(); all.TryGetValue(p, out var up); p = up["pvuid"]!.GetValue<int>()) if (p == t) return true; return false; });
+            Check(count == parts && onTwin == parts, $"mirrored turret: {count} of {parts} parts copied, {onTwin} on the twin ({how})");
+            var original = Conversion.Objects(Conversion.Parse(design));
+            foreach (var (v, o) in all.Where(kv => original.ContainsKey(kv.Key) && kv.Key != r && kv.Key != t))
+            {
+                int m = o["transform"]!["mirrorVuid"]!.GetValue<int>();
+                if (m < 0 || !all.ContainsKey(m) || original.ContainsKey(m)) continue;
+                Check(all[m]["transform"]!["mirrorVuid"]!.GetValue<int>() == v && Conversion.Near(Shape(o) * flip, Shape(all[m])), $"mirrored turret: part {v} and its copy {m} are linked mirror images");
+            }
+            // (The game's own designs repeat a number or two, e.g. steering controls numbered as their part: only new ones count.)
+            IEnumerable<int> Numbers(IEnumerable<JsonObject> os) => os.SelectMany(o => o.Where(kv => kv.Key == "vuid" || char.IsLetter(kv.Key[0]) && kv.Value is JsonValue jv && jv.TryGetValue<int>(out _)
+                && kv.Key is not ("pvuid" or "flags" or "structureID") && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Value!.GetValue<int>()));
+            var added = Numbers(all.Values.Where(o => !original.ContainsKey(o["vuid"]!.GetValue<int>()))).ToList();
+            var existing = Numbers(original.Values).ToHashSet();
+            Check(added.Count == added.Distinct().Count() && !added.Any(existing.Contains), "mirrored turret: every new part and component number is its own");
+            int twinBody = all[t]["structureID"]!.GetValue<int>();
+            Check(twinBody != ring["structureID"]!.GetValue<int>() && all[twinBody]["pvuid"]!.GetValue<int>() == t, "mirrored turret: the twin ring's body is the copy on it");
+            // Seats and guns on the copy name the copy's parts, never the original turret's.
+            var originalIds = original.Values.SelectMany(o => o.Where(kv => char.IsLetter(kv.Key[0]) && kv.Value is JsonValue jv && jv.TryGetValue<int>(out _)).Select(kv => kv.Value!.GetValue<int>())).ToHashSet();
+            var blocks = after["blueprints"]!.AsArray();
+            foreach (var o in all.Values.Where(o => !original.ContainsKey(o["vuid"]!.GetValue<int>())))
+                foreach (var key in o.Where(kv => kv.Key.EndsWith("BlueprintVuid")).Select(kv => kv.Key))
+                {
+                    var bp = blocks.First(x => x!["id"]!.GetValue<int>() == o[key]!.GetValue<int>())!["blueprint"]!.AsObject();
+                    foreach (var name in new[] { "operatedBehaviours", "barrelVuids" })
+                        if (bp[name] is JsonArray named && named.Count > 0)
+                            Check(named.All(x => !originalIds.Contains(x!.GetValue<int>()) || all.Values.Any(p => p.Any(kv => kv.Value is JsonValue pv && pv.TryGetValue<int>(out int n) && n == x.GetValue<int>() && !original.ContainsKey(p["vuid"]!.GetValue<int>())))),
+                                  $"mirrored turret: {name} of copy {o["vuid"]} names the copies");
+                }
+
+            // Saved once, marked mirrored: its parts get the mark.
+            ring["transform"]!["mirrorVuid"] = -1;
+            var single = Conversion.Parse(json);
+            var singleRing = Conversion.Objects(single)[r];
+            singleRing["flags"] = singleRing["flags"]!.GetValue<int>() | 4;
+            var (marked, markedCount, markedHow) = Conversion.MirrorTurret(single.ToJsonString(), r);
+            var mo = Conversion.Objects(Conversion.Parse(marked));
+            Check(markedCount == parts && mo.Values.Where(o => Conversion.Objects(Conversion.Parse(json)).ContainsKey(o["vuid"]!.GetValue<int>()) && o["vuid"]!.GetValue<int>() != r)
+                                                 .Count(o => (o["flags"]!.GetValue<int>() & 4) != 0) >= parts, $"mirrored turret saved once: {markedCount} parts {markedHow}");
+            Console.WriteLine($"mirrored turret: {Path.GetFileName(file)} ring {r}, {count} parts {how}; saved-once form {markedCount} {markedHow}");
+            return;
+        }
+        throw new Exception("found no turret to mirror in the saved designs");
     }
 
     static void CheckRealPocket(Action<JsonObject, string> checkRefs)
@@ -386,6 +563,8 @@ static class CutTests
                 var n = N(p, old[0]);
                 Check(g.NewFaces.All(f => Vector3.Dot(N(p, f), n) > 0), $"{what}: new faces face the same way");
             }
+            var asPlan = new MeshPlans.Rebuild(done.SelectMany(g => g.Faces).Distinct().ToList(), done.SelectMany(g => g.NewFaces.Select(nf => new MeshPlans.NewFace(nf, g.Faces[0]))).ToList(), new(), null);
+            Check(MeshPlans.Check(p, faces, asPlan, gaps: sides != FaceMerge.SidePoints.RunPast) == null, $"{what}: passes the check made before merging ({MeshPlans.Check(p, faces, asPlan, gaps: sides != FaceMerge.SidePoints.RunPast)})");
             // Joined up: no more open sides than the plate had before (running past points opens some, by design).
             int open = OpenSides(untouched.Concat(done.SelectMany(g => g.NewFaces))).Count, before = OpenSides(faces).Count;
             if (sides != FaceMerge.SidePoints.RunPast) Check(open <= before, $"{what}: stays joined (open sides {open}, plate edge had {before})");
@@ -541,6 +720,46 @@ static class CutTests
         var linked = MeshPlans.LinkedFlat(bent, bentFaces, new[] { 0 }, 5);
         Check(linked.SetEquals(new[] { 0, 1, 2 }), $"select linked flat: the strip only ({string.Join(",", linked)})");
 
+        // The check run before a tool changes anything: every plan above passes; broken ones don't.
+        foreach (var (what, p, f, plan) in new (string, List<Vector3>, List<int[]>, MeshPlans.Rebuild)[]
+        {
+            ("bevel one edge", cube, cubeFaces, one), ("bevel a loop", cube, cubeFaces, MeshPlans.Bevel(cube, cubeFaces, new[] { (2, 3), (3, 7), (7, 6), (6, 2) }, w)),
+            ("bevel a corner", cube, cubeFaces, MeshPlans.Bevel(cube, cubeFaces, new[] { (3, 7), (5, 7), (6, 7) }, w)), ("loop cut round a cube", cube, cubeFaces, loop),
+            ("loop cut along a strip", grid, strip, along), ("loop cut into a triangle", tri, withTri, toTri), ("inset a square", sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, ins),
+            ("inset a strip", grid, strip, MeshPlans.Inset(grid, strip, new[] { 0, 1, 2 }, 0.1f)),
+        })
+            Check(MeshPlans.Check(p, f, plan) == null, $"check: {what} passes ({MeshPlans.Check(p, f, plan)})");
+        {
+            // A bevel ending inside a fan of six triangles (more faces than a box corner): the point stays, and the strip's
+            // end runs through it, so no hole is left there.
+            var hex = Enumerable.Range(0, 6).Select(i => new Vector3(MathF.Cos(i * MathF.PI / 3), MathF.Sin(i * MathF.PI / 3), 0)).Append(Vector3.Zero).ToList();
+            var fanFaces = Enumerable.Range(0, 6).Select(i => new[] { 6, i, (i + 1) % 6 }).ToList();
+            var spoke = MeshPlans.Bevel(hex, fanFaces, new[] { (6, 0) }, 0.05f);
+            var (ph, fh) = Applied(hex, fanFaces, spoke);
+            var openAtCentre = fh.SelectMany(f => f.Select((v, k) => v < f[(k + 1) % f.Length] ? (v, f[(k + 1) % f.Length]) : (f[(k + 1) % f.Length], v)))
+                .GroupBy(e => e).Where(e => e.Count() == 1).Count(e => e.Key.Item1 == 6 || e.Key.Item2 == 6);
+            Check(spoke.Why == null && MeshPlans.Check(hex, fanFaces, spoke) == null && openAtCentre == 0 && fh.Any(f => f.Contains(6)),
+                  $"bevel ending in a fan: the centre stays, no hole there ({spoke.Why}, {MeshPlans.Check(hex, fanFaces, spoke)}, {openAtCentre} open edges at the centre)");
+        }
+        {
+            // Where a rivet goes: onto the face under it (straight down onto a square), or the nearest point of its edge.
+            var square = new List<Vector3> { new(0, 0, 0), new(1, 0, 0), new(1, 1, 0), new(0, 1, 0) };
+            var over = MeshPlans.Closest(square, new Vector3(0.3f, 0.7f, 0.002f));
+            var beside = MeshPlans.Closest(square, new Vector3(1.03f, 0.5f, 0));
+            Check(Vector3.Distance(over.Point, new Vector3(0.3f, 0.7f, 0)) < 1e-6 && Math.Abs(over.Distance - 0.002f) < 1e-6
+                  && Vector3.Distance(beside.Point, new Vector3(1, 0.5f, 0)) < 1e-6 && Math.Abs(beside.Distance - 0.03f) < 1e-6, "rivets: nearest point of a face");
+        }
+        var flipped = new MeshPlans.Rebuild(new() { 0 }, new() { new(cubeFaces[0].Reverse().ToArray(), 0) }, new(), null);
+        Check(MeshPlans.Check(cube, cubeFaces, flipped)?.Contains("turned over") == true, "check: a face turned over is caught");
+        var doubled = new MeshPlans.Rebuild(new(), new() { new(cubeFaces[0], 0) }, new(), null);
+        Check(MeshPlans.Check(cube, cubeFaces, doubled)?.Contains("laid over") == true, "check: a face on top of another is caught");
+        // A loop cut that forgets the triangle it runs into leaves a point on the triangle's side: a gap.
+        var gap = toTri with { Remove = toTri.Remove.Where(i => i != 3).ToList(), Add = toTri.Add.Where(a => a.Source != 3).ToList() };
+        Check(MeshPlans.Check(tri, withTri, gap)?.Contains("crack") == true, $"check: a gap is caught ({MeshPlans.Check(tri, withTri, gap)})");
+        Check(MeshPlans.Check(sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, new(new() { 0 }, new() { new(new[] { 0, 1, 1 }, 0) }, new(), null))?.Contains("repeat") == true, "check: a repeated corner is caught");
+        Check(MeshPlans.Folds(sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, new Dictionary<int, Vector3> { [2] = new(-1, -1, 0), [1] = new(-0.5f, 0, 0) }) != null, "check: flattening that folds a face is caught");
+        Check(MeshPlans.Folds(bumpy, new List<int[]> { new[] { 0, 1, 2, 3 } }, flat) == null, "check: a real flatten passes");
+
         // Proportional editing: nearer points follow more, none beyond the radius.
         var line = new List<Vector3> { new(0, 0, 0), new(0.25f, 0, 0), new(0.5f, 0, 0), new(1.5f, 0, 0) };
         var fall = MeshPlans.Falloff(line, new HashSet<int> { 0 }, 1);
@@ -548,14 +767,162 @@ static class CutTests
         Console.WriteLine($"mesh tools: bevel, loop cut, inset, flatten, select linked flat, proportional checked");
     }
 
+    /// Separate (Blender's P): the selected faces leave the part for a new add-on that shows exactly where they were;
+    /// twins get a twin, parts shown twice stay so, the hull's goes on the hull, and rivets and armour follow the faces.
+    static void CheckSeparate(Action<JsonObject, string> checkRefs)
+    {
+        string design = MirrorDesign();
+        JsonObject Obj(string json, int v) => Conversion.Objects(Conversion.Parse(json))[v];
+        JsonObject MeshData(string json, int v)
+        {
+            var b = Conversion.Parse(json);
+            return AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), Obj(json, v)["structureBlueprintVuid"]!.GetValue<int>())["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!;
+        }
+        double Armour(string json) => Conversion.Parse(json)["blueprints"]!.AsArray().Sum(x => x!["blueprint"]!["armourVolume"]?.GetValue<double>() ?? 0);
+        // Distinct points (a split line's points are now in both parts).
+        List<Vector3> Distinct(List<Vector3> ps) { var d = new List<Vector3>(); foreach (var p in ps) if (d.All(q => Vector3.Distance(p, q) > 1e-4f)) d.Add(p); return d; }
+        // The faces of part v facing up in its own shape, as the editor would give them.
+        List<Vector3[]> UpFaces(int v, bool all = false)
+        {
+            var mesh = MeshData(design, v)["mesh"]!.AsObject();
+            var vs = MeshVerts(mesh);
+            return MeshFaces(mesh).Select(f => f.Select(i => vs[i]).ToArray()).Where(c => all || HoleRing.Normal(c.ToList()).Y > 0.5f * HoleRing.Normal(c.ToList()).Length()).ToList();
+        }
+        foreach (var (what, part, twins, imaged, parent) in new (string, int, bool, bool, int)[]
+        {
+            ("twin pair", 2, true, false, 1), ("rivets", 4, true, false, 1), ("the hull", 1, false, false, 1), ("shown twice", 12, false, true, 1), ("centre add-on", 8, false, false, 1),
+        })
+        {
+            var up = UpFaces(part);
+            var (json, made, log) = AddonEdits.Separate(design, part, up);
+            int added = made[0].Added;
+            checkRefs(Conversion.Parse(json), "separate " + what);
+            var objects = Conversion.Objects(Conversion.Parse(json));
+            var o = objects[added];
+            int before = MeshFaces(MeshData(design, part)["mesh"]!.AsObject()).Count;
+            Check(MeshFaces(MeshData(json, added)["mesh"]!.AsObject()).Count == up.Count && MeshFaces(MeshData(json, part)["mesh"]!.AsObject()).Count == before - up.Count,
+                  $"separate {what}: the selected faces move, the rest stay ({log})");
+            Check(o["guid"]!.GetValue<string>() == Conversion.AddonGuid && o["pvuid"]!.GetValue<int>() == parent, $"separate {what}: a new add-on on part {parent}");
+            Check(SamePoints(Distinct(WorldPoints(design)), Distinct(WorldPoints(json))), $"separate {what}: every point and rivet shows where it did");
+            Check(Math.Abs(Armour(json) - Armour(design)) < 1e-6, $"separate {what}: the armour moves with the faces, none made or lost");
+            int mirror = o["transform"]!["mirrorVuid"]!.GetValue<int>();
+            Check(twins ? objects.ContainsKey(mirror) && objects[mirror]["transform"]!["mirrorVuid"]!.GetValue<int>() == added : mirror == -1, $"separate {what}: twins linked as the part's were");
+            Check(((o["flags"]!.GetValue<int>() & 4) != 0) == (twins || imaged), $"separate {what}: mirrored mark as the part's");
+        }
+        {
+            // Rivets go with their face: part 4's rivet sits on face 0 (a side), so separating the sides takes it.
+            var sides = UpFaces(4, all: true).Where(c => c.Length == 4).ToList();
+            var (json, made, _) = AddonEdits.Separate(design, 4, sides);
+            int added = made[0].Added;
+            Check(MeshData(json, added)["rivets"]!["nodes"]!.AsArray().Count == 1 && MeshData(json, 4)["rivets"]!["nodes"]!.AsArray().Count == 0, "separate: the rivet goes with its face");
+
+        }
+        bool refused = false;
+        try { AddonEdits.Separate(design, 8, UpFaces(8, all: true)); } catch (Exception ex) { refused = ex.Message.Contains("leave at least one"); }
+        Check(refused, "separate: every face selected is refused");
+        refused = false;
+        try { AddonEdits.Separate(design, 8, new List<Vector3[]> { new[] { new Vector3(9, 9, 9), new Vector3(9, 9, 8), new Vector3(8, 9, 9) } }); } catch (Exception ex) { refused = ex.Message.Contains("weren't found"); }
+        Check(refused, "separate: faces not in the shape are refused");
+        Console.WriteLine("separate: twin pair, rivets, hull, shown twice, centre add-on checked");
+    }
+
+    /// A real skirt (saved once and shown twice, flipped, on a tank built on a scaled mantlet) cut by the plain add-on 511
+    /// on it. The old cut made the image part of the skirt's shape and took its mirror mark off; the game then showed that
+    /// copy metres out from the tank. Now the shared shape is cut in place and the marks stay.
+    static void CheckRealSkirt(Action<JsonObject, string> checkRefs)
+    {
+        if (Backup("20260926-083219-45060c70") is not { } backup) { Console.WriteLine("  (real skirt replay skipped: set SPROCKET_QOL_BACKUPS)"); return; }
+        string json = File.ReadAllText(backup.FullName);
+        Vector3[] Skirt(string design)
+        {
+            var b = Conversion.Parse(design);
+            int block = Conversion.Objects(b)[601]["structureBlueprintVuid"]!.GetValue<int>();
+            return MeshVerts(AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), block)["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!["mesh"]!.AsObject());
+        }
+        var plan = AddonEdits.PlanCut(json, 511, Array.Empty<int>(), false, false);
+        checkRefs(Conversion.Parse(plan.DesignJson), "real skirt replay");
+        var flags = Conversion.Objects(Conversion.Parse(plan.DesignJson))[601]["flags"]!.GetValue<int>();
+        Check(flags == 7 && plan.Live && plan.MeshIds.Keys.SequenceEqual(new[] { 601 }), $"real skirt: cut in place, still flipped and shown twice (flags {flags}, {plan.Summary})");
+        var old = Skirt(json);
+        var (lo, hi) = (old.Aggregate(Vector3.Min) - new Vector3(0.05f), old.Aggregate(Vector3.Max) + new Vector3(0.05f));
+        var now = Skirt(plan.DesignJson);
+        Check(now.Length > old.Length && now.All(p => Vector3.Clamp(p, lo, hi) == p), $"real skirt: every point of the cut skirt stays on the skirt ({old.Length} -> {now.Length} points)");
+        Console.WriteLine($"  real skirt replay: {plan.Summary}");
+    }
+
+    /// The pre-change check on real shapes: loop cuts, bevels and insets at random spots on saved tanks, and how often (and
+    /// why) the check stops them. A survey for false alarms, printed, not failed.
+    static void SurveyChecks(string factions)
+    {
+        var rng = new Random(1);
+        var why = new Dictionary<string, int>();
+        int plans = 0, stopped = 0;
+        foreach (var file in Directory.GetFiles(factions, "*.blueprint", SearchOption.AllDirectories).OrderBy(f => f).Take(40))
+        {
+            var b = Conversion.Parse(File.ReadAllText(file));
+            if (b["meshes"] is not JsonArray meshes) continue;
+            foreach (var m in meshes.Take(30))
+            {
+                if (m?["meshData"]?["mesh"] is not JsonObject mesh) continue;
+                var pos = MeshVerts(mesh).ToList();
+                var faces = MeshFaces(mesh);
+                if (faces.Count < 4 || faces.Count > 3000) continue;
+                for (int t = 0; t < 3; t++)
+                {
+                    var f = faces[rng.Next(faces.Count)];
+                    int k = rng.Next(f.Length);
+                    var edge = (f[k], f[(k + 1) % f.Length]);
+                    foreach (var (tool, plan) in new[] { ("loop cut", MeshPlans.LoopCut(pos, faces, new[] { edge })), ("bevel", MeshPlans.Bevel(pos, faces, new[] { edge }, 0.01f)),
+                                                 ("inset", MeshPlans.Inset(pos, faces, new[] { faces.IndexOf(f) }, 0.005f)) })
+                    {
+                        if (plan.Why != null) continue;
+                        plans++;
+                        if (MeshPlans.Check(pos, faces, plan) is not string r) continue;
+                        stopped++;
+                        why[tool + ": " + r] = why.GetValueOrDefault(tool + ": " + r) + 1; r = tool + ": " + r;
+                        if (why[r] <= 2 && Environment.GetEnvironmentVariable("QOL_SURVEY_DETAIL") != null)
+                        {
+                            var at = pos.Concat(plan.Points.Select(x => x.P)).ToList();
+                            string F(int[] c) => "[" + string.Join(" ", c.Select(i => $"{i}({at[i].X:0.###},{at[i].Y:0.###},{at[i].Z:0.###})")) + "]";
+                            Console.WriteLine($"    {tool} {Path.GetFileName(file)} mesh {m["vuid"]} edge {edge}: {r}");
+                            Console.WriteLine($"      removed: {string.Join(" ", plan.Remove.Select(i => F(faces[i])))}");
+                            Console.WriteLine($"      added: {string.Join(" ", plan.Add.Select(a => F(a.Corners) + "<" + a.Source))}");
+                            static Dictionary<(int, int), int> U(IEnumerable<int[]> fs) { var u = new Dictionary<(int, int), int>(); foreach (var c in fs) for (int j = 0; j < c.Length; j++) { var key = c[j] < c[(j + 1) % c.Length] ? (c[j], c[(j + 1) % c.Length]) : (c[(j + 1) % c.Length], c[j]); u[key] = u.GetValueOrDefault(key) + 1; } return u; }
+                            var gone = plan.Remove.ToHashSet();
+                            var ub = U(faces); var ua = U(faces.Where((_, i) => !gone.Contains(i)).Concat(plan.Add.Select(a => a.Corners)));
+                            Console.WriteLine($"      open now, not before: {string.Join(" ", ua.Where(kv => kv.Value == 1 && ub.GetValueOrDefault(kv.Key) != 1).Select(kv => $"{kv.Key}(was {ub.GetValueOrDefault(kv.Key)})"))}");
+                            Console.WriteLine($"      open before, not now: {string.Join(" ", ub.Where(kv => kv.Value == 1 && ua.GetValueOrDefault(kv.Key) != 1).Select(kv => $"{kv.Key}(now {ua.GetValueOrDefault(kv.Key)})"))}");
+                        }
+                    }
+                }
+            }
+        }
+        Console.WriteLine($"  check survey on real shapes: {stopped} of {plans} tool plans stopped" + (why.Count > 0 ? ": " + string.Join("; ", why.Select(kv => $"{kv.Value}x {kv.Key}")) : ""));
+    }
+
     public static void Run(string factions, Action<JsonObject, string> checkRefs)
     {
+        SurveyChecks(factions);
+        CheckRealSkirt(checkRefs);
+        CheckSeparate(checkRefs);
         CheckMeshTools();
         CheckMergeFaces();
         CheckFill();
         CheckRealPocket(checkRefs);
         CheckRealMerge();
         CheckMirrorMerge();
+        CheckMirrorTurret(factions, checkRefs);
+        {
+            // The same hole and pocket with each fill: fewest points adds none beyond the cut's own, and uses fewer
+            // points than light rings, which use fewer than smooth.
+            foreach (bool pocket in new[] { false, true })
+            {
+                var counts = new[] { Fill.Mode.Fewest, Fill.Mode.Light, Fill.Mode.Smooth }
+                    .Select(m => MeshVerts(CutBox($"{Fill.ModeNames[(int)m]} {(pocket ? "pocket" : "hole")}", SolidOf(Tool16, p => Vector3.Transform(p, Top)), pocket, null, m).Box["mesh"]!.AsObject()).Length).ToArray();
+                Check(counts[0] < counts[1] && counts[1] < counts[2], $"fill points for a {(pocket ? "pocket" : "hole")}: fewest {counts[0]}, light {counts[1]}, smooth {counts[2]}");
+                Console.WriteLine($"  {(pocket ? "pocket" : "hole")} in the top: {counts[0]} points (fewest), {counts[1]} (light), {counts[2]} (smooth)");
+            }
+        }
         CheckHole("cut the top", Top, 1);
         CheckHole("cut right through", Through, 2);
         CheckHole("cut a side at an angle", Side, -1);
@@ -596,7 +963,7 @@ static class CutTests
         }
 
         // Real add-ons cutting the shape they sit on, from the saved tanks: holes and pockets.
-        int cuts = 0, pockets = 0, notCutting = 0; long slowest = 0;
+        int cuts = 0, pockets = 0, notCutting = 0, openCutters = 0; long slowest = 0;
         foreach (var file in Directory.GetFiles(factions, "*.blueprint", SearchOption.AllDirectories).OrderBy(f => new FileInfo(f).Length))
         {
             if (cuts >= 30) break;
@@ -620,13 +987,15 @@ static class CutTests
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 try { plan = AddonEdits.PlanCut(json, addon, Array.Empty<int>(), true, pocket); slowest = Math.Max(slowest, watch.ElapsedMilliseconds); }
                 catch (Exception ex) when (ex.Message.Contains("doesn't overlap") || ex.Message.Contains("isn't sitting")) { notCutting++; continue; }
+                catch (Exception ex) when (ex.Message.Contains("isn't a closed shape")) { openCutters++; continue; }
                 var after = Conversion.Parse(plan.DesignJson);
                 checkRefs(after, "real cut");
                 var afterObjs = Conversion.Objects(after);
                 int block = afterObjs[parent]["structureBlueprintVuid"]!.GetValue<int>();
                 int meshId = after["blueprints"]!.AsArray().First(x => x!["id"]!.GetValue<int>() == block)!["blueprint"]!["bodyMeshVuid"]!.GetValue<int>();
                 var meshData = after["meshes"]!.AsArray().First(x => x!["vuid"]!.GetValue<int>() == meshId)!["meshData"]!.AsObject();
-                CheckMesh(meshData["mesh"]!.AsObject(), pocket ? "real pocket" : "real cut", crowdedBefore);
+                try { CheckMesh(meshData["mesh"]!.AsObject(), pocket ? "real pocket" : "real cut", crowdedBefore); }
+                catch (Exception ex) { throw new Exception($"{ex.Message} ({Path.GetFileName(file)}, add-on {addon} into {parent}: {plan.Summary})"); }
                 Check(plan.MeshIds.TryGetValue(parent, out int liveId) && liveId == meshId, "real cut: the in-place mesh is the one in the edited design");
                 int faceCount = meshData["mesh"]!["faces"]!.AsArray().Count;
                 var nodes = meshData["rivets"]?["nodes"]?.AsArray() ?? new JsonArray();
@@ -636,6 +1005,6 @@ static class CutTests
             }
         }
         Check(cuts > 0 && pockets > 0, "found real add-ons that cut their structure");
-        Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {notCutting} add-ons not touching anything), slowest cut {slowest} ms");
+        Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {notCutting} add-ons not touching anything, {openCutters} open add-ons refused), slowest cut {slowest} ms");
     }
 }

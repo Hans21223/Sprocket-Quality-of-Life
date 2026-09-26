@@ -149,7 +149,7 @@ foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\
 Check(multi > 0, "found tanks with several turrets");
 
 // 3) Merging real add-ons keeps every vertex where it was and removes only the merged parts.
-int merges = 0;
+int merges = 0, refusedMixed = 0;
 foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\PMC\Blueprints", ""), "*.blueprint", SearchOption.AllDirectories)
              .OrderBy(f => new FileInfo(f).Length))
 {
@@ -167,10 +167,18 @@ foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\
     var others = addons.Skip(1).Where(v => !Above(v, target) && objs[target]["transform"]!["mirrorVuid"]?.GetValue<int>() != v).Take(2).ToList();
     if (others.Count == 0) continue;
     var before = Conversion.WorldMatrices(objs);
-    // Where a part's points show: a flipped part mirrors its shape along its own x.
-    IEnumerable<Vector3> Shown(JsonObject b, JsonObject o, Matrix4x4 world) =>
-        Verts(b, o).Select(p => Vector3.Transform(p, (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world : world));
-    var mergePlan = AddonEdits.PlanMerge(json, target, others);
+    // Where a part's points show: a flipped part mirrors its shape along its own x, and a part saved once that the game
+    // shows twice (mirrored mark, no twin part) shows its image across the centre too.
+    IEnumerable<Vector3> Shown(JsonObject b, JsonObject o, Matrix4x4 world)
+    {
+        var shape = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world : world;
+        var all = Conversion.Objects(b);
+        bool imaged = (o["flags"]!.GetValue<int>() & 4) != 0 && !(o["transform"]!["mirrorVuid"]?.GetValue<int>() is int t && all.ContainsKey(t));
+        return (imaged ? new[] { shape, shape * Matrix4x4.CreateScale(-1, 1, 1) } : new[] { shape }).SelectMany(m => Verts(b, o).Select(p => Vector3.Transform(p, m)));
+    }
+    AddonEdits.EditPlan mergePlan;
+    try { mergePlan = AddonEdits.PlanMerge(json, target, others); }
+    catch (Exception ex) when (ex.Message.Contains("a flipped part would stop being mirrored")) { refusedMixed++; continue; } // mirrored and unmirrored mixed
     var merged = Conversion.Parse(mergePlan.DesignJson);
     var objsAfter = Conversion.Objects(merged);
     Check(others.All(mergePlan.Remove.Contains) && mergePlan.MeshIds.ContainsKey(target), "merge plan: removes the merged add-ons, reshapes the target");
@@ -186,7 +194,7 @@ foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\
     merges++;
 }
 Check(merges > 0, "found real add-ons to merge");
-Console.WriteLine($"ADDON_TESTS_OK: {checks} checks total, cylinder + round part + {multi} multi-turret tanks + {merges} real merges");
+Console.WriteLine($"ADDON_TESTS_OK: {checks} checks total, cylinder + round part + {multi} multi-turret tanks + {merges} real merges ({refusedMixed} mixed mirrored/unmirrored refused)");
 
 // ---------------- Create Hole ring ----------------
 void CheckHole(Matrix4x4 place, float gameRadius, bool gameReversed, Vector3 gameCentre, float expectRadius)

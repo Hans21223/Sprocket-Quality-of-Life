@@ -1,7 +1,9 @@
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+using Sprocket.MeshEditing;
 using Sprocket.PlateMesh;
 using Sprocket.PlateMesh.Operations;
+using Sprocket.PlateMesh.Rivets;
 using Sprocket.UI;
 using Sprocket.Vehicles.PlateStructures.Design;
 using Num = System.Numerics.Vector3;
@@ -38,7 +40,30 @@ public static class MergeFaces
             mirror = __instance.meshEditor.Symmetry;
             MeshTools.Run(__instance, "Merge faces", mesh => Apply(mesh) is var result && result.StartsWith("merged") ? (true, result) : (false, result));
         }), ref tip);
+
+        Ui.Section(layout, "Separate");
+        ui.InfoField("Select faces (or points) in edit mode, then\nmove them into a new add-on (Blender's P).\nThe design reloads; Restore undoes it.", 3);
+        var sepTip = new UITooltip("Separate selection", "The selected faces leave this part and become a new add-on in the same place, " +
+            "with their thickness, armour and rivets. In Points or Edges mode, faces whose corners are all selected go. " +
+            "With Mirror on, the mirrored faces go too; a mirrored part's twin (or image) gives up the same faces to a twin of the new add-on.");
+        ui.Button("Separate selected into a new add-on", Ui.Callback(() => Separate(__instance)), ref sepTip);
     });
+
+    static void Separate(PlateStructureEditor e)
+    {
+        var editor = DesignEditor.Instance;
+        var mesh = e.meshEditor?.Mesh?.EditMesh;
+        if (editor == null || mesh == null) return;
+        var v = new MeshTools.View(mesh);
+        var faces = new HashSet<int>(v.SelectedFaces);
+        if (e.meshEditor!.SelectType != MeshEditType.Face) // points or edges: every face they fully enclose, as Blender
+            for (int f = 0; f < v.Corners.Count; f++) if (v.Corners[f].All(v.SelectedPoints.Contains)) faces.Add(f);
+        faces = MeshTools.WithTwins(v, faces, e.meshEditor.Symmetry);
+        if (faces.Count == 0) { e.operations.NotifyError("Separate: select faces (or the points around them) first"); return; }
+        var picked = faces.Select(f => v.Corners[f].Select(p => v.Pos[p]).ToArray()).ToList();
+        int part = (int)e.Component.VehicleObject.VUID;
+        editor.RequestSeparate(json => AddonEdits.Separate(json, part, picked));
+    }
 
     static string Apply(EditMesh mesh)
     {
@@ -78,6 +103,10 @@ public static class MergeFaces
         var todo = plan.Where(g => g.Why == null).ToList();
         var why = string.Join("; ", plan.Where(g => g.Why != null).Select(g => g.Why).Distinct());
         if (todo.Count == 0) return "nothing merged: " + why;
+        // Checked before anything changes (running past points leaves them on the merged face's side on purpose).
+        var asPlan = new MeshPlans.Rebuild(todo.SelectMany(g => g.Faces).Distinct().ToList(),
+            todo.SelectMany(g => g.NewFaces.Select(nf => new MeshPlans.NewFace(nf, g.Faces[0]))).ToList(), new(), null);
+        if (MeshPlans.Check(pos, corners, asPlan, gaps: SideModes[sides] != FaceMerge.SidePoints.RunPast) is string broken) return "nothing merged: " + broken;
 
         // Edges that stay: those of every face not being replaced, loose ones, and (added below) the new faces' sides.
         var replaced = todo.SelectMany(g => g.Faces).ToHashSet();
@@ -85,6 +114,7 @@ public static class MergeFaces
         for (int f = 0; f < corners.Count; f++)
             if (!replaced.Contains(f))
                 for (int k = 0; k < corners[f].Length; k++) kept.Add(FaceMerge.Key(corners[f][k], corners[f][(k + 1) % corners[f].Length]));
+        var rivets = new MeshTools.RivetKeeper(mesh, replaced.Select(f => all[f]));
         var made = new List<(Face Face, Dictionary<int, Loop> Old)>();
         foreach (var g in todo)
         {
@@ -143,6 +173,7 @@ public static class MergeFaces
                 l.thickenEdge = old[Id(l.vertex)].thickenEdge;
             }
         }
+        var (rivetsKept, rivetsLost) = rivets.Place(made.Select(m => m.Face), reach: 0.05f);
         int repointed = MeshTools.FinishDelete(mesh);
 
         var problems = made.Select(m => HoleQuality.Problem(m.Face)).Where(p => p != null).Distinct().ToList();
@@ -151,6 +182,7 @@ public static class MergeFaces
         return $"merged {replaced.Count} faces into {made.Count}" + (mirror ? $" (Mirror: {twins} mirrored faces added)" : "") + (neighbours == 0 ? "" : $" ({neighbours} of them unselected, rebuilt to take their lines out)") +
                (leftOn == 0 ? "" : $", running past {leftOn} point{(leftOn == 1 ? "" : "s")} other faces keep") +
                (repointed == 0 ? "" : $", {repointed} corner{(repointed == 1 ? "" : "s")} now thicken the game's way") + (why == "" ? "" : $" (left alone: {why})") +
+               (rivets.Count == 0 ? "" : $", rivets {rivetsKept} kept" + (rivetsLost > 0 ? $" {rivetsLost} lost" : "")) +
                (problems.Count == 0 ? ", mesh checks OK" : ", MESH CHECK FAILED: " + string.Join("; ", problems));
     }
 }

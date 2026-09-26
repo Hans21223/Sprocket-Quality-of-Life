@@ -11,6 +11,12 @@ public static class Fill
     /// A vertex the fill adds: its position, and the existing vertices (with weights) its settings blend from.
     public sealed record Added(Vector3 P, (int V, float W)[] Blend);
 
+    /// How a region is filled: from its own points only (the fewest points; triangles paired into quads), with one ring
+    /// of new points between a hole and the corners (light), or with a quad ring hugging the rim and more rings (smooth).
+    public enum Mode { Fewest, Light, Smooth }
+
+    public static readonly string[] ModeNames = { "fewest points", "light rings", "smooth rings" };
+
     /// Faces (vertex indices, turning the same way as `outer`) covering the region between `outer` and `holes`. New
     /// vertices are appended to `pos` and described in `added` (same order).
     /// Which way each region was filled, for the log and tests ("rings", "cap", "delaunay", "as is").
