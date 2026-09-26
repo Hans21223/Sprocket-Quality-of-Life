@@ -108,7 +108,7 @@ internal static class DrawingSheet
             foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
                 foreach (var r in part.GetComponentsInChildren<Renderer>())
                 {
-                    if (aerials.Contains(r.Pointer)) continue;
+                    if (aerials.Contains(r.Pointer) || !MeshTools.Drawn(r)) continue;
                     layers |= 1 << r.gameObject.layer;
                     vehicle.Add(r.Pointer);
                     if (around is { } a) { a.Encapsulate(r.bounds); around = a; } else around = r.bounds;
@@ -313,7 +313,7 @@ internal static class DrawingSheet
                     if (!seen.Add(filter.Pointer)) continue; // a part's children are parts too
                     var r = filter.GetComponent<Renderer>();
                     var mesh = filter.sharedMesh;
-                    if (r == null || aerials.Contains(r.Pointer) || !r.enabled || !r.gameObject.activeInHierarchy || mesh == null) continue;
+                    if (r == null || aerials.Contains(r.Pointer) || !MeshTools.Drawn(r) || !r.gameObject.activeInHierarchy || mesh == null) continue;
                     if (!mesh.isReadable) { unreadable++; continue; }
                     var world = filter.transform.localToWorldMatrix;
                     var vertices = mesh.vertices;
