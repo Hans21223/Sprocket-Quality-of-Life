@@ -14,5 +14,6 @@
     <Compile Include="..\SprocketQoL\Fill.cs" Link="Fill.cs" />
     <Compile Include="..\SprocketQoL\FaceMerge.cs" Link="FaceMerge.cs" />
     <Compile Include="..\SprocketQoL\MeshPlans.cs" Link="MeshPlans.cs" />
+    <Compile Include="..\SprocketQoL\Drawing.cs" Link="Drawing.cs" />
   </ItemGroup>
 </Project>

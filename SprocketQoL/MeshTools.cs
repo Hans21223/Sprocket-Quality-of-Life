@@ -399,7 +399,7 @@ public static class MeshTools
     }
 
     /// Typing in a text box (a part's name): the keys are letters then, not tools.
-    static bool Typing()
+    internal static bool Typing()
     {
         var go = UnityEngine.EventSystems.EventSystem.current?.currentSelectedGameObject;
         return go != null && (go.GetComponent<TMPro.TMP_InputField>()?.isFocused == true || go.GetComponent<UnityEngine.UI.InputField>()?.isFocused == true);
@@ -533,6 +533,7 @@ public static class MeshTools
 
     static readonly List<GameObject> fills = new();
     static bool fullbrightShadows; // whether fullbright turned the shadows off (then it turns them back on)
+    internal static bool FullbrightOn { get { fills.RemoveAll(f => f == null); return fills.Count > 0; } }
     static float FillShare => (Plugin.FullbrightPercent?.Value ?? 25) / 100; // of the sun's strength, per light
     // From every side and every corner: 14 lights (with the sun, within the 16 directional lights HDRP draws at once).
     static readonly Vector3[] FillFrom = new[] { Vector3.down, Vector3.up, Vector3.left, Vector3.right, Vector3.forward, Vector3.back }
@@ -542,7 +543,7 @@ public static class MeshTools
     static void FillBrightness() { fillsAt = -10; PlaceFills(); }
 
     /// Even light from all six sides with shadows off, so every face shows clearly whichever way it faces.
-    static void ToggleFullbright() => Ui.Guard("Fullbright", () =>
+    internal static void ToggleFullbright() => Ui.Guard("Fullbright", () =>
     {
         fills.RemoveAll(f => f == null); // gone with a scene change
         if (fills.Count > 0)
@@ -606,15 +607,42 @@ public static class MeshTools
 
     /// The box round every part of the vehicle being edited, measured at most once a second (every part's renderers:
     /// not cheap on a big tank), shared by the fill lights and the plain backdrop.
-    static Bounds? VehicleBounds()
+    internal static Bounds? VehicleBounds() => Boxes().All;
+
+    /// The same without the antennas: the vehicle's own size, as measured.
+    internal static Bounds? BodyBounds() => Boxes().Body;
+
+    static (Bounds? All, Bounds? Body) Boxes()
     {
         if (Time.unscaledTime - vehicleBoxAt < 1) return vehicleBox;
         vehicleBoxAt = Time.unscaledTime;
-        vehicleBox = null;
+        var aerials = AntennaRenderers();
+        Bounds? all = null, body = null;
         foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
             foreach (var r in part.GetComponentsInChildren<Renderer>())
-                if (vehicleBox is { } b) { b.Encapsulate(r.bounds); vehicleBox = b; } else vehicleBox = r.bounds;
-        return vehicleBox;
+            {
+                var b = r.bounds;
+                all = Grow(all, b);
+                if (!aerials.Contains(r.Pointer)) body = Grow(body, b);
+            }
+        return vehicleBox = (all, body);
+    }
+
+    static Bounds Grow(Bounds? box, Bounds b)
+    {
+        if (box is not { } grown) return b;
+        grown.Encapsulate(b);
+        return grown;
+    }
+
+    /// The antennas' renderers: a whip metres tall is left out of the vehicle's measured size (and off the drawing sheet).
+    internal static HashSet<IntPtr> AntennaRenderers()
+    {
+        var found = new HashSet<IntPtr>();
+        foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
+            if (DesignEditor.Each(part.Components).Any(c => c?.TryCast<Sprocket.Vehicles.RadioSystems.Antenna>() != null))
+                foreach (var r in part.GetComponentsInChildren<Renderer>()) found.Add(r.Pointer);
+        return found;
     }
 
     // ---------- mouse flashlight (F6) ----------
@@ -678,6 +706,7 @@ public static class MeshTools
     // ---------- orthographic view ----------
 
     static bool ortho, orthoWhole = true, orthoLock = true, orthoLogged;
+    static int arrowDraws; // since orthographic view went on or off: the size is logged once it has settled
     static float orthoZoom = 1; // on top of the orbit distance, which stops at the game's closest zoom
     static float? farBefore;
     const float PullBack = 100; // metres the camera steps back in orthographic view, so it never cuts into the vehicle
@@ -693,6 +722,7 @@ public static class MeshTools
     static void ToggleOrtho()
     {
         ortho = !ortho;
+        arrowDraws = 0;
         if (!ortho) { held = null; PutCameraBack(); }
         Plugin.ModLog.LogInfo($"Orthographic view {(ortho ? "on" : "off")}");
     }
@@ -708,6 +738,8 @@ public static class MeshTools
         if (farBefore is { } far) { cam.farClipPlane = far; farBefore = null; }
         Ground(cam, default, hide: false);
         Floor(hide: false);
+        Fog(off: false);
+        ArrowObserversBack();
     }
 
     // The spawn pad and ground under the vehicle, hidden in orthographic view (the vehicle alone, as a drawing shows it).
@@ -716,7 +748,7 @@ public static class MeshTools
     static float floorAt = -10;
     static bool floorLogged;
 
-    static void Floor(bool hide)
+    internal static void Floor(bool hide)
     {
         if (!hide)
         {
@@ -827,6 +859,7 @@ public static class MeshTools
         }
         cam.orthographic = true;
         Floor(hide: true);
+        Fog(off: true);
         // Sized by the zoom the player set (the target distance), not the distance the orbit is at right now: that one
         // moves a little every frame as the camera keeps out of parts, and would shake the view.
         cam.orthographicSize = Math.Max(0.005f, __instance.TargetDistance * MathF.Tan(cam.fieldOfView * MathF.PI / 360) / orthoZoom);
@@ -863,6 +896,41 @@ public static class MeshTools
         Backdrop(cam, plain: backdrop > 0);
     });
 
+    // The move, turn and scale arrows are sized by how far their observer (the camera) is: in orthographic view that's
+    // 100 m back, and they came out huge. They get a stand-in observer where a normal view at this zoom would stand.
+    static GameObject? arrowsViewpoint;
+    static readonly Dictionary<IntPtr, (Sprocket.Transformations.Gizmos.TransformGizmo Gizmo, Transform Observer)> arrowObservers = new();
+
+    [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.GizmoRendering.TransformGizmos), nameof(Sprocket.GizmoRendering.TransformGizmos.DrawTransform))]
+    static void ArrowSize(float scale, Sprocket.Transformations.Gizmos.ITransformGizmo __result) => Ui.Guard("Orthographic view", () =>
+    {
+        if (__result?.TryCast<Sprocket.Transformations.Gizmos.TransformGizmo>() is not { } gizmo) return;
+        var cam = Camera.main;
+        if (ortho && cam != null && cam.orthographic)
+        {
+            if (arrowsViewpoint == null) arrowsViewpoint = new GameObject("Quality of Life arrows viewpoint");
+            float seen = cam.orthographicSize / MathF.Tan(cam.fieldOfView * MathF.PI / 360); // a normal view's distance at this zoom
+            var stand = arrowsViewpoint.transform;
+            stand.SetPositionAndRotation(gizmo.transform.position - cam.transform.forward * seen, cam.transform.rotation);
+            if (gizmo.observer?.Pointer != stand.Pointer) { arrowObservers[gizmo.Pointer] = (gizmo, gizmo.observer!); gizmo.observer = stand; }
+            // Drawing them sizes them by the camera itself (so they flickered big): their size from the stand-in instead.
+            gizmo.transform.localScale = gizmo.ScreenScale;
+        }
+        else if (arrowObservers.Remove(gizmo.Pointer, out var was)) gizmo.observer = was.Observer;
+        if (++arrowDraws != 30) return;
+        var o = gizmo.observer;
+        Plugin.ModLog.LogInfo($"Transform arrows ({(ortho ? "orthographic" : "normal")} view): the game's size {scale:0.000}, Scale {gizmo.Scale:0.000} x {gizmo.ScaleMultiplier:0.000}, " +
+                              $"screen scale {gizmo.ScreenScale.x:0.000}, drawn at {gizmo.transform.lossyScale.x:0.000}; observer '{o?.name}' " +
+                              $"{(o != null ? Vector3.Distance(o.position, gizmo.transform.position) : -1):0.0} m away, camera {(cam != null ? Vector3.Distance(cam.transform.position, gizmo.transform.position) : -1):0.0} m");
+    });
+
+    /// Out of orthographic view: every arrow set's own observer back.
+    static void ArrowObserversBack()
+    {
+        foreach (var (gizmo, observer) in arrowObservers.Values) if (gizmo != null) gizmo.observer = observer;
+        arrowObservers.Clear();
+    }
+
     // Orthographic backdrop: the scene as it is, or plain: no sky (one colour behind) and no map (the camera draws only
     // the depth the vehicle fills, so walls, hills and the map's edge in front or behind don't show).
     static int backdrop = 1; // index into BackdropNames
@@ -870,7 +938,7 @@ public static class MeshTools
     static readonly Color[] BackdropColours = { default, new(0.32f, 0.33f, 0.35f), Color.white, Color.black };
     static (UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData Hd, UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData.ClearColorMode Mode, Color Colour)? clearBefore;
     static float? orthoNearBefore;
-    static Bounds? vehicleBox;
+    static (Bounds? All, Bounds? Body) vehicleBox;
     static float vehicleBoxAt = -1;
 
     static void Backdrop(Camera cam, bool plain)
@@ -895,6 +963,80 @@ public static class MeshTools
         farBefore ??= cam.farClipPlane;
         cam.nearClipPlane = Math.Max(0.01f, depths.Min() - 0.05f);
         cam.farClipPlane = Math.Max(cam.nearClipPlane + 0.1f, depths.Max() + 0.05f);
+    }
+
+    // The game's height fog, off in orthographic view: the camera stands 100 m back (a haze over the vehicle), and below
+    // a height the fog paints the backdrop another colour. Off for the drawing sheet too.
+    static readonly List<UnityEngine.Rendering.VolumeComponent> fogsOff = new();
+    internal static bool FogOff { get; private set; }
+
+    internal static void Fog(bool off)
+    {
+        if (off == FogOff) return;
+        FogOff = off;
+        if (!off)
+        {
+            foreach (var f in fogsOff) if (f != null) f.active = true;
+            fogsOff.Clear();
+            return;
+        }
+        foreach (var volume in UnityEngine.Object.FindObjectsOfType<UnityEngine.Rendering.Volume>())
+        {
+            var parts = (volume.HasInstantiatedProfile() ? volume.profile : volume.sharedProfile)?.components;
+            if (parts != null)
+                for (int k = 0; k < parts.Count; k++)
+                    if (parts[k] != null && parts[k].active && parts[k].TryCast<UnityEngine.Rendering.HighDefinition.Fog>() != null) { parts[k].active = false; fogsOff.Add(parts[k]); }
+        }
+    }
+
+    // ---------- measurements (orthographic view) ----------
+
+    static bool orthoMeasure = true;
+    static GUIStyle? inkStyle, measureStyle;
+    static readonly Color Ink = new(1f, 0.8f, 0.15f), Shade = new(0, 0, 0, 0.7f);
+    const float MeasureGap = 40; // pixels from the vehicle to its dimension lines
+
+    /// In a straight orthographic view: the vehicle's overall size across the screen (under it) and up the screen (to its
+    /// right), drawn as a drawing's dimensions, to the centimetre. Antennas left out. From the editor's OnGUI.
+    internal static void DrawMeasures()
+    {
+        if (!ortho || !orthoMeasure || !(orthoLock || held != null)) return;
+        var cam = Camera.main;
+        if (cam == null || !cam.orthographic || BodyBounds() is not { } box) return;
+        float left = float.MaxValue, right = float.MinValue, top = float.MaxValue, bottom = float.MinValue;
+        for (int i = 0; i < 8; i++)
+        {
+            var s = cam.WorldToScreenPoint(new Vector3((i & 1) == 0 ? box.min.x : box.max.x, (i & 2) == 0 ? box.min.y : box.max.y, (i & 4) == 0 ? box.min.z : box.max.z));
+            float y = Screen.height - s.y; // the GUI's y runs down the screen
+            left = Math.Min(left, s.x); right = Math.Max(right, s.x); top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+        }
+        float across = Math.Abs(Vector3.Dot(box.size, cam.transform.right)), up = Math.Abs(Vector3.Dot(box.size, cam.transform.up));
+        float under = bottom + MeasureGap, beside = right + MeasureGap;
+        var bars = new[]
+        {
+            new Rect(left, under - 1, right - left, 2), new Rect(left - 1, under - 10, 2, 20), new Rect(right - 1, under - 10, 2, 20),
+            new Rect(beside - 1, top, 2, bottom - top), new Rect(beside - 10, top - 1, 20, 2), new Rect(beside - 10, bottom - 1, 20, 2),
+        };
+        inkStyle ??= new GUIStyle { normal = { background = Texture2D.whiteTexture } };
+        measureStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 18, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
+        var was = GUI.color;
+        // All the dark edges first, then the lines over them (so where two lines meet, neither's edge crosses the other).
+        GUI.color = Shade;
+        foreach (var r in bars) GUI.Box(new Rect(r.x - 1, r.y - 1, r.width + 2, r.height + 2), "", inkStyle);
+        GUI.color = Ink;
+        foreach (var r in bars) GUI.Box(r, "", inkStyle);
+        MeasureText(new Rect((left + right) / 2 - 100, under + 10, 200, 26), $"{across:0.00} m", TextAnchor.UpperCenter);
+        MeasureText(new Rect(beside + 16, (top + bottom) / 2 - 13, 200, 26), $"{up:0.00} m", TextAnchor.MiddleLeft);
+        GUI.color = was;
+    }
+
+    static void MeasureText(Rect at, string text, TextAnchor anchor)
+    {
+        measureStyle!.alignment = anchor;
+        GUI.color = Shade;
+        GUI.Box(new Rect(at.x + 2, at.y + 2, at.width, at.height), text, measureStyle);
+        GUI.color = Ink;
+        GUI.Box(at, text, measureStyle);
     }
 
     // ---------- zooming in close (small parts) ----------
@@ -1088,6 +1230,9 @@ public static class MeshTools
             if (!v && ortho) { var cam = Camera.main; if (cam != null && orbit != null) cam.transform.position = orbit.AppliedPosition; }
         }), "Orthographic view (Numpad 5): the camera steps back so it never cuts into the vehicle when you zoom in close. " +
             "Off: it stays where the game puts it, and zooming in close shows the inside.");
+        ui.ToggleField("Ortho: measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
+            "Orthographic view, looking straight from the front, back, side or top: the vehicle's overall size across the screen " +
+            "(under it) and up the screen (beside it), to the centimetre. Antennas aren't counted.");
     });
 }
 

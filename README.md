@@ -117,7 +117,9 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
     one colour, no sky and no map (the map's edge, hills and walls neither in front nor behind), or **scene** as it is.
     With **Ortho: straight views** (on by default) it snaps to front, back, sides or top, and orbiting flips between
     them; **Numpad 1 / 3 / 7** jump to front, side and top (with **Ctrl**: back, the other side, and from below), and **Numpad 9** flips to the opposite view (top to below,
-    front to back).
+    front to back). In a straight view, **Ortho: measurements** (on by default) draws the vehicle's overall size as
+    dimension lines: across the screen under it, up the screen beside it, to the centimetre (antennas not counted).
+    The game's fog is off in orthographic view, and the move / turn / scale arrows keep a normal size.
 - **Exploded view (F2):** the running gear (tracks, road wheels, sprockets, idlers, suspension) stays on the ground and
   the hull lifts off it; every other part moves away from the part it's on, straight up or down or outward on the
   level, and parts on parts go further; **F3 / F4** bring them closer or further apart (the spread is remembered). F2 again
@@ -131,6 +133,14 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
 - **Fullbright (F7):** shadows off and even light from all six sides and eight corners (14 lights; brightness in
   Mesh tools, **Fullbright (% of sun, each light)**), so every face shows clearly. F7 again puts the
   lighting back.
+- **Drawing sheet (F9):** saves a technical drawing of the vehicle, laid out like a maker's drawing: from above and
+  from the front on top, from the side and from the back below, all at one scale, on white, each view named. Measured
+  like a drawing: the overall length and height beside the side view, the width beside the view from above and under
+  the front view (to the centimetre), and a 1 m ruler with ticks every 10 cm. Antennas are left off, so the height is
+  the vehicle's own. Two pictures: **lines only** (black on white) and **colour** (the paint, lit evenly from every side, with
+  the same lines over it). The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
+  the outline of curved parts, with what's hidden behind other parts left out; each view is outlined from its picture
+  too, so every part has its outline. Saved as PNG in `Documents\My Games\Sprocket\Photos`. Takes a few seconds.
 - **Max-quality photo (F8 in photo mode):** takes a photo with every graphics quality setting at its best, without
   leaving photo mode: the settings go up and the photo mode overlay hides for about a second, then both come back as
   they were. Resolution, anti-aliasing type and looks (vignette, film grain, depth of field on or off) stay yours.

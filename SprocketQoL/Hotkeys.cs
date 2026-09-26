@@ -143,7 +143,7 @@ public static class Hotkeys
         found.Add("Numpad 1 / 3 / 7  front / side / top     Numpad 9  opposite (below, back...)   [mod]");
         found.Add("F2  exploded view     F3 / F4  closer / further apart   [mod]");
         found.Add("F5  shadows off / on     F6  flashlight at the mouse     F7  fullbright   [mod]");
-        found.Add("F8 (photo mode)  photo at the best graphics settings   [mod]");
+        found.Add("F8 (photo mode)  photo at the best graphics settings     F9  drawing sheet   [mod]");
         return found;
     }
 
