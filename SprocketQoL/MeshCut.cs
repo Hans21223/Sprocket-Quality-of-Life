@@ -37,6 +37,72 @@ public static class MeshCut
         public bool Degenerate => Plane.N == Vector3.Zero;
     }
 
+    /// A closed shape's triangles filed by where they lie across (y, z), so a question about one spot looks only at the
+    /// triangles there, not all of them (a detailed add-on has thousands, asked about thousands of pieces).
+    sealed class TriGrid
+    {
+        readonly List<Tri> tris;
+        readonly List<int>[] cells;
+        readonly int n;
+        readonly float y0, z0, dy, dz;
+
+        public TriGrid(List<Tri> tris)
+        {
+            this.tris = tris;
+            n = Math.Clamp((int)Math.Sqrt(tris.Count / 4.0), 1, 64);
+            var min = tris.Aggregate(new Vector3(float.MaxValue), (m, t) => Vector3.Min(m, t.Min));
+            var max = tris.Aggregate(new Vector3(float.MinValue), (m, t) => Vector3.Max(m, t.Max));
+            (y0, z0) = (min.Y, min.Z);
+            dy = Math.Max(1e-6f, (max.Y - min.Y) / n);
+            dz = Math.Max(1e-6f, (max.Z - min.Z) / n);
+            cells = Enumerable.Range(0, n * n).Select(_ => new List<int>()).ToArray();
+            for (int i = 0; i < tris.Count; i++)
+                foreach (int c in Cells(tris[i].Min.Y - Flat, tris[i].Max.Y + Flat, tris[i].Min.Z - Flat, tris[i].Max.Z + Flat)) cells[c].Add(i);
+        }
+
+        IEnumerable<int> Cells(float yMin, float yMax, float zMin, float zMax)
+        {
+            int Clamp(float v) => Math.Clamp((int)MathF.Floor(v), 0, n - 1);
+            int ya = Clamp((yMin - y0) / dy), yb = Clamp((yMax - y0) / dy), za = Clamp((zMin - z0) / dz), zb = Clamp((zMax - z0) / dz);
+            for (int y = ya; y <= yb; y++)
+                for (int z = za; z <= zb; z++) yield return y * n + z;
+        }
+
+        /// The triangles whose box, grown by `pad`, meets the box min-max, in their original order.
+        public List<Tri> Near(Vector3 min, Vector3 max, float pad)
+        {
+            var found = new SortedSet<int>();
+            foreach (int c in Cells(min.Y - pad, max.Y + pad, min.Z - pad, max.Z + pad))
+                foreach (int i in cells[c])
+                    if (Overlaps(min, max, tris[i].Min - new Vector3(pad), tris[i].Max + new Vector3(pad))) found.Add(i);
+            return found.Select(i => tris[i]).ToList();
+        }
+
+        /// Inside the shape, and not on its surface: a line from p along +x crosses the shape's faces; counting each
+        /// crossing by the way it faces gives the winding number (1 inside a closed shape, 0 outside), as the full sum of
+        /// solid angles does, from only the triangles along the line. The line runs a hair off p, so it never runs
+        /// exactly along an edge or through a corner.
+        public bool Inside(Vector3 p)
+        {
+            float py = p.Y + 1.37e-6f, pz = p.Z + 2.71e-6f;
+            int winding = 0;
+            foreach (int c in Cells(py, py, pz, pz))
+                foreach (int i in cells[c])
+                {
+                    var t = tris[i];
+                    if (t.Max.X < p.X || py < t.Min.Y || py > t.Max.Y || pz < t.Min.Z || pz > t.Max.Z || MathF.Abs(t.Plane.N.X) < 1e-9f) continue;
+                    // Where the line meets the triangle's plane, and whether that's inside the triangle (seen along x).
+                    float x = (t.Plane.D - t.Plane.N.Y * py - t.Plane.N.Z * pz) / t.Plane.N.X;
+                    if (x <= p.X) continue;
+                    float E(Vector3 a, Vector3 b) => (b.Y - a.Y) * (pz - a.Z) - (b.Z - a.Z) * (py - a.Y);
+                    float e0 = E(t.A, t.B), e1 = E(t.B, t.C), e2 = E(t.C, t.A);
+                    if ((e0 < 0 || e1 < 0 || e2 < 0) && (e0 > 0 || e1 > 0 || e2 > 0)) continue;
+                    winding += t.Plane.N.X > 0 ? 1 : -1;
+                }
+            return winding != 0 && !OnSurface(Near(p, p, Flat), p);
+        }
+    }
+
     /// A face corner while cutting. V = vertex number (-1 until given one); A,B = the original edge a new corner lies
     /// on (-1 if none); Other = the vertex its thicken edge goes to; Raw = stored thicken edge value to keep when Other
     /// is -1; Fallback = give it the edge to its next corner.
@@ -85,7 +151,9 @@ public static class MeshCut
         var allShapeTris = shapeTris.SelectMany(x => x).ToList();
         var shapeMin = allShapeTris.Aggregate(new Vector3(float.MaxValue), (m, t) => Vector3.Min(m, t.Min)) - new Vector3(Flat);
         var shapeMax = allShapeTris.Aggregate(new Vector3(float.MinValue), (m, t) => Vector3.Max(m, t.Max)) + new Vector3(Flat);
-        bool InsideShape(Vector3 p) => shapeTris.Any(tris => Math.Abs(Winding(tris, p)) > 0.5 && !OnSurface(tris, p));
+        var grids = shapeTris.Select(t => new TriGrid(t)).ToList();
+        var allGrid = new TriGrid(allShapeTris);
+        bool InsideShape(Vector3 p) => grids.Any(g => g.Inside(p));
 
         // 1) Split target faces the shapes pass through, and drop the pieces inside a shape.
         var result = new List<Poly>();
@@ -94,7 +162,7 @@ public static class MeshCut
         {
             var (min, max) = Bounds(face.C);
             if (!Overlaps(min, max, shapeMin, shapeMax)) { result.Add(face); continue; }
-            var near = allShapeTris.Where(t => Overlaps(min, max, t.Min - new Vector3(Eps), t.Max + new Vector3(Eps))).ToList();
+            var near = allGrid.Near(min, max, Eps);
             var pieces = new List<List<Corner>>();
             Shatter(face.C, near, 0, pieces, verts);
             var kept = pieces.Where(p => !InsideShape(Centre(p))).ToList();
@@ -152,7 +220,7 @@ public static class MeshCut
                         var c = Centre(p);
                         if (Math.Abs(Winding(targetTris, c)) <= 0.5 || OnSurface(targetTris, c)) continue;
                         // Keep only walls inside the part of the shape that actually cuts: other shapes may overlap it.
-                        if (shapeTris.Where((_, i) => i != s).Any(tris => Math.Abs(Winding(tris, c)) > 0.5 && !OnSurface(tris, c))) continue;
+                        if (grids.Where((_, i) => i != s).Any(g => g.Inside(c))) continue;
                         result.Add(new Poly { C = p, Source = nextSource, Pocket = true, Group = group, Changed = true });
                         pocketFaces++;
                     }
@@ -353,6 +421,7 @@ public static class MeshCut
                     if (mode == 4) mode = 1; // its hand-picked thicken edge is gone: back to Auto
                 }
                 ushort r = edge >= 0 ? (ushort)edge : c.Raw;
+                if (r == 0xFFFF && mode == 4) mode = 1; // no thicken edge left to hand-pick: Auto
                 moved |= r != c.Raw;
                 unset &= r == 0xFFFF;
                 te |= (ulong)r << (16 * k);
@@ -363,7 +432,7 @@ public static class MeshCut
                 node["t"] = new JsonArray(cs.Select(c => (JsonNode?)(int)Math.Round(c.T)).ToArray());
                 node["tm"] = (int)tm;
             }
-            if (f.Changed || moved) node["te"] = unset ? -1L : (long)te;
+            if (f.Changed || moved) node["te"] = Te(unset ? ulong.MaxValue : te);
             faceOf[f] = outFaces.Count;
             outFaces.Add(node);
         }
@@ -812,7 +881,15 @@ public static class MeshCut
 
     // Numbers read back whether they were parsed from text or written by this mod as whole numbers.
     internal static float F(JsonNode? n) => n is not JsonValue v ? 0 : v.TryGetValue(out float f) ? f : v.TryGetValue(out int i) ? i : (float)v.GetValue<double>();
-    internal static long L(JsonNode? n) => n is not JsonValue v ? 0 : v.TryGetValue(out long l) ? l : v.TryGetValue(out int i) ? i : (long)v.GetValue<double>();
+    internal static long L(JsonNode? n) => n is not JsonValue v ? 0 : v.TryGetValue(out long l) ? l : v.TryGetValue(out ulong u) ? (long)u : v.TryGetValue(out int i) ? i : (long)v.GetValue<double>();
+
+    /// A face's thicken edges as the game stores them: one unsigned number, 16 bits a corner, with "none" (0xFFFF while
+    /// cutting) stored as 0. Written signed, a corner with none made it negative, and the game can't read the design.
+    internal static JsonNode Te(ulong te)
+    {
+        for (int k = 0; k < 4; k++) if (((te >> (16 * k)) & 0xFFFF) == 0xFFFF) te &= ~(0xFFFFUL << (16 * k));
+        return JsonValue.Create(te);
+    }
 
     static JsonObject Clone(JsonNode node) => JsonNode.Parse(node.ToJsonString())!.AsObject();
 }

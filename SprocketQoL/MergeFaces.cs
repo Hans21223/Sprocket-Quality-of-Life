@@ -42,14 +42,18 @@ public static class MergeFaces
         }), ref tip);
 
         Ui.Section(layout, "Separate");
-        ui.InfoField("Select faces (or points) in edit mode, then\nmove them into a new add-on (Blender's P).\nThe design reloads; Restore undoes it.", 3);
+        ui.InfoField("Select faces (or points) in edit mode, then\nmove them into a new add-on (Blender's P).\nCtrl+Z undoes it.", 3);
         var sepTip = new UITooltip("Separate selection", "The selected faces leave this part and become a new add-on in the same place, " +
             "with their thickness, armour and rivets. In Points or Edges mode, faces whose corners are all selected go. " +
             "With Mirror on, the mirrored faces go too; a mirrored part's twin (or image) gives up the same faces to a twin of the new add-on.");
-        ui.Button("Separate selected into a new add-on", Ui.Callback(() => Separate(__instance)), ref sepTip);
+        ui.Button("Separate selected into a new add-on", Ui.Callback(() => Separate(__instance, pieces: false)), ref sepTip);
+        var pieceTip = new UITooltip("Separate picked pieces", "For a shape already in pieces that don't touch: click one face on each piece " +
+            "(Shift for more) and each whole piece becomes its own add-on in the same place. Pick every piece and the biggest stays here.");
+        ui.Button("Separate picked pieces (a face on each)", Ui.Callback(() => Separate(__instance, pieces: true)), ref pieceTip);
     });
 
-    static void Separate(PlateStructureEditor e)
+    /// The selected faces into a new add-on, or (`pieces`) each loose piece with a selected face into its own.
+    static void Separate(PlateStructureEditor e, bool pieces)
     {
         var editor = DesignEditor.Instance;
         var mesh = e.meshEditor?.Mesh?.EditMesh;
@@ -59,10 +63,17 @@ public static class MergeFaces
         if (e.meshEditor!.SelectType != MeshEditType.Face) // points or edges: every face they fully enclose, as Blender
             for (int f = 0; f < v.Corners.Count; f++) if (v.Corners[f].All(v.SelectedPoints.Contains)) faces.Add(f);
         faces = MeshTools.WithTwins(v, faces, e.meshEditor.Symmetry);
-        if (faces.Count == 0) { e.operations.NotifyError("Separate: select faces (or the points around them) first"); return; }
+        if (faces.Count == 0) { e.operations.NotifyError(pieces ? "Separate pieces: click a face on each piece first" : "Separate: select faces (or the points around them) first"); return; }
         var picked = faces.Select(f => v.Corners[f].Select(p => v.Pos[p]).ToArray()).ToList();
         int part = (int)e.Component.VehicleObject.VUID;
-        editor.RequestSeparate(json => AddonEdits.Separate(json, part, picked));
+        if (pieces)
+            editor.RequestSeparate("Separating pieces", "Separated the picked pieces into their own add-ons.", json => AddonEdits.SeparatePieces(json, part, picked));
+        else
+            editor.RequestSeparate("Separating faces", "Separated into a new add-on.", json =>
+            {
+                var (result, parts, log) = AddonEdits.Separate(json, part, picked);
+                return (result, new List<List<(int Source, int Added)>> { parts }, log);
+            });
     }
 
     static string Apply(EditMesh mesh)

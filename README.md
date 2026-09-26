@@ -86,6 +86,8 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   From an add-on it happens in place as one of the game's own steps (the game copies the part, the copy keeps the
   selected faces), checked against the planned design afterwards, and **Ctrl+Z** undoes it. From a hull or turret (or
   if the check finds any difference) the design reloads instead, and **Restore** undoes it.
+  **Separate picked pieces**: for a shape already in pieces that don't touch, click one face on a piece (Shift-click
+  more pieces) and each whole piece becomes its own add-on. Pick every piece and the biggest stays on the part.
 
 - **Mesh tools** (Blender-style, in a hand-made structure's **Mesh tools** section and on keys; each is one of the
   game's own mesh edits, so Ctrl+Z undoes it, and each follows the editor's Mirror). Each is checked before it changes

@@ -604,14 +604,17 @@ public static class MeshTools
         }
     }
 
-    /// The box round every part of the vehicle being edited.
+    /// The box round every part of the vehicle being edited, measured at most once a second (every part's renderers:
+    /// not cheap on a big tank), shared by the fill lights and the plain backdrop.
     static Bounds? VehicleBounds()
     {
-        Bounds? box = null;
+        if (Time.unscaledTime - vehicleBoxAt < 1) return vehicleBox;
+        vehicleBoxAt = Time.unscaledTime;
+        vehicleBox = null;
         foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
             foreach (var r in part.GetComponentsInChildren<Renderer>())
-                if (box is { } b) { b.Encapsulate(r.bounds); box = b; } else box = r.bounds;
-        return box;
+                if (vehicleBox is { } b) { b.Encapsulate(r.bounds); vehicleBox = b; } else vehicleBox = r.bounds;
+        return vehicleBox;
     }
 
     // ---------- mouse flashlight (F6) ----------
@@ -658,9 +661,7 @@ public static class MeshTools
         var cam = Camera.main;
         if (cam == null) return;
         var ray = Mouse.current is { } mouse ? cam.ScreenPointToRay(mouse.position.ReadValue()) : cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
-        float distance = float.MaxValue;
-        foreach (var hit in Physics.RaycastAll(ray, 2000f))
-            if (hit.distance < distance && hit.collider != null) distance = hit.distance;
+        float distance = Physics.Raycast(ray, out var hit, 2000f) ? hit.distance : float.MaxValue;
         if (distance == float.MaxValue) distance = (orbit?.TargetDistance ?? 10) + (ortho && orthoWhole ? PullBack : 0);
         var from = ray.origin;
         if (ortho)
@@ -887,16 +888,7 @@ public static class MeshTools
             hd.clearColorMode = UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData.ClearColorMode.Color;
             hd.backgroundColorHDR = BackdropColours[backdrop];
         }
-        // The vehicle's box, looked up twice a second (parts come and go while editing).
-        if (Time.unscaledTime - vehicleBoxAt > 0.5f)
-        {
-            vehicleBoxAt = Time.unscaledTime;
-            vehicleBox = null;
-            foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
-                foreach (var r in part.GetComponentsInChildren<Renderer>())
-                    if (vehicleBox is { } v) { v.Encapsulate(r.bounds); vehicleBox = v; } else vehicleBox = r.bounds;
-        }
-        if (vehicleBox is not { } box) return;
+        if (VehicleBounds() is not { } box) return;
         var depths = Enumerable.Range(0, 8).Select(i => Vector3.Dot(new Vector3((i & 1) == 0 ? box.min.x : box.max.x, (i & 2) == 0 ? box.min.y : box.max.y,
             (i & 4) == 0 ? box.min.z : box.max.z) - cam.transform.position, cam.transform.forward)).ToList();
         orthoNearBefore ??= cam.nearClipPlane;
@@ -1171,7 +1163,10 @@ public static class TurretCopy
         if (part == null || part.GUID != Conversion.RingGuid) return;
         var twin = targetTransform!.Mirror;
         int Count(Sprocket.Vehicles.VehicleTransform? t) => t?.Children?.Cast<Il2CppSystem.Collections.Generic.IReadOnlyCollection<Sprocket.Vehicles.VehicleTransform>>().Count ?? -1;
-        Plugin.ModLog.LogInfo($"Turret mirror: ring {(int)part.VUID} mirror requested={mirrorRequested}, mirrored={targetTransform.IsMirrored}, twin ring={(twin?.VehicleObject is { } o ? ((int)o.VUID).ToString() : "none")}, " +
-                              $"parts on it {Count(targetTransform)}, on the twin {Count(twin)}");
+        string line = $"Turret mirror: ring {(int)part.VUID} mirror requested={mirrorRequested}, mirrored={targetTransform.IsMirrored}, twin ring={(twin?.VehicleObject is { } o ? ((int)o.VUID).ToString() : "none")}, " +
+                      $"parts on it {Count(targetTransform)}, on the twin {Count(twin)}";
+        if (line != lastMirrorLine) Plugin.ModLog.LogInfo(lastMirrorLine = line); // called every frame while placing: new news only
     });
+
+    static string lastMirrorLine = "";
 }

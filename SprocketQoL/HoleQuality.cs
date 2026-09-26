@@ -14,7 +14,6 @@ namespace SprocketQoL;
 public static class HoleQuality
 {
     static int segments = 32, sizePercent = 100;
-    static float? gameScale; // the game's own hole radius scale, read once
 
     static ushort? holeThickness; // the holed face's plate thickness, read before the game takes the face away
 
@@ -61,7 +60,7 @@ public static class HoleQuality
         Ui.Guard("Create Hole", () =>
         {
             var corners = outer.Select(v => ToNum(v.position)).ToArray();
-            var ring = HoleRing.Fit(corners, inner.Select(v => ToNum(v.position)).ToArray(), ToNum(centre), out var note);
+            var ring = HoleRing.Fit(corners, inner.Select(v => ToNum(v.position)).ToArray(), ToNum(centre), out var note, sizePercent / 100f);
             for (int k = 0; k < inner.Length; k++) inner[k].position = new UnityEngine.Vector3(ring[k].X, ring[k].Y, ring[k].Z);
             int order = FaceOrder(outer);
             faceSide = order == 0 ? null : HoleRing.Normal(corners) * order;
@@ -237,14 +236,10 @@ public static class HoleQuality
     {
         var ui = layout.TryCast<IGUIElementDrawer>();
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // Create Hole is a freeform tool
-        gameScale ??= CreateHoleOp.HoleRadiusScale;
         Ui.Section(layout, "Hole quality");
         ui.Slider("Hole segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));
-        ui.Slider("Hole size (%)", sizePercent, 10, 300, Ui.FloatCallback(v =>
-        {
-            sizePercent = (int)Math.Round(v);
-            CreateHoleOp.HoleRadiusScale = gameScale.Value * sizePercent / 100f;
-        }));
+        // Applied in HoleRing.Fit, never through the game's CreateHoleOp.HoleRadiusScale: see there.
+        ui.Slider("Hole size (%)", sizePercent, 10, 300, Ui.FloatCallback(v => sizePercent = (int)Math.Round(v)));
         var tip = new UITooltip("Hole fill", "Fewest points: only the hole's ring and the face's corners, no new points (triangles paired into quads). " +
                                 "Light: one ring of points between the hole and the corners, for even faces. " +
                                 "Smooth: a ring of quads hugging the hole, then rings stepping out (more points, even slices). Game's: the game's own fan of triangles.");

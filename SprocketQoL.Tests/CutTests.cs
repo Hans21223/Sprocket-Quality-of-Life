@@ -177,6 +177,47 @@ static class CutTests
         }
     }
 
+    /// Create Hole as the game runs it, with every size the Hole size slider allows (the ring pushed out to the face's
+    /// edge) and every segment count, on several face shapes and hole positions, with each fill: every face a real
+    /// triangle or quad facing the face's way, none squashed, together covering exactly the face minus the hole.
+    static void CheckBigHoles()
+    {
+        var shapes = new (string Name, Vector3[] Corners)[]
+        {
+            ("square", new Vector3[] { new(0, 0, 0), new(1, 0, 0), new(1, 1, 0), new(0, 1, 0) }),
+            ("long plate", new Vector3[] { new(0, 0, 0), new(4, 0, 0), new(4, 1, 0), new(0, 1, 0) }),
+            ("triangle", new Vector3[] { new(0, 0, 0), new(1, 0, 0), new(0.3f, 0.9f, 0) }),
+            ("pentagon", Enumerable.Range(0, 5).Select(i => new Vector3(MathF.Cos(i * 2 * MathF.PI / 5), MathF.Sin(i * 2 * MathF.PI / 5), 0)).ToArray()),
+        };
+        int holes = 0;
+        foreach (var (name, outer) in shapes)
+        foreach (float at in new[] { 0f, 0.6f })
+        foreach (int m in new[] { 4, 6, 8, 16, 32, 64, 96 })
+        foreach (float size in new[] { 0.1f, 1f, 1.5f, 3f })
+        foreach (var mode in new[] { Fill.Mode.Fewest, Fill.Mode.Light, Fill.Mode.Smooth })
+        {
+            var mid = outer.Aggregate(Vector3.Zero, (a, p) => a + p) / outer.Length;
+            var centre = Vector3.Lerp(mid, outer[0], at); // in the middle, or off towards a corner
+            var game = Enumerable.Range(0, m).Select(k => centre + 0.3f * new Vector3(MathF.Cos(k * 2 * MathF.PI / m), MathF.Sin(k * 2 * MathF.PI / m), 0)).ToArray();
+            var ring = HoleRing.Fit(outer, game, centre, out _, size);
+            var pos = outer.Concat(ring).ToList();
+            var normal = HoleRing.Normal(outer);
+            var faces = Fill.Region(pos, Enumerable.Range(0, outer.Length).ToList(), new List<List<int>> { Enumerable.Range(outer.Length, m).ToList() }, normal,
+                                    mode == Fill.Mode.Fewest ? null : new List<Fill.Added>(), mode == Fill.Mode.Light);
+            string what = $"hole in a {name} ({(at == 0 ? "middle" : "off-centre")}, {m} segments, size {size:P0}, {Fill.ModeNames[(int)mode]})";
+            Check(faces.Count > 0, what + ": filled");
+            double A(IList<int> f) => Vector3.Dot(HoleRing.Normal(f.Select(i => pos[i]).ToList()), Vector3.Normalize(normal)) / 2;
+            double want = A(Enumerable.Range(0, outer.Length).ToList()) - Math.Abs(A(Enumerable.Range(outer.Length, m).ToList()));
+            Check(faces.All(f => f.Length is 3 or 4 && f.Distinct().Count() == f.Length), what + ": real triangles and quads");
+            Check(faces.Min(f => A(f)) > 1e-9 * want, $"{what}: no face squashed or turned over");
+            Check(Math.Abs(faces.Sum(f => A(f)) - want) < 1e-4 * want, $"{what}: covers exactly the plate minus the hole");
+            var edges = new HashSet<(int, int)>();
+            foreach (var f in faces) for (int k = 0; k < f.Length; k++) Check(edges.Add((f[k], f[(k + 1) % f.Length])), what + ": no edge used twice the same way");
+            holes++;
+        }
+        Console.WriteLine($"  big holes: {holes} filled, all sizes, shapes and fills sound");
+    }
+
     /// Replays a real pocket cut from the test copy's backups (skipped if it isn't there): the add-on's cap was a fan
     /// of triangles to a centre point, and the pocket floor must not keep that fan.
     /// A design the mod backed up before an edit (BepInEx\SprocketQoLBackups\{name}\original.blueprint), found under the
@@ -817,6 +858,59 @@ static class CutTests
             Check(MeshData(json, added)["rivets"]!["nodes"]!.AsArray().Count == 1 && MeshData(json, 4)["rivets"]!["nodes"]!.AsArray().Count == 0, "separate: the rivet goes with its face");
 
         }
+        {
+            // Picked pieces: part 8's shape (and pair 2/3's shared one) given extra loose copies; a face picked on a piece
+            // takes the whole piece into its own add-on.
+            var b = Conversion.Parse(design);
+            void AddPieces(int meshId, params Vector3[] shifts)
+            {
+                var mesh = b["meshes"]!.AsArray().First(m => m!["vuid"]!.GetValue<int>() == meshId)!["meshData"]!["mesh"]!.AsObject();
+                var vs = MeshVerts(mesh);
+                var faceNodes = mesh["faces"]!.AsArray().Select(f => f!.AsObject()).ToList();
+                var ends = mesh["edges"]!.AsArray().Select(x => x!.GetValue<int>()).ToList();
+                foreach (var shift in shifts)
+                {
+                    int baseV = mesh["vertices"]!.AsArray().Count / 3;
+                    foreach (var p in vs) foreach (float c in new[] { p.X + shift.X, p.Y + shift.Y, p.Z + shift.Z }) mesh["vertices"]!.AsArray().Add((JsonNode?)c);
+                    foreach (int e in ends) mesh["edges"]!.AsArray().Add((JsonNode?)(e + baseV));
+                    foreach (int e in ends.Where((_, i) => i % 2 == 0)) mesh["edgeFlags"]!.AsArray().Add((JsonNode?)0);
+                    foreach (var f in faceNodes)
+                    {
+                        var copy = JsonNode.Parse(f.ToJsonString())!.AsObject();
+                        copy["v"] = new JsonArray(f["v"]!.AsArray().Select(x => (JsonNode?)(x!.GetValue<int>() + baseV)).ToArray());
+                        copy["te"] = 0; // as the game writes a face with no thicken edges picked
+                        mesh["faces"]!.AsArray().Add(copy);
+                    }
+                }
+            }
+            AddPieces(113, new Vector3(0, 0, 0.6f), new Vector3(0, 0, -0.6f));
+            AddPieces(111, new Vector3(0, 0.5f, 0));
+            string pieced = b.ToJsonString();
+            List<Vector3[]> FaceOf(int v, Vector3 near)
+            {
+                var md = MeshData(pieced, v)["mesh"]!.AsObject();
+                var vs = MeshVerts(md);
+                return new() { MeshFaces(md).Select(f => f.Select(i => vs[i]).ToArray()).MinBy(c => Vector3.Distance(c.Aggregate(Vector3.Zero, (a, p) => a + p) / c.Length, near))! };
+            }
+            int Faces(string json, int v) => MeshFaces(MeshData(json, v)["mesh"]!.AsObject()).Count;
+            int each = Faces(design, 8);
+            var (one, g1, log1) = AddonEdits.SeparatePieces(pieced, 8, FaceOf(8, new Vector3(0.15f, 0.1f, 0.6f)));
+            checkRefs(Conversion.Parse(one), "separate a piece");
+            Check(g1.Count == 1 && Faces(one, 8) == 2 * each && Faces(one, g1[0][0].Added) == each, $"separate pieces: one click takes that whole piece only ({log1})");
+            Check(SamePoints(Distinct(WorldPoints(pieced)), Distinct(WorldPoints(one))) && Math.Abs(Armour(one) - Armour(pieced)) < 1e-6, "separate pieces: everything shows where it did, armour kept");
+            var two = FaceOf(8, new Vector3(0.15f, 0.1f, 0.6f)).Concat(FaceOf(8, new Vector3(0.15f, 0.1f, -0.6f))).ToList();
+            var (both, g2, _) = AddonEdits.SeparatePieces(pieced, 8, two);
+            Check(g2.Count == 2 && Faces(both, 8) == each && g2.All(g => Faces(both, g[0].Added) == each), "separate pieces: two picked, two add-ons");
+            var (allPicked, g3, _) = AddonEdits.SeparatePieces(pieced, 8, two.Concat(FaceOf(8, new Vector3(0.15f, 0.1f, 0))).ToList());
+            Check(g3.Count == 2 && Faces(allPicked, 8) == each, "separate pieces: every piece picked, the biggest stays");
+            var (pair, g4, _) = AddonEdits.SeparatePieces(pieced, 2, FaceOf(2, new Vector3(0.15f, 0.6f, 0)));
+            var pairObjects = Conversion.Objects(Conversion.Parse(pair));
+            Check(g4.Count == 1 && g4[0].Count == 2 && pairObjects[g4[0][0].Added]["transform"]!["mirrorVuid"]!.GetValue<int>() == g4[0][1].Added,
+                  "separate pieces: a mirrored part's twin gets the twin add-on");
+            bool onePiece = false;
+            try { AddonEdits.SeparatePieces(design, 12, UpFaces(12)); } catch (Exception ex) { onePiece = ex.Message.Contains("one piece"); }
+            Check(onePiece, "separate pieces: a shape in one piece says so");
+        }
         bool refused = false;
         try { AddonEdits.Separate(design, 8, UpFaces(8, all: true)); } catch (Exception ex) { refused = ex.Message.Contains("leave at least one"); }
         Check(refused, "separate: every face selected is refused");
@@ -900,9 +994,29 @@ static class CutTests
         Console.WriteLine($"  check survey on real shapes: {stopped} of {plans} tool plans stopped" + (why.Count > 0 ? ": " + string.Join("; ", why.Select(kv => $"{kv.Value}x {kv.Key}")) : ""));
     }
 
+    /// A real "separate picked pieces" (part 3092, 18 loose pieces, two picked) that the game refused to load: corners
+    /// with no thicken edge were written as a negative number. Replayed with a face of two of its pieces.
+    static void CheckRealPieces(Action<JsonObject, string> checkRefs)
+    {
+        if (Backup("20260926-135837-0f046d78") is not { } backup) { Console.WriteLine("  (real pieces replay skipped: set SPROCKET_QOL_BACKUPS)"); return; }
+        string json = File.ReadAllText(backup.FullName);
+        var b = Conversion.Parse(json);
+        var md = AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), Conversion.Objects(b)[3092]["structureBlueprintVuid"]!.GetValue<int>())["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!;
+        var vs = MeshVerts(md["mesh"]!.AsObject());
+        var faces = MeshFaces(md["mesh"]!.AsObject());
+        var pieces = AddonEdits.LooseParts(vs, faces);
+        var picked = pieces.Where(p => p.Count == 44).Take(2).Select(p => faces[p[0]].Select(i => vs[i]).ToArray()).ToList();
+        var (result, groups, log) = AddonEdits.SeparatePieces(json, 3092, picked);
+        checkRefs(Conversion.Parse(result), "real pieces replay");
+        Check(groups.Count == 2, $"real pieces replay: two pieces out ({log})");
+        Console.WriteLine($"  real pieces replay: {log}");
+    }
+
     public static void Run(string factions, Action<JsonObject, string> checkRefs)
     {
+        CheckRealPieces(checkRefs);
         SurveyChecks(factions);
+        CheckBigHoles();
         CheckRealSkirt(checkRefs);
         CheckSeparate(checkRefs);
         CheckMeshTools();
@@ -963,7 +1077,7 @@ static class CutTests
         }
 
         // Real add-ons cutting the shape they sit on, from the saved tanks: holes and pockets.
-        int cuts = 0, pockets = 0, notCutting = 0, openCutters = 0; long slowest = 0;
+        int cuts = 0, pockets = 0, notCutting = 0, openCutters = 0; long slowest = 0; string slowestWhat = "";
         foreach (var file in Directory.GetFiles(factions, "*.blueprint", SearchOption.AllDirectories).OrderBy(f => new FileInfo(f).Length))
         {
             if (cuts >= 30) break;
@@ -985,7 +1099,7 @@ static class CutTests
                 }
                 AddonEdits.EditPlan plan;
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                try { plan = AddonEdits.PlanCut(json, addon, Array.Empty<int>(), true, pocket); slowest = Math.Max(slowest, watch.ElapsedMilliseconds); }
+                try { plan = AddonEdits.PlanCut(json, addon, Array.Empty<int>(), true, pocket); if (watch.ElapsedMilliseconds > slowest) { slowest = watch.ElapsedMilliseconds; slowestWhat = $"{Path.GetFileName(file)} add-on {addon} ({(pocket ? "pocket" : "hole")})"; } }
                 catch (Exception ex) when (ex.Message.Contains("doesn't overlap") || ex.Message.Contains("isn't sitting")) { notCutting++; continue; }
                 catch (Exception ex) when (ex.Message.Contains("isn't a closed shape")) { openCutters++; continue; }
                 var after = Conversion.Parse(plan.DesignJson);
@@ -1005,6 +1119,6 @@ static class CutTests
             }
         }
         Check(cuts > 0 && pockets > 0, "found real add-ons that cut their structure");
-        Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {notCutting} add-ons not touching anything, {openCutters} open add-ons refused), slowest cut {slowest} ms");
+        Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {notCutting} add-ons not touching anything, {openCutters} open add-ons refused), slowest cut {slowest} ms: {slowestWhat}");
     }
 }

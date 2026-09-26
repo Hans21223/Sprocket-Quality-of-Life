@@ -398,18 +398,7 @@ public static class AddonEdits
         var pos = Enumerable.Range(0, raw.Length / 3).Select(i => new Vector3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2])).ToList();
         var faces = mesh["faces"]!.AsArray().Select(f => f!["v"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray()).ToList();
 
-        // The editor's faces found in the saved shape by their corners (to 0.1 mm), looked up in 1 cm slices along x.
-        Vector3 Middle(IEnumerable<Vector3> ps) => ps.Aggregate(Vector3.Zero, (s, p) => s + p) / ps.Count();
-        var slices = Enumerable.Range(0, faces.Count).ToLookup(f => (int)MathF.Floor(Middle(faces[f].Select(i => pos[i])).X * 100));
-        var moved = new HashSet<int>();
-        int missing = 0;
-        foreach (var corners in selected)
-        {
-            int slice = (int)MathF.Floor(Middle(corners).X * 100), before = moved.Count;
-            foreach (int f in Enumerable.Range(slice - 1, 3).SelectMany(s => slices[s]))
-                if (faces[f].Length == corners.Length && corners.All(p => faces[f].Any(i => Vector3.DistanceSquared(p, pos[i]) < 1e-8f))) moved.Add(f);
-            if (moved.Count == before) missing++;
-        }
+        var moved = Matching(pos, faces, selected, out int missing);
         if (moved.Count == 0) throw new Exception("The selected faces weren't found in the saved shape; click the part again and retry.");
         if (moved.Count == faces.Count) throw new Exception("Every face is selected: leave at least one on the part (to copy the whole part, use Alt).");
 
@@ -476,6 +465,70 @@ public static class AddonEdits
                                                     + (missing > 0 ? $" ({missing} selected faces not found)" : ""));
     }
 
+    /// The saved shape's faces matching the editor's (each by its corners, to 0.1 mm), looked up in 1 cm slices along x;
+    /// `missing` counts editor faces with no match.
+    static HashSet<int> Matching(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IReadOnlyList<Vector3[]> selected, out int missing)
+    {
+        Vector3 Middle(IEnumerable<Vector3> ps) => ps.Aggregate(Vector3.Zero, (s, p) => s + p) / ps.Count();
+        var slices = Enumerable.Range(0, faces.Count).ToLookup(f => (int)MathF.Floor(Middle(faces[f].Select(i => pos[i])).X * 100));
+        var found = new HashSet<int>();
+        missing = 0;
+        foreach (var corners in selected)
+        {
+            int slice = (int)MathF.Floor(Middle(corners).X * 100), before = found.Count;
+            foreach (int f in Enumerable.Range(slice - 1, 3).SelectMany(s => slices[s]))
+                if (faces[f].Length == corners.Length && corners.All(p => faces[f].Any(i => Vector3.DistanceSquared(p, pos[i]) < 1e-8f))) found.Add(f);
+            if (found.Count == before) missing++;
+        }
+        return found;
+    }
+
+    /// Separate picked pieces: each piece of `part`'s shape that nothing joins to the rest (no point in common, points at
+    /// the same place counting as one) with a face in `picked` becomes its own add-on in the same place, so one click on
+    /// any face of a piece takes the whole piece. With every piece picked, the biggest stays on the part. One group of
+    /// (part, new add-on) per piece: two with a mirror twin.
+    public static (string Json, List<List<(int Source, int Added)>> Groups, string Log) SeparatePieces(string json, int part, IReadOnlyList<Vector3[]> picked)
+    {
+        var b = Conversion.Parse(json);
+        var objects = Conversion.Objects(b);
+        if (!objects.TryGetValue(part, out var source) || source["structureBlueprintVuid"] == null) throw new Exception("That part has no hand-made shape; refresh your selection.");
+        var mesh = MeshOf(b["meshes"]!.AsArray(), Conversion.Id(Block(b["blueprints"]!.AsArray(), Conversion.Id(source, "structureBlueprintVuid"))["blueprint"]!, "bodyMeshVuid"))?["mesh"]
+                   ?? throw new Exception("Only hand-made (freeform) shapes can be separated.");
+        var raw = mesh["vertices"]!.AsArray().Select(x => MeshCut.F(x)).ToArray();
+        var pos = Enumerable.Range(0, raw.Length / 3).Select(i => new Vector3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2])).ToList();
+        var faces = mesh["faces"]!.AsArray().Select(f => f!["v"]!.AsArray().Select(x => x!.GetValue<int>()).ToArray()).ToList();
+        var pieces = LooseParts(pos, faces);
+        if (pieces.Count < 2) throw new Exception("This shape is all one piece: nothing loose to separate (to split it, select its faces and use Separate selected).");
+        var hit = Matching(pos, faces, picked, out _);
+        var chosen = pieces.Where(p => p.Any(hit.Contains)).ToList();
+        if (chosen.Count == 0) throw new Exception("Click a face on each piece to separate first.");
+        if (chosen.Count == pieces.Count) chosen.Remove(chosen.MaxBy(p => p.Count)!); // every piece picked: the biggest stays
+        var groups = new List<List<(int Source, int Added)>>();
+        foreach (var piece in chosen)
+        {
+            var (next, parts, _) = Separate(json, part, piece.Select(f => faces[f].Select(i => pos[i]).ToArray()).ToList());
+            json = next;
+            groups.Add(parts);
+        }
+        return (json, groups, $"part {part}: {pieces.Count} loose pieces ({string.Join(", ", pieces.Select(p => p.Count))} faces), {chosen.Count} picked, " +
+                              $"new add-ons {string.Join(", ", groups.Select(g => string.Join(" and ", g.Select(p => p.Added))))}");
+    }
+
+    /// The faces of a shape in pieces: faces sharing a point (or points at the same place, to 0.01 mm) are one piece.
+    internal static List<List<int>> LooseParts(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces)
+    {
+        var parent = Enumerable.Range(0, faces.Count).ToArray();
+        int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
+        var first = new Dictionary<(long, long, long), int>(); // a place -> the first face with a corner there
+        for (int f = 0; f < faces.Count; f++)
+            foreach (int v in faces[f])
+            {
+                var key = ((long)MathF.Round(pos[v].X * 1e5f), (long)MathF.Round(pos[v].Y * 1e5f), (long)MathF.Round(pos[v].Z * 1e5f));
+                if (first.TryGetValue(key, out int g)) parent[Find(f)] = Find(g); else first[key] = f;
+            }
+        return Enumerable.Range(0, faces.Count).GroupBy(Find).Select(g => g.ToList()).ToList();
+    }
+
     /// A copy of `meshData` with only the faces `keep` picks, and the points, lines, thickening and rivets they use (loose
     /// points and lines too, with `loose`). A corner thickening along a line that isn't kept goes back to Auto.
     static JsonObject Subset(JsonObject meshData, Func<int, bool> keep, bool loose)
@@ -527,7 +580,7 @@ public static class AddonEdits
                     te = te & ~(0xFFFFUL << (16 * k)) | to << (16 * k);
                     if (to == 0xFFFF && ((tm >> (8 * k)) & 0xFF) == 4) tm = tm & ~(0xFFUL << (8 * k)) | 1UL << (8 * k); // Manual -> Auto
                 }
-                node["te"] = (long)te;
+                node["te"] = MeshCut.Te(te);
                 if (node["tm"] != null) node["tm"] = (int)tm;
             }
             faceMap[f] = outFaces.Count;
@@ -690,7 +743,7 @@ public static class AddonEdits
                     if (r != 0xFFFF) r = r + (ulong)baseE < 0xFFFF ? r + (ulong)baseE : 0xFFFF;
                     outTe |= r << (16 * k);
                 }
-                copy["te"] = (long)outTe;
+                copy["te"] = MeshCut.Te(outTe);
             }
             if (mirrored) { v.Reverse(); t.Reverse(); }
             copy["v"] = new JsonArray(v.Select(x => (JsonNode?)x).ToArray());
