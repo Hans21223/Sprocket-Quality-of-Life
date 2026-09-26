@@ -27,7 +27,9 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   faces, V bevel selected edges into chamfer strips, U select linked flat faces, O proportional editing (moving
   points pulls their neighbours, radius in the panel). Also a 0.5 mm snap grid, and Numpad 5 for an
   orthographic view (spawn pad and ground hidden; Ortho backdrop: plain grey / white / black, no sky or map, or scene; Numpad + / - zoom it; it never cuts into the vehicle; it snaps to front / side / top,
-  Numpad 1 / 3 / 7, Ctrl for back / other side / from below, Numpad 9 the opposite view).
+  Numpad 1 / 3 / 7, Ctrl for back / other side / from below, Numpad 9 the opposite view). In a straight view it
+  shows the vehicle's width and height as dimension lines, to the centimetre (Ortho: measurements; antennas not
+  counted). The game's fog is off in orthographic view and the move / turn / scale arrows keep a normal size.
 - Exploded view: F2 pulls the parts apart to see inside, tracks and wheels staying on the ground (F3 / F4 closer /
   further), F2 again puts them back.
   Only what's drawn moves; saving is never affected.
@@ -38,6 +40,9 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   brightness is in Mesh tools.
 - F8 in photo mode takes a photo at the best graphics settings without leaving photo mode (settings and
   overlay come back after). Saved in Documents\My Games\Sprocket\Photos.
+- F9 drawing sheet: a technical drawing of the vehicle from above, the front, the side and the back, all at one
+  scale, with its length, width and height and a 1 m ruler (antennas left out). Saved twice in
+  Documents\My Games\Sprocket\Photos: lines only (black on white), and in colour with the lines over it.
 - Own paint: a structure's panel can give the part (and the selected parts) its own paint job ("Own paint 1"
   to "Own paint 9"), with its colours, camo and wear right in the panel. Saved with the design; Ctrl+Z
   undoes each change.

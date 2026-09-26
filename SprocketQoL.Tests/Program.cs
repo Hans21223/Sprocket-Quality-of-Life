@@ -241,4 +241,5 @@ CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.1f,
 Console.WriteLine($"HOLE_TESTS_OK: {checks} checks total");
 
 // ---------------- Boolean cut (CutTests.cs) ----------------
+DrawingTests.Run();
 CutTests.Run(Path.GetDirectoryName(root)!.Replace(@"\PMC\Blueprints", ""), CheckRefs);

@@ -379,6 +379,7 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Hotkeys", Hotkeys.Keys);
         }
         Ui.Guard("Photo", PhotoShot.Update);
+        if (ready) Ui.Guard("Drawing sheet", DrawingSheet.Update);
         // Design edits: a failure ends the edit (so the editor isn't left busy) and says why.
         try
         {
@@ -643,7 +644,7 @@ public sealed class DesignEditor : MonoBehaviour
 
     static T Keep<T>(T value) where T : class { alive.Add(value); return value; }
 
-    static IEnumerable<T> Each<T>(Il2CppSystem.Collections.Generic.IReadOnlyList<T> list)
+    internal static IEnumerable<T> Each<T>(Il2CppSystem.Collections.Generic.IReadOnlyList<T> list)
     {
         int count = list.Cast<Il2CppSystem.Collections.Generic.IReadOnlyCollection<T>>().Count;
         for (int i = 0; i < count; i++) yield return list[i];
@@ -663,6 +664,7 @@ public sealed class DesignEditor : MonoBehaviour
     {
         if (PhotoShot.Capturing) return; // nothing of ours in the photo
         Ui.Guard("Hotkeys", Hotkeys.DrawBox);
+        Ui.Guard("Measurements", MeshTools.DrawMeasures);
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;
         float width = Math.Min(620, Screen.width - 40);
         GUI.Box(new Rect((Screen.width - width) / 2, 80, width, 30), status); // below the game's vehicle name bar
