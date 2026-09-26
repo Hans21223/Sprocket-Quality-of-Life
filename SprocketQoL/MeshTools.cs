@@ -621,11 +621,41 @@ public static class MeshTools
         foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
             foreach (var r in part.GetComponentsInChildren<Renderer>())
             {
+                if (!Drawn(r)) continue;
                 var b = r.bounds;
                 all = Grow(all, b);
                 if (!aerials.Contains(r.Pointer)) body = Grow(body, b);
             }
         return vehicleBox = (all, body);
+    }
+
+    /// Drawn: switched on, and not a shadow-only stand-in. The others have a size too but aren't seen, so they count in
+    /// no measurement.
+    internal static bool Drawn(Renderer r) => r.enabled && r.shadowCastingMode != UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+
+    /// Once per orthographic view: which renderer sets each side of the measured box, and anything drawn close by that
+    /// isn't part of the vehicle (so a measurement that doesn't fit what's on screen can be told apart).
+    static void LogMeasuredBox(Bounds box)
+    {
+        var aerials = AntennaRenderers();
+        var own = new HashSet<IntPtr>();
+        var counted = new List<Renderer>();
+        foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
+            foreach (var r in part.GetComponentsInChildren<Renderer>(true))
+                if (own.Add(r.Pointer) && Drawn(r) && r.gameObject.activeInHierarchy && !aerials.Contains(r.Pointer)) counted.Add(r);
+        string Say(Renderer r) => $"{(r.transform.parent != null ? r.transform.parent.name + "/" : "")}{r.name} {r.bounds.min:F2}..{r.bounds.max:F2}";
+        var sides = new (string Side, Func<Renderer, float> By, bool Low)[]
+        {
+            ("left", r => r.bounds.min.x, true), ("right", r => r.bounds.max.x, false), ("bottom", r => r.bounds.min.y, true),
+            ("top", r => r.bounds.max.y, false), ("back", r => r.bounds.min.z, true), ("front", r => r.bounds.max.z, false),
+        };
+        var near = new Bounds(box.center, box.size + Vector3.one);
+        var others = new List<string>();
+        foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>()))
+            if (o.TryCast<Renderer>() is { } r && !own.Contains(r.Pointer) && Drawn(r) && near.Intersects(r.bounds) && others.Count < 12) others.Add(Say(r));
+        Plugin.ModLog.LogInfo($"Measurements: box {box.min:F2}..{box.max:F2} from {counted.Count} renderers ({own.Count - counted.Count} of the vehicle's not counted: off, shadow only or antennas); " +
+                              string.Join("; ", sides.Select(s => $"{s.Side} {Say(s.Low ? counted.OrderBy(s.By).First() : counted.OrderByDescending(s.By).First())}")) +
+                              $". Drawn nearby, not the vehicle's: {(others.Count > 0 ? string.Join("; ", others) : "nothing")}");
     }
 
     static Bounds Grow(Bounds? box, Bounds b)
@@ -723,6 +753,7 @@ public static class MeshTools
     {
         ortho = !ortho;
         arrowDraws = 0;
+        measuresLogged = false;
         if (!ortho) { held = null; PutCameraBack(); }
         Plugin.ModLog.LogInfo($"Orthographic view {(ortho ? "on" : "off")}");
     }
@@ -769,7 +800,8 @@ public static class MeshTools
             foreach (var r in part.GetComponentsInChildren<Renderer>())
             {
                 own.Add(r.Pointer);
-                if (vehicle is { } v) { v.Encapsulate(r.bounds); vehicle = v; } else vehicle = r.bounds;
+                // Only what's seen sets the vehicle's bottom: an unseen renderer lower down left the pad's blocks showing.
+                if (Drawn(r)) vehicle = Grow(vehicle, r.bounds);
             }
         if (vehicle is not { } box) return;
         // Anything not of the vehicle, under its footprint and low: lying under it (the ground, the pad's deck) or standing
@@ -991,7 +1023,7 @@ public static class MeshTools
 
     // ---------- measurements (orthographic view) ----------
 
-    static bool orthoMeasure = true;
+    static bool orthoMeasure = true, measuresLogged;
     static GUIStyle? inkStyle, measureStyle;
     static readonly Color Ink = new(1f, 0.8f, 0.15f), Shade = new(0, 0, 0, 0.7f);
     const float MeasureGap = 40; // pixels from the vehicle to its dimension lines
@@ -1003,6 +1035,7 @@ public static class MeshTools
         if (!ortho || !orthoMeasure || !(orthoLock || held != null)) return;
         var cam = Camera.main;
         if (cam == null || !cam.orthographic || BodyBounds() is not { } box) return;
+        if (!measuresLogged) { measuresLogged = true; LogMeasuredBox(box); }
         float left = float.MaxValue, right = float.MinValue, top = float.MaxValue, bottom = float.MinValue;
         for (int i = 0; i < 8; i++)
         {
