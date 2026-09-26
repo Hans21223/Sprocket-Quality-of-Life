@@ -41,6 +41,7 @@ public static class Hotkeys
     static int checkedFrame = -1;
     static bool visible;
 
+    static (InputAction? Action, ConstraintMode Mode)[]? axisKeys;
     static IntPtr planeFor;          // the move or scale that Shift + axis locked to two axes
     static ConstraintMode planeMode;
 
@@ -49,10 +50,13 @@ public static class Hotkeys
     {
         controls ??= Find();
         if (controls == null || __instance.input?.TryCast<WindingInput>() != null) return; // rotating: two axes mean nothing
+        // The game's three axis keys, looked up once (this runs every frame of a move).
+        axisKeys ??= new[] { ("Core/LateralConstraint", Constraints.Axis12), ("Core/VerticalConstraint", Constraints.Axis20), ("Core/LongitudinalConstraint", Constraints.Axis01) }
+            .Select(k => ((InputAction?)controls.FindAction(k.Item1, false), k.Item2)).ToArray();
         bool shift = Keyboard.current?.shiftKey.isPressed == true;
         // Shift + an axis key: every axis but that one. The key alone: the game's own one-axis lock again.
-        foreach (var (key, mode) in new[] { ("Core/LateralConstraint", Constraints.Axis12), ("Core/VerticalConstraint", Constraints.Axis20), ("Core/LongitudinalConstraint", Constraints.Axis01) })
-            if (controls.FindAction(key, false)?.WasPressedThisFrame() == true)
+        foreach (var (action, mode) in axisKeys)
+            if (action?.WasPressedThisFrame() == true)
             {
                 planeFor = shift ? __instance.Pointer : IntPtr.Zero;
                 planeMode = mode;

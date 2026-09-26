@@ -78,9 +78,25 @@ public static class PartPaint
     static void Place(VehicleMaterialPainter painter, VehicleMaterial? item) => Ui.Guard("Own paint", () =>
     {
         Seen(painter);
-        if (item?.associatedTransform?.VehicleObject is not { } part) return;
-        if (item.PaintSlot == VehicleMaterialSlot.Exterior && Owners(painter).TryGetValue((int)part.VUID, out int slot)) item.PaintSlot = (VehicleMaterialSlot)slot;
+        if (item == null || item.PaintSlot != VehicleMaterialSlot.Exterior || item.associatedTransform?.VehicleObject is not { } part) return;
+        if (OwnersNow(painter).TryGetValue((int)part.VUID, out int slot)) item.PaintSlot = (VehicleMaterialSlot)slot;
     });
+
+    // The game paints every material in turn (thousands on loading): the part lists are read once a frame, not each time.
+    static IntPtr ownersFor;
+    static int ownersFrame = -1;
+    static Dictionary<int, int> ownersNow = new();
+
+    static Dictionary<int, int> OwnersNow(VehicleMaterialPainter p)
+    {
+        if (p.Pointer != ownersFor || UnityEngine.Time.frameCount != ownersFrame)
+        {
+            ownersNow = Owners(p);
+            ownersFor = p.Pointer;
+            ownersFrame = UnityEngine.Time.frameCount;
+        }
+        return ownersNow;
+    }
 
     static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "Sprocket", "Paint");
 
@@ -228,6 +244,7 @@ public static class PartPaint
         for (int s = First; s < Math.Min(jobs.PaintJobCount, Last + 1); s++)
             if (jobs.GetPaintJob(s) is { } j && (j.Description ?? "").StartsWith(Tag))
                 j.Description = Tag + " " + string.Join(" ", owners.Where(o => o.Value == s).Select(o => o.Key).OrderBy(v => v));
+        ownersFrame = -1; // the lists changed: read them again
         // The parts' outside materials to their slots.
         int moved = 0;
         foreach (var part in DesignEditor.Instance!.AllParts().Where(o => slots.ContainsKey((int)o.VUID)))
@@ -290,6 +307,7 @@ public static class PartPaint
             var primary = jobs.GetPaintJob(0);
             job.Name = Name(slot);
             job.Description = Tag;
+            ownersFrame = -1;
             job.ColourMapUri = primary.ColourMapUri;
             job.Scale = primary.Scale; job.Roughness = primary.Roughness; job.Metallic = primary.Metallic;
             job.TintR = primary.TintR; job.TintG = primary.TintG; job.TintB = primary.TintB;

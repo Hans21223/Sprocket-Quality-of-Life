@@ -15,6 +15,8 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 - Separate (Blender's P): select faces (or the points around them) in edit mode, press Separate selected into a new
   add-on. They become a new add-on in the same place, with their armour and rivets; mirrored parts give their twin one
   too. From an add-on it happens in place and Ctrl+Z undoes it; from a hull or turret the design reloads (Restore).
+  Separate picked pieces: for a shape already in pieces that don't touch, click one face on each piece to split off
+  and each whole piece becomes its own add-on.
 - Hole quality: segments and size for the Create Hole tool. Holes come out round and face the right way; the fill
   around them uses the fewest points by default (light or smooth rings, or the game's own fan, to choose from).
 - Turret to Add-on: turns a turret into a fixed add-on. Guns, crew and attached parts stay where they are.

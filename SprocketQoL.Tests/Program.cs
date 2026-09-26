@@ -71,6 +71,11 @@ void CheckRefs(JsonObject bp, string what)
     var blockIds = bp["blueprints"]!.AsArray().Select(x => x!["id"]!.GetValue<int>()).ToList();
     Check(blockIds.Count == blockIds.Distinct().Count(), $"{what}: block ids unique");
     var meshIds = bp["meshes"]!.AsArray().Select(x => x!["vuid"]!.GetValue<int>()).ToHashSet();
+    // The game reads a face's thicken edges as an unsigned 64-bit number and has never written one past the signed
+    // range: anything negative (or that big) and it can't load the design at all.
+    foreach (var m in bp["meshes"]!.AsArray())
+        foreach (var f in m?["meshData"]?["mesh"]?["faces"]?.AsArray() ?? new JsonArray())
+            Check(f!["te"] is not JsonValue te || (te.TryGetValue(out long v) && v >= 0), $"{what}: thicken edges stored as the game reads them (te {f["te"]})");
     foreach (var o in bp["objects"]!.AsArray())
         foreach (var kv in o!.AsObject().Where(kv => kv.Key.EndsWith("BlueprintVuid")))
             Check(blockIds.Contains(kv.Value!.GetValue<int>()), $"{what}: block reference resolves");
