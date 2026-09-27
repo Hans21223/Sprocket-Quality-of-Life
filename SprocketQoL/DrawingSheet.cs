@@ -116,6 +116,10 @@ internal static class DrawingSheet
         // share the vehicle's layer, and would stand behind it.
         readonly List<Renderer> hidden = new();
         readonly List<Terrain> hiddenGround = new();
+        readonly List<DecalProjector> projectors = new();
+        readonly List<DecalProjector> hiddenEnvironmentProjectors = new();
+        readonly List<DecalProjector> armourProjectors = new();
+        readonly List<(DecalProjector Projector, float Distance, float FadeScale)> restoredDecals = new();
         int ownLayer = -1; // the layer the vehicle is moved onto for the pictures (-1: none free, its own layers used)
         readonly Dictionary<IntPtr, (GameObject Object, int Layer)> movedLayers = new();
 
@@ -136,7 +140,9 @@ internal static class DrawingSheet
             Bounds? around = null;
             // Antennas left off: a whip metres tall would set the vehicle's height and leave the views empty.
             aerials = MeshTools.AntennaRenderers();
-            foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
+            var vehicleParts = (DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>()).ToList();
+            var vehiclePartPointers = vehicleParts.Select(p => p.Pointer).ToHashSet();
+            foreach (var part in vehicleParts)
                 foreach (var r in part.GetComponentsInChildren<Renderer>())
                 {
                     if (aerials.Contains(r.Pointer) || !MeshTools.Drawn(r)) continue;
@@ -147,6 +153,39 @@ internal static class DrawingSheet
             if (main == null || around is not { } b) { DesignEditor.Instance?.Say("Drawing sheet: no vehicle to draw", 4); return false; }
             box = b;
             var size = box.size;
+
+            // Vehicle decals: find all projectors on vehicle parts or components.
+            foreach (var part in vehicleParts)
+                foreach (var dp in part.GetComponentsInChildren<DecalProjector>(true))
+                    if (dp != null && dp.enabled && dp.gameObject.activeInHierarchy && !projectors.Any(p => p.Pointer == dp.Pointer))
+                        projectors.Add(dp);
+
+            foreach (var c in DesignEditor.Instance?.AllComponents() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleComponent>())
+                if (c?.TryCast<Sprocket.Vehicles.AttachedBehaviours.ProjectedDecal>() is { } pd && pd.projector is { } dp)
+                    if (dp != null && dp.enabled && dp.gameObject.activeInHierarchy && !projectors.Any(p => p.Pointer == dp.Pointer))
+                        projectors.Add(dp);
+
+            foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<DecalProjector>()))
+            {
+                if (o.TryCast<DecalProjector>() is { } dp)
+                {
+                    if (projectors.Any(p => p.Pointer == dp.Pointer)) continue;
+                    if (dp.GetComponentInParent<Sprocket.Vehicles.VehicleObject>() is { } vo && vehiclePartPointers.Contains(vo.Pointer))
+                    {
+                        if (dp.enabled && dp.gameObject.activeInHierarchy)
+                            projectors.Add(dp);
+                    }
+                    else if (dp.enabled)
+                    {
+                        dp.enabled = false;
+                        hiddenEnvironmentProjectors.Add(dp);
+                    }
+                }
+            }
+
+            foreach (var dp in projectors)
+                if (dp.gameObject != null) layers |= 1 << dp.gameObject.layer;
+
             // Left column: the top and side views, as long as the vehicle. Right: the front and back, as wide.
             scale = (SheetWidth - Gap - 4 * Pad) / Math.Max(0.1f, size.z + size.x);
             for (int i = 0; i < Views.Length; i++)
@@ -165,6 +204,8 @@ internal static class DrawingSheet
                     used.Add(r.gameObject.layer);
                     if (r.enabled && !vehicle.Contains(r.Pointer)) { r.enabled = false; hidden.Add(r); }
                 }
+            foreach (var dp in projectors)
+                if (dp.gameObject != null) used.Add(dp.gameObject.layer);
             foreach (var t in Terrain.activeTerrains)
                 if (t != null && t.enabled) { t.enabled = false; hiddenGround.Add(t); }
             // The vehicle on a layer of its own while the views are taken, and the camera sees only that: what the map
@@ -172,12 +213,41 @@ internal static class DrawingSheet
             for (int l = 31; l >= 8 && ownLayer < 0; l--)
                 if (!used.Contains(l) && string.IsNullOrEmpty(LayerMask.LayerToName(l))) ownLayer = l;
             if (ownLayer >= 0)
+            {
                 foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>()))
                     if (o.TryCast<Renderer>() is { } r && vehicle.Contains(r.Pointer) && !movedLayers.ContainsKey(r.gameObject.Pointer))
                     {
                         movedLayers[r.gameObject.Pointer] = (r.gameObject, r.gameObject.layer);
                         r.gameObject.layer = ownLayer;
                     }
+                foreach (var dp in projectors)
+                {
+                    if (dp.gameObject == null) continue;
+                    foreach (var t in dp.gameObject.GetComponentsInChildren<Transform>())
+                    {
+                        if (t?.gameObject != null && !movedLayers.ContainsKey(t.gameObject.Pointer))
+                        {
+                            movedLayers[t.gameObject.Pointer] = (t.gameObject, t.gameObject.layer);
+                            t.gameObject.layer = ownLayer;
+                        }
+                    }
+                }
+            }
+            float minDistance = 200f;
+            foreach (var dp in projectors)
+            {
+                if (dp != null)
+                {
+                    float origDist = dp.drawDistance;
+                    float origFade = dp.fadeScale;
+                    if (origDist < minDistance || origFade < 1f)
+                    {
+                        restoredDecals.Add((dp, origDist, origFade));
+                        if (origDist < minDistance) dp.drawDistance = minDistance;
+                        if (origFade < 1f) dp.fadeScale = 1f;
+                    }
+                }
+            }
             // The game's fog, off too: it stood in front of the backdrop (below hull height, and all of the view from
             // above) and hazed the paint.
             fogWas = MeshTools.FogOff;
@@ -203,13 +273,17 @@ internal static class DrawingSheet
                     overrides.mask[(uint)field] = true;
                     own.renderingPathCustomFrameSettings.SetEnabled(field, false);
                 }
+                overrides.mask[(uint)FrameSettingsField.Decals] = true;
+                own.renderingPathCustomFrameSettings.SetEnabled(FrameSettingsField.Decals, true);
+                overrides.mask[(uint)FrameSettingsField.DecalLayers] = true;
+                own.renderingPathCustomFrameSettings.SetEnabled(FrameSettingsField.DecalLayers, false);
                 own.renderingPathCustomFrameSettingsOverrideMask = overrides;
             }
             cam.orthographic = true;
             cam.cullingMask = ownLayer >= 0 ? 1 << ownLayer : layers;
             DesignEditor.Instance?.Say("Drawing sheet: taking the views...", 10);
             Plugin.ModLog.LogInfo($"QOL_DRAWING vehicle {size.x:0.00} x {size.y:0.00} x {size.z:0.00} m, {scale:0} px a metre, views " +
-                                  string.Join(", ", views.Select((v, i) => $"{Views[i].Name} {v.Width}x{v.Height}")) + $", {aerials.Count} antenna pieces left out, " +
+                                  string.Join(", ", views.Select((v, i) => $"{Views[i].Name} {v.Width}x{v.Height}")) + $", {aerials.Count} antenna pieces left out, {projectors.Count} decals, " +
                                   (ownLayer >= 0 ? $"{movedLayers.Count} objects on layer {ownLayer} for the pictures" : "no free layer: the vehicle's own layers"));
             return true;
         }
@@ -242,10 +316,11 @@ internal static class DrawingSheet
                 float radius = box.extents.magnitude;
                 var at = box.center - look * (radius + 10);
                 cam!.transform.SetPositionAndRotation(at, Quaternion.LookRotation(look, Views[i].Up));
+                cam.orthographic = true;
                 cam.orthographicSize = v.Height / 2f / scale;
                 cam.aspect = v.Width / (float)v.Height;
-                cam.nearClipPlane = Math.Max(0.01f, 10 - 0.1f);
-                cam.farClipPlane = 10 + 2 * radius + 0.1f;
+                cam.nearClipPlane = 0.1f;
+                cam.farClipPlane = 10 + 2 * radius + 10f;
                 if (target != null) { cam.targetTexture = null; target.Release(); UnityEngine.Object.Destroy(target); }
                 target = new RenderTexture(v.Width, v.Height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
                 cam.targetTexture = target;
@@ -261,12 +336,16 @@ internal static class DrawingSheet
             foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
                 foreach (var r in part.GetComponentsInChildren<Renderer>())
                     if (r.enabled && r.GetComponentInParent<Sprocket.Vehicles.VehicleObject>()?.GetComponent<PlateStructure>() != null) { r.enabled = false; armour.Add(r); }
+            foreach (var dp in projectors)
+                if (dp != null && dp.enabled) { dp.enabled = false; armourProjectors.Add(dp); }
         }
 
         internal void PutArmourBack()
         {
             foreach (var r in armour) if (r != null) r.enabled = true;
             armour.Clear();
+            foreach (var dp in armourProjectors) if (dp != null) dp.enabled = true;
+            armourProjectors.Clear();
         }
 
         internal bool Grab(int i, bool inside)
@@ -644,7 +723,12 @@ internal static class DrawingSheet
                 cam = null; target = null;
                 if (!fullbrightWas && MeshTools.FullbrightOn) MeshTools.ToggleFullbright();
                 foreach (var r in hidden) if (r != null) r.enabled = true;
+                foreach (var dp in hiddenEnvironmentProjectors) if (dp != null) dp.enabled = true;
+                hiddenEnvironmentProjectors.Clear();
                 PutArmourBack();
+                foreach (var (dp, dist, fade) in restoredDecals) if (dp != null) { dp.drawDistance = dist; dp.fadeScale = fade; }
+                restoredDecals.Clear();
+                projectors.Clear();
                 foreach (var t in hiddenGround) if (t != null) t.enabled = true;
                 foreach (var (obj, layer) in movedLayers.Values) if (obj != null) obj.layer = layer;
                 movedLayers.Clear();
