@@ -242,4 +242,5 @@ Console.WriteLine($"HOLE_TESTS_OK: {checks} checks total");
 
 // ---------------- Boolean cut (CutTests.cs) ----------------
 DrawingTests.Run();
+AccelerationTests.Run();
 CutTests.Run(Path.GetDirectoryName(root)!.Replace(@"\PMC\Blueprints", ""), CheckRefs);

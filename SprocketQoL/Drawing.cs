@@ -19,6 +19,7 @@ internal static class Drawing
         public int[] T = Array.Empty<int>();           // triangles, three corners each
         public Vector3[] N = Array.Empty<Vector3>();  // each triangle's normal
         public readonly List<(int A, int B, int F1, int F2, bool Crease)> E = new(); // F2 -1: an open edge
+        public bool Edges = true; // false: it only hides what's behind it (a crew figure: its outline is the picture's)
     }
 
     /// A mesh (world space) as a shape: corners within 0.1 mm made one, so faces that share an edge (even across a
@@ -133,6 +134,7 @@ internal static class Drawing
         int first = 0;
         foreach (var s in shapes)
         {
+            if (!s.Edges) { first += s.N.Length; continue; }
             var p = s.P.Select(v.Project).ToArray();
             foreach (var (a, b, f1, f2, crease) in s.E)
             {

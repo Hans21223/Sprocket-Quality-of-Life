@@ -380,16 +380,38 @@ internal static class DrawingSheet
                     var mesh = filter.sharedMesh;
                     if (r == null || aerials.Contains(r.Pointer) || !MeshTools.Drawn(r) || !r.gameObject.activeInHierarchy || mesh == null) continue;
                     if (!mesh.isReadable) { unreadable++; continue; }
-                    var world = filter.transform.localToWorldMatrix;
-                    var vertices = mesh.vertices;
-                    var triangles = mesh.triangles;
-                    var points = new N.Vector3[vertices.Length];
-                    for (int i = 0; i < points.Length; i++) points[i] = V(world.MultiplyPoint3x4(vertices[i]));
-                    var tris = new int[triangles.Length];
-                    for (int i = 0; i < tris.Length; i++) tris[i] = triangles[i];
-                    shapes.Add(Drawing.Weld(points, tris));
+                    shapes.Add(Shape(mesh, filter.transform.localToWorldMatrix));
+                }
+            // Crew figures (anything animated), as they stand now: they hide what's behind them and hold their place
+            // in the picture. Their outline is the picture's; the lines inside a figure would only clutter it.
+            foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
+                foreach (var skin in part.GetComponentsInChildren<SkinnedMeshRenderer>())
+                {
+                    if (!seen.Add(skin.Pointer) || aerials.Contains(skin.Pointer) || !MeshTools.Drawn(skin) || !skin.gameObject.activeInHierarchy) continue;
+                    var posed = new Mesh();
+                    try
+                    {
+                        skin.BakeMesh(posed, true); // with its scale; its place and turn below
+                        var shape = Shape(posed, Matrix4x4.TRS(skin.transform.position, skin.transform.rotation, Vector3.one));
+                        shape.Edges = false;
+                        shapes.Add(shape);
+                    }
+                    catch (Exception ex) { unreadable++; Plugin.ModLog.LogWarning($"QOL_DRAWING couldn't shape {skin.name}: {ex.Message}"); }
+                    finally { UnityEngine.Object.Destroy(posed); }
                 }
             return shapes;
+        }
+
+        /// A mesh (its own space) placed by `world`, as a shape.
+        static Drawing.Shape Shape(Mesh mesh, Matrix4x4 world)
+        {
+            var vertices = mesh.vertices;
+            var triangles = mesh.triangles;
+            var points = new N.Vector3[vertices.Length];
+            for (int i = 0; i < points.Length; i++) points[i] = V(world.MultiplyPoint3x4(vertices[i]));
+            var tris = new int[triangles.Length];
+            for (int i = 0; i < tris.Length; i++) tris[i] = triangles[i];
+            return Drawing.Weld(points, tris);
         }
 
         /// Everything as it was: the camera gone, the light and the floor back.
