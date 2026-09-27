@@ -41,7 +41,8 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 - F8 in photo mode takes a photo at the best graphics settings without leaving photo mode (settings and
   overlay come back after). Saved in Documents\My Games\Sprocket\Photos.
 - F9 drawing sheet: a technical drawing of the vehicle from above, the front, the side and the back, all at one
-  scale, with its length, width and height and a 1 m ruler (antennas left out). Saved twice in
+  scale, with its length, width and height and a 1 m ruler (antennas left out), and under it the vehicle's name,
+  its guns (name, caliber, L/xx) and its description. Saved twice in
   Documents\My Games\Sprocket\Photos: lines only (black on white), and in colour with the lines over it.
 - Own paint: a structure's panel can give the part (and the selected parts) its own paint job ("Own paint 1"
   to "Own paint 9"), with its colours, camo and wear right in the panel. Saved with the design; Ctrl+Z

@@ -414,7 +414,7 @@ public sealed class DesignEditor : MonoBehaviour
         }
     }
 
-    private string Snapshot()
+    internal string Snapshot()
     {
         if (core == null || !core.HasEditor || core.Target == null) throw new Exception("Open a vehicle in the editor first.");
         serializer ??= new VehicleBlueprintSerializer();

@@ -87,6 +87,18 @@ static class DrawingTests
         Check(Enumerable.Range(160, 80).Any(x => Inked(x, 70)), "the measure under the line");
         if (Environment.GetEnvironmentVariable("QOL_DRAWING_PREVIEW") is { Length: > 0 } preview) Drawing.SavePng(preview, tw, th, sheet);
 
+        // Free text as Windows draws it: inked letters, words wrapped to the width, any language; stamped only in its box.
+        var one = Drawing.Words("Tiger I  88 mm KwK 36", 40, true, 2000);
+        Check(one.W > 100 && one.H >= 40 && one.H < 80 && one.Ink.Max() > 200 && one.Ink.Count(a => a == 0) > one.Ink.Length / 2,
+              $"words: one line of inked letters ({one.W} x {one.H})");
+        var wrapped = Drawing.Words(string.Join(" ", Enumerable.Repeat("armour", 30)), 30, false, 300);
+        Check(wrapped.W <= 300 && wrapped.H > 4 * 30, $"words: long text wraps within the width ({wrapped.W} x {wrapped.H})");
+        Check(Drawing.Words("รถถังหนัก", 30, false, 1000).Ink.Max() > 200 && Drawing.Words("", 30, false, 100).W == 0, "words: Thai letters draw; empty text is nothing");
+        var page = Enumerable.Repeat((byte)255, 400 * 100 * 3).ToArray();
+        Drawing.Stamp(page, 400, 100, 10, 90, one, 0);
+        var dark = Enumerable.Range(0, 400 * 100).Where(p => page[p * 3] < 128).ToList();
+        Check(dark.Count > 50 && dark.All(p => p % 400 >= 10 && p / 400 <= 90 && p / 400 > 90 - one.H), "stamp: letters inked inside the text's box, from its top down");
+
         // A 3 x 2 picture written and read back.
         var rgb = Enumerable.Range(0, 3 * 2 * 3).Select(i => (byte)(i * 10)).ToArray();
         var file = Path.Combine(Path.GetTempPath(), "qol-drawing-test.png");
