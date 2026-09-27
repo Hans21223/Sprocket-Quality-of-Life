@@ -1,5 +1,8 @@
 using BepInEx.Unity.IL2CPP.Utils.Collections;
+using HarmonyLib;
 using Il2CppInterop.Runtime;
+using Sprocket.VehicleDesigner;
+using Sprocket.Vehicles.Colliders;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering.HighDefinition;
@@ -53,12 +56,15 @@ internal static class DrawingSheet
         Sheet? sheet = null;
         try
         {
+            // Nothing under the mouse while the views are taken; a few frames for the editor to let go of what was.
+            NoHover.On = true;
+            for (int f = 0; f < 3; f++) yield return null;
             sheet = Sheet.Begin();
             if (sheet == null) yield break;
             for (int i = 0; i < Views.Length; i++)
             {
                 if (!sheet.Aim(i)) yield break;
-                for (int f = 0; f < (i == 0 ? FirstSettle : Settle); f++) yield return null;
+                for (int f = 0; f < (i == 0 ? FirstSettle : Settle); f++) { sheet.Hold(); yield return null; }
                 if (!sheet.Grab(i)) yield break;
             }
             DesignEditor.Instance?.Say("Drawing sheet: drawing the lines...", 10);
@@ -68,8 +74,18 @@ internal static class DrawingSheet
         finally
         {
             sheet?.End();
+            NoHover.On = false;
             busy = false;
         }
+    }
+
+    /// The editor's hover highlight moves the part under the mouse onto a layer of its own (so it went missing from the
+    /// pictures) and can turn the hull see-through; while the views are taken, the mouse is over nothing.
+    [HarmonyPatch(typeof(VehicleComponentHoverer), nameof(VehicleComponentHoverer.SetHoverCandidate))]
+    internal static class NoHover
+    {
+        internal static bool On;
+        static void Prefix(ref IVehicleCollider item) { if (On) item = null!; }
     }
 
     /// One sheet in the making: the views' sizes on it, the camera that takes them, what it changed to take them.
@@ -169,6 +185,15 @@ internal static class DrawingSheet
                 own.backgroundColorHDR = Behind;
                 // Not temporal: each view is still, but the camera jumps between them.
                 own.antialiasing = HDAdditionalCameraData.AntialiasingMode.SubpixelMorphologicalAntiAliasing;
+                // No reflections: seen from above, the paint mirrored the sky and the map's grass round the editor.
+                own.customRenderingSettings = true;
+                var overrides = own.renderingPathCustomFrameSettingsOverrideMask;
+                foreach (var field in new[] { FrameSettingsField.SSR, FrameSettingsField.SSGI, FrameSettingsField.ReflectionProbe, FrameSettingsField.PlanarProbe, FrameSettingsField.SkyReflection })
+                {
+                    overrides.mask[(uint)field] = true;
+                    own.renderingPathCustomFrameSettings.SetEnabled(field, false);
+                }
+                own.renderingPathCustomFrameSettingsOverrideMask = overrides;
             }
             cam.orthographic = true;
             cam.cullingMask = ownLayer >= 0 ? 1 << ownLayer : layers;
@@ -177,6 +202,24 @@ internal static class DrawingSheet
                                   string.Join(", ", views.Select((v, i) => $"{Views[i].Name} {v.Width}x{v.Height}")) + $", {aerials.Count} antenna pieces left out, " +
                                   (ownLayer >= 0 ? $"{movedLayers.Count} objects on layer {ownLayer} for the pictures" : "no free layer: the vehicle's own layers"));
             return true;
+        }
+
+        /// Every frame the views are taken: the editor moves the part under the mouse to a highlight layer when the mouse
+        /// goes over it or off it (out of the pictures), so any part it moved goes back on ours. The layer the editor last
+        /// chose is the one the part gets back at the end.
+        internal void Hold()
+        {
+            if (ownLayer < 0) return;
+            List<IntPtr>? moved = null;
+            foreach (var (key, (obj, _)) in movedLayers)
+                if (obj != null && obj.layer != ownLayer) (moved ??= new()).Add(key);
+            if (moved == null) return;
+            foreach (var key in moved)
+            {
+                var obj = movedLayers[key].Object;
+                movedLayers[key] = (obj, obj.layer);
+                obj.layer = ownLayer;
+            }
         }
 
         /// The camera straight at view `i`, just far enough back, drawing only the depth the vehicle fills.

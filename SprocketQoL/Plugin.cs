@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.7.5")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.7.6")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -29,7 +29,7 @@ public sealed class Plugin : BasePlugin
         BackupsKept = Config.Bind("Backups", "Backups kept", 50, "How many design backups (BepInEx\\SprocketQoLBackups, one per edit) to keep; the oldest go first. 0 keeps them all.");
         AddComponent<DesignEditor>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(ImageAddresses) };
+        var features = new[] { typeof(InspectorSection), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(ImageAddresses), typeof(DrawingSheet.NoHover) };
         foreach (var feature in features)
         {
             try { harmony.PatchAll(feature); }
