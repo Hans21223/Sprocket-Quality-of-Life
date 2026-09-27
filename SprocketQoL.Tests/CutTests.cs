@@ -175,6 +175,24 @@ static class CutTests
             Check(faces.All(f => f.Length is 3 or 4), $"fill {what}: triangles and quads only");
             Console.WriteLine($"  fill {what}: {pos.Count - before} new points, {faces.Count(f => f.Length == 4)} quads, {faces.Count(f => f.Length == 3)} triangles");
         }
+        {
+            // A second hole nearest the corner the first hole is joined to the outline by (the joined outline passes that
+            // corner twice): it must join on its own side of the corner, or faces fold over each other (a rail's legs
+            // through a hull roof, 2026-09-27).
+            Vector3 At(float x, float y) => new(y, 0, -x); // x, y as the fill's plane sees them
+            var pos = new List<Vector3> { At(-1, -1), At(1, -1), At(1, 1), At(-1, 1) };
+            var holes = new List<List<int>>();
+            foreach (var (x, y, r) in new[] { (0.5f, 0.05f, 0.1f), (0.5f, 0.45f, 0.05f) })
+            {
+                holes.Add(Enumerable.Range(pos.Count, 4).ToList());
+                pos.AddRange(new[] { At(x + r, y), At(x, y + r), At(x - r, y), At(x, y - r) });
+            }
+            double A(IList<int> f) => Vector3.Dot(HoleRing.Normal(f.Select(i => pos[i]).ToList()), Vector3.UnitY) / 2;
+            double want = Math.Abs(A(new[] { 0, 1, 2, 3 })) - holes.Sum(h => Math.Abs(A(h)));
+            var faces = Fill.Region(pos, new List<int> { 0, 1, 2, 3 }, holes, Vector3.UnitY, null);
+            double got = Math.Abs(faces.Sum(A)), unsigned = faces.Sum(f => Math.Abs(A(f)));
+            Check(Math.Abs(got - want) < 1e-5 && Math.Abs(unsigned - want) < 1e-5, $"fill with a hole joined at another's joining corner: faces cover the region once ({got:0.00000} / {unsigned:0.00000} vs {want:0.00000})");
+        }
     }
 
     /// Create Hole as the game runs it, with every size the Hole size slider allows (the ring pushed out to the face's
