@@ -3,6 +3,7 @@ using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Sprocket.VehicleDesigner;
 using Sprocket.Vehicles.Colliders;
+using Sprocket.Vehicles.PlateStructures;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering.HighDefinition;
@@ -11,9 +12,9 @@ using N = System.Numerics;
 namespace SprocketQoL;
 
 /// F9 in the vehicle editor: a drawing sheet of the vehicle, laid out as a maker's drawing: from above and from the
-/// front on top, from the side and from the back below, all at one scale, with a 1 m ruler. Saved twice to
-/// Documents\My Games\Sprocket\Photos: in lines only (black on white), and in colour (the paint, lit evenly from every
-/// side) with the same lines over it. The lines come from the vehicle's own shapes (where faces meet at an angle, open
+/// front on top, from the side and from the back below, all at one scale, with a 1 m ruler. Saved three times to
+/// Documents\My Games\Sprocket\Photos: in lines only (black on white), in colour (the paint, lit evenly from every
+/// side) with the same lines over it, and see-through (half the colour sheet, half the vehicle with its armour off). The lines come from the vehicle's own shapes (where faces meet at an angle, open
 /// edges, the outline of curved parts), with what's behind other parts left out; each view's outline comes from its
 /// picture, so parts whose shapes can't be read are still outlined.
 internal static class DrawingSheet
@@ -61,12 +62,18 @@ internal static class DrawingSheet
             for (int f = 0; f < 3; f++) yield return null;
             sheet = Sheet.Begin();
             if (sheet == null) yield break;
-            for (int i = 0; i < Views.Length; i++)
+            // The views, then again with the armour off for the see-through sheet.
+            foreach (bool inside in new[] { false, true })
             {
-                if (!sheet.Aim(i)) yield break;
-                for (int f = 0; f < (i == 0 ? FirstSettle : Settle); f++) { sheet.Hold(); yield return null; }
-                if (!sheet.Grab(i)) yield break;
+                if (inside) sheet.TakeArmourOff();
+                for (int i = 0; i < Views.Length; i++)
+                {
+                    if (!sheet.Aim(i)) yield break;
+                    for (int f = 0; f < (i == 0 ? FirstSettle : Settle); f++) { sheet.Hold(); yield return null; }
+                    if (!sheet.Grab(i, inside)) yield break;
+                }
             }
+            sheet.PutArmourBack(); // its shapes make the lines
             DesignEditor.Instance?.Say("Drawing sheet: drawing the lines...", 10);
             yield return null; // the message shows before the work (a second or two)
             sheet.Finish();
@@ -96,6 +103,9 @@ internal static class DrawingSheet
         readonly Drawing.View[] views = new Drawing.View[Views.Length];
         readonly byte[][] colour = new byte[Views.Length][]; // RGB, rows from the bottom
         readonly bool[][] solid = new bool[Views.Length][];  // the vehicle, not the backdrop
+        readonly byte[][] insideColour = new byte[Views.Length][]; // the same with the armour off
+        readonly bool[][] insideSolid = new bool[Views.Length][];
+        readonly List<Renderer> armour = new();              // switched off for the see-through views
         Camera? cam;
         RenderTexture? target;
         int layers;
@@ -245,7 +255,21 @@ internal static class DrawingSheet
         }
 
         /// View `i` as the camera drew it: its colours, and which pixels are the vehicle (not the magenta behind it).
-        internal bool Grab(int i)
+        /// The armour out of the pictures: every plate structure (hull, turret, add-on) and nothing hung on it.
+        internal void TakeArmourOff()
+        {
+            foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
+                foreach (var r in part.GetComponentsInChildren<Renderer>())
+                    if (r.enabled && r.GetComponentInParent<Sprocket.Vehicles.VehicleObject>()?.GetComponent<PlateStructure>() != null) { r.enabled = false; armour.Add(r); }
+        }
+
+        internal void PutArmourBack()
+        {
+            foreach (var r in armour) if (r != null) r.enabled = true;
+            armour.Clear();
+        }
+
+        internal bool Grab(int i, bool inside)
         {
             try
             {
@@ -267,10 +291,10 @@ internal static class DrawingSheet
                     int lo = Math.Min(c.r, c.b), hi = Math.Max(c.r, c.b);
                     mask[p] = !(lo > 30 && c.g < lo / 2 && hi - lo < hi * 0.35f);
                 }
-                colour[i] = rgb;
-                solid[i] = mask;
+                (inside ? insideColour : colour)[i] = rgb;
+                (inside ? insideSolid : solid)[i] = mask;
                 var corner = pixels[0];
-                Plugin.ModLog.LogInfo($"QOL_DRAWING {Views[i].Name}: backdrop drawn as ({corner.r}, {corner.g}, {corner.b}), {mask.Count(m => m) * 100 / mask.Length}% of the picture is the vehicle");
+                Plugin.ModLog.LogInfo($"QOL_DRAWING {Views[i].Name}{(inside ? $" (armour off, {armour.Count} pieces)" : "")}: backdrop drawn as ({corner.r}, {corner.g}, {corner.b}), {mask.Count(m => m) * 100 / mask.Length}% of the picture is the vehicle");
                 return true;
             }
             catch (Exception ex) { Fail($"couldn't take the {Views[i].Name} view", ex); return false; }
@@ -289,7 +313,7 @@ internal static class DrawingSheet
                     ink[i] = new bool[v.Width * v.Height];
                     var depth = Drawing.Depths(shapes, v);
                     // Every shape read: the vehicle is only where they are (unread ones are only in the picture).
-                    if (unreadable == 0) Drawing.Clip(solid[i], depth.Z, v.Width, v.Height, 3);
+                    if (unreadable == 0) { Drawing.Clip(solid[i], depth.Z, v.Width, v.Height, 3); Drawing.Clip(insideSolid[i], depth.Z, v.Width, v.Height, 3); }
                     Drawing.Lines(shapes, v, depth, ink[i]);
                     Drawing.Outline(solid[i], v.Width, v.Height, ink[i]);
                 }
@@ -313,8 +337,10 @@ internal static class DrawingSheet
                 };
                 var lines = new byte[w * h * 3];
                 var painted = new byte[w * h * 3];
+                var seeThrough = new byte[w * h * 3];
                 Array.Fill(lines, (byte)255);
                 Array.Fill(painted, (byte)255);
+                Array.Fill(seeThrough, (byte)255);
                 for (int i = 0; i < Views.Length; i++)
                 {
                     var v = views[i];
@@ -322,15 +348,21 @@ internal static class DrawingSheet
                         for (int x = 0; x < v.Width; x++)
                         {
                             int p = y * v.Width + x, q = ((at[i].Y + y) * w + at[i].X + x) * 3;
-                            if (ink[i][p]) { Set(lines, q, 0); Set(painted, q, 30); }
-                            else if (solid[i][p]) { painted[q] = colour[i][p * 3]; painted[q + 1] = colour[i][p * 3 + 1]; painted[q + 2] = colour[i][p * 3 + 2]; }
+                            if (ink[i][p]) { Set(lines, q, 0); Set(painted, q, 30); Set(seeThrough, q, 30); continue; }
+                            bool shell = solid[i][p], core = insideSolid[i][p];
+                            for (int c = 0; c < 3; c++)
+                            {
+                                int paint = shell ? colour[i][p * 3 + c] : 255, under = core ? insideColour[i][p * 3 + c] : 255;
+                                painted[q + c] = (byte)paint;
+                                // Half the paint, half what's inside (white where there's nothing): the armour as glass.
+                                seeThrough[q + c] = (byte)((paint + under) / 2);
+                            }
                         }
                 }
-                Annotate(lines, w, h, at, xLeft);
-                Annotate(painted, w, h, at, xLeft);
+                foreach (var sheet in new[] { lines, painted, seeThrough }) Annotate(sheet, w, h, at, xLeft);
                 // The title block, from its top down, over a rule the width of the views.
                 if (blockHigh > 0)
-                    foreach (var sheet in new[] { lines, painted })
+                    foreach (var sheet in new[] { lines, painted, seeThrough })
                     {
                         Drawing.Box(sheet, w, h, xLeft, Margin + blockHigh + BlockGap / 2, xRight + right, Margin + blockHigh + BlockGap / 2 + 1, 0);
                         int top = Margin + blockHigh - 1;
@@ -341,8 +373,9 @@ internal static class DrawingSheet
                 var name = Path.Combine(dir, $"Sprocket drawing {DateTime.Now:yyyy-MM-dd HH-mm-ss}");
                 Drawing.SavePng(name + ".png", w, h, lines);
                 Drawing.SavePng(name + " (colour).png", w, h, painted);
-                Plugin.ModLog.LogInfo($"QOL_DRAWING saved {name}.png and (colour), {w}x{h}: {shapes.Count} shapes drawn, {unreadable} meshes the game keeps unreadable (outlined only)");
-                DesignEditor.Instance?.Say($"Drawing sheet saved (lines and colour): {name}.png", 8);
+                Drawing.SavePng(name + " (see-through).png", w, h, seeThrough);
+                Plugin.ModLog.LogInfo($"QOL_DRAWING saved {name}.png, (colour) and (see-through), {w}x{h}: {shapes.Count} shapes drawn, {unreadable} meshes the game keeps unreadable (outlined only)");
+                DesignEditor.Instance?.Say($"Drawing sheet saved (lines, colour and see-through): {name}.png", 8);
             }
             catch (Exception ex) { Fail("couldn't draw the sheet", ex); }
         }
@@ -467,6 +500,7 @@ internal static class DrawingSheet
                 cam = null; target = null;
                 if (!fullbrightWas && MeshTools.FullbrightOn) MeshTools.ToggleFullbright();
                 foreach (var r in hidden) if (r != null) r.enabled = true;
+                PutArmourBack();
                 foreach (var t in hiddenGround) if (t != null) t.enabled = true;
                 foreach (var (obj, layer) in movedLayers.Values) if (obj != null) obj.layer = layer;
                 movedLayers.Clear();
