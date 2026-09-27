@@ -25,6 +25,7 @@ void Run(string json,int id)
         Check(Vector3.Distance(Vector3.Transform(point,aw[v]),Vector3.Transform(point,bw[v]))<0.002f,"world basis preserved");
     conversions++;
 }
+ToolTests.Run(); // Bridge, Circle, Fix mirror, mirrored merge: small shapes, no blueprints needed
 string root=Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)+@"\My Games\Sprocket\Factions\PMC\Blueprints\Vehicles";
 var files=Directory.GetFiles(root,"*.blueprint").OrderBy(f=>new FileInfo(f).Length).Take(12).ToList();
 foreach(var f in files)

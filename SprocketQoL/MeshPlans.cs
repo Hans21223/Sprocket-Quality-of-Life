@@ -518,6 +518,352 @@ public static class MeshPlans
         return twins;
     }
 
+    // ---------- Bridge ----------
+
+    /// Bridge (Blender's Bridge Edge Loops): two chains of selected edges (open, or closed loops) joined by a strip of
+    /// quads with `cuts` rows of new points across it. `smooth` 0 runs straight across; above it, the strip leaves each
+    /// chain the way the face there runs on and curves round into the other (1 is about round, like Blender's
+    /// smoothness). The chains' points pair up in order, the second chain turned (and a loop started) where the strip
+    /// is shortest, so it doesn't twist. Each chain runs along a
+    /// plate's open edges (one face each) or loose edges, and both have as many points. With `twins` (Mirror on) the
+    /// mirror image is bridged too, unless the bridge is its own mirror image.
+    public static Rebuild Bridge(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<(int A, int B)> edges, int cuts, float smooth,
+                                 IReadOnlyDictionary<int, int>? twins = null)
+    {
+        var chains = Chains(edges.Select(e => Key(e.A, e.B)).Where(e => e.Item1 != e.Item2).Distinct().ToList(), out string? why);
+        if (why != null) return Rebuild.Fail(why);
+        bool mirrorPair = false;
+        if (chains.Count == 4 && twins != null)
+        {
+            // Both sides selected with Mirror on: bridge one side, and the mirror image does the other.
+            int MirrorOf(int c) => Enumerable.Range(0, 4).FirstOrDefault(d => d != c && chains[d].Points.All(v => twins.TryGetValue(v, out int t) && chains[c].Points.Contains(t)), -1);
+            int a = 0, a2 = MirrorOf(0), b = Enumerable.Range(1, 3).First(c => c != a2);
+            if (a2 < 0 || MirrorOf(b) < 0) return Rebuild.Fail("select two chains of edges (with Mirror on, one side is enough)");
+            int b2 = MirrorOf(b);
+            float Gap(int x, int y) => Vector3.Distance(Middle(pos, chains[x].Points), Middle(pos, chains[y].Points));
+            chains = new List<Chain> { chains[a], Gap(a, b) <= Gap(a, b2) ? chains[b] : chains[b2] };
+            mirrorPair = true;
+        }
+        if (chains.Count != 2)
+            return Rebuild.Fail(chains.Count < 2 ? "select two chains of edges with a gap between them" : $"select two chains of edges, not {chains.Count}");
+        Chain p = chains[0], q = chains[1];
+        if (p.Closed != q.Closed) return Rebuild.Fail("one chain is a closed loop and the other isn't");
+        int n = p.Points.Count;
+        if (q.Points.Count != n) return Rebuild.Fail($"the two chains need as many points each ({n} and {q.Points.Count})");
+
+        // Pair the points: the second chain forwards or backwards (and, for loops, from each start), shortest strip.
+        var best = (Cost: double.MaxValue, Order: Array.Empty<int>());
+        foreach (int dir in new[] { 1, -1 })
+            for (int start = 0; start < (p.Closed ? n : 1); start++)
+            {
+                var order = Enumerable.Range(0, n).Select(i => p.Closed ? q.Points[((start + dir * i) % n + n) % n] : q.Points[dir > 0 ? i : n - 1 - i]).ToArray();
+                double cost = Enumerable.Range(0, n).Sum(i => (double)Vector3.Distance(pos[p.Points[i]], pos[order[i]]));
+                if (cost < best.Cost - 1e-9) best = (cost, order);
+            }
+        var pa = p.Points.ToArray();
+        var qa = best.Order;
+
+        var edgeFaces = EdgeFaces(faces);
+        int FaceOn(int a, int b) => edgeFaces.TryGetValue(Key(a, b), out var l) ? (l.Count == 1 ? l[0] : -2) : -1;
+        int segments = p.Closed ? n : n - 1;
+        var faceP = new int[segments];
+        var faceQ = new int[segments];
+        for (int i = 0; i < segments; i++)
+        {
+            int j = (i + 1) % n;
+            faceP[i] = FaceOn(pa[i], pa[j]);
+            faceQ[i] = FaceOn(qa[i], qa[j]);
+            if (faceP[i] == -2 || faceQ[i] == -2) return Rebuild.Fail("bridge from a plate's open edges: one of these edges already has faces on both sides");
+        }
+        // The strip turns the way the faces at the chains do (each edge run the other way by the strip): all must agree.
+        bool Runs(int f, int a, int b) { var c = faces[f]; int k = Array.IndexOf(c, a); return k >= 0 && c[(k + 1) % c.Length] == b; }
+        var votes = new List<bool>();
+        for (int i = 0; i < segments; i++)
+        {
+            int j = (i + 1) % n;
+            if (faceP[i] >= 0) votes.Add(Runs(faceP[i], pa[i], pa[j]));
+            if (faceQ[i] >= 0) votes.Add(Runs(faceQ[i], qa[j], qa[i]));
+        }
+        if (votes.Distinct().Count() > 1) return Rebuild.Fail("the faces at the two chains face opposite ways: flip one side (the game's Flip), then bridge");
+        bool forward = votes.Count == 0 || votes[0];
+        if (votes.Count == 0 && pos.Count > 0)
+        {
+            // Loose edges on both sides: the strip faces away from the part's middle, as its outside does.
+            var strip = Vector3.Zero;
+            for (int i = 0; i < segments; i++) strip += Newell(pos, new[] { pa[(i + 1) % n], pa[i], qa[i], qa[(i + 1) % n] }); // as the strip's faces run
+            var outward = Middle(pos, pa.Concat(qa)) - Middle(pos, Enumerable.Range(0, pos.Count));
+            forward = Vector3.Dot(strip, outward) >= 0;
+        }
+
+        // Which way each chain's face runs on past a point: across its edges there, away from the face.
+        Vector3 Onward(int[] chain, int[] faceAt, int i)
+        {
+            var d = Vector3.Zero;
+            foreach (int s in new[] { i - 1, i })
+            {
+                if (!p.Closed && (s < 0 || s >= segments)) continue; // an open chain's ends have one edge
+                int si = (s + segments) % segments, f = faceAt[si];
+                if (f < 0) continue;
+                Vector3 a = pos[chain[si]], b = pos[chain[(si + 1) % n]], nf = Newell(pos, faces[f]);
+                var across = Vector3.Cross(b - a, nf);
+                if (across.LengthSquared() < 1e-20f) continue;
+                across = Vector3.Normalize(across);
+                var centre = faces[f].Aggregate(Vector3.Zero, (sum, v) => sum + pos[v]) / faces[f].Length;
+                if (Vector3.Dot(across, centre - (a + b) / 2) > 0) across = -across;
+                d += across;
+            }
+            return d.LengthSquared() < 1e-12f ? Vector3.Zero : Vector3.Normalize(d);
+        }
+
+        // The rows: the first chain, `cuts` rows of new points, the second chain.
+        cuts = Math.Clamp(cuts, 0, 64);
+        var points = new List<NewPoint>();
+        var rows = new int[cuts + 2][];
+        rows[0] = pa;
+        rows[cuts + 1] = qa;
+        for (int r = 1; r <= cuts; r++) rows[r] = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            Vector3 a = pos[pa[i]], b = pos[qa[i]];
+            float length = Vector3.Distance(a, b);
+            Vector3 ta = Onward(pa, faceP, i) * length * Math.Max(0, smooth), tb = -Onward(qa, faceQ, i) * length * Math.Max(0, smooth);
+            for (int r = 1; r <= cuts; r++)
+            {
+                float s = r / (float)(cuts + 1), s2 = s * s, s3 = s2 * s;
+                var at = (2 * s3 - 3 * s2 + 1) * a + (s3 - 2 * s2 + s) * ta + (-2 * s3 + 3 * s2) * b + (s3 - s2) * tb;
+                rows[r][i] = pos.Count + points.Count;
+                points.Add(new NewPoint(at, new[] { (pa[i], 1 - s), (qa[i], s) }));
+            }
+        }
+
+        // Settings come from the face at the nearer chain (or the other one, or the nearest face for loose edges).
+        var all = pos.Concat(points.Select(x => x.P)).ToList();
+        int Nearest(Vector3 at) => Enumerable.Range(0, faces.Count).OrderBy(f => Vector3.Distance(faces[f].Aggregate(Vector3.Zero, (s, v) => s + pos[v]) / faces[f].Length, at)).FirstOrDefault(-1);
+        var add = new List<NewFace>();
+        for (int i = 0; i < segments; i++)
+        {
+            int j = (i + 1) % n;
+            for (int r = 0; r <= cuts; r++)
+            {
+                var corners = forward ? new[] { rows[r][j], rows[r][i], rows[r + 1][i], rows[r + 1][j] } : new[] { rows[r][i], rows[r][j], rows[r + 1][j], rows[r + 1][i] };
+                bool nearP = 2 * r < cuts + 1;
+                int source = (nearP ? faceP[i] : faceQ[i]) is int f1 and >= 0 ? f1 : (nearP ? faceQ[i] : faceP[i]) is int f2 and >= 0 ? f2
+                    : Nearest(corners.Aggregate(Vector3.Zero, (s, v) => s + all[v]) / corners.Length);
+                if (source < 0) return Rebuild.Fail("there's no face on this part to copy the new faces' settings from");
+                add.Add(new NewFace(corners, source));
+            }
+        }
+
+        // Mirror on: the same bridge on the other side, point for point, turned the other way (a mirror image is).
+        if (twins != null)
+        {
+            var used = pa.Concat(qa).ToHashSet();
+            bool ownImage = used.All(v => twins.TryGetValue(v, out int t) && used.Contains(t));
+            if (!ownImage || mirrorPair)
+            {
+                if (used.Any(v => !twins.ContainsKey(v)))
+                    return mirrorPair ? Rebuild.Fail("Mirror: the other side's edges don't match this side's (Fix mirror first)")
+                        : new Rebuild(new(), add, points, null); // no matching edges on the other side: this side only
+                var byCorners = new Dictionary<string, int>();
+                for (int f = 0; f < faces.Count; f++) byCorners.TryAdd(string.Join(",", faces[f].OrderBy(v => v)), f);
+                var image = new Dictionary<int, int>();
+                int Image(int v)
+                {
+                    if (v < pos.Count) return twins[v];
+                    if (image.TryGetValue(v, out int w)) return w;
+                    var np = points[v - pos.Count];
+                    image[v] = w = pos.Count + points.Count;
+                    points.Add(new NewPoint(new Vector3(-np.P.X, np.P.Y, np.P.Z), np.Blend.Select(x => (twins[x.V], x.W)).ToArray()));
+                    return w;
+                }
+                var made = add.Select(a => string.Join(",", a.Corners.OrderBy(v => v))).ToHashSet();
+                foreach (var nf in add.ToList())
+                {
+                    var corners = nf.Corners.Select(Image).Reverse().ToArray();
+                    if (!made.Add(string.Join(",", corners.OrderBy(v => v)))) continue;
+                    var sourceImage = faces[nf.Source].Select(v => twins.TryGetValue(v, out int t) ? t : -1).ToArray();
+                    int source = !sourceImage.Contains(-1) && byCorners.TryGetValue(string.Join(",", sourceImage.OrderBy(v => v)), out int s) ? s : nf.Source;
+                    add.Add(new NewFace(corners, source));
+                }
+            }
+        }
+        return new Rebuild(new(), add, points, null);
+    }
+
+    /// A run of selected edges: its points in order, and whether it closes on itself.
+    public sealed record Chain(List<int> Points, bool Closed);
+
+    /// The selected edges as chains; `why` says why they can't be (a point where they branch).
+    public static List<Chain> Chains(IReadOnlyList<(int, int)> edges, out string? why)
+    {
+        why = null;
+        var next = new Dictionary<int, List<int>>();
+        foreach (var (a, b) in edges)
+        {
+            (next.TryGetValue(a, out var la) ? la : next[a] = new()).Add(b);
+            (next.TryGetValue(b, out var lb) ? lb : next[b] = new()).Add(a);
+        }
+        if (next.Values.Any(l => l.Count > 2)) { why = "the selected edges branch at a point: select two plain chains of edges"; return new(); }
+        var chains = new List<Chain>();
+        var seen = new HashSet<int>();
+        // Open chains from their ends first, then what's left is closed loops.
+        foreach (int start in next.Keys.Where(v => next[v].Count == 1).Concat(next.Keys.Where(v => next[v].Count == 2)).ToList())
+        {
+            if (seen.Contains(start)) continue;
+            var run = new List<int> { start };
+            seen.Add(start);
+            int at = start, from = -1;
+            while (true)
+            {
+                int to = next[at].FirstOrDefault(w => w != from && !seen.Contains(w), -1);
+                if (to < 0) break;
+                run.Add(to);
+                seen.Add(to);
+                from = at;
+                at = to;
+            }
+            bool closed = next[start].Count == 2 && next[at].Contains(start) && run.Count > 2;
+            chains.Add(new Chain(run, closed));
+        }
+        return chains;
+    }
+
+    static Vector3 Middle(IReadOnlyList<Vector3> pos, IEnumerable<int> points)
+    {
+        var l = points.ToList();
+        return l.Aggregate(Vector3.Zero, (s, v) => s + pos[v]) / Math.Max(1, l.Count);
+    }
+
+    // ---------- Circle ----------
+
+    /// Circle (LoopTools' Circle): the points spread evenly round a true circle on their best-fit plane, round their
+    /// middle, as far out as they are on average (or `radius`, if above 0). They keep their order round the middle, and
+    /// the circle is turned to move them least. Empty if there are fewer than three, or they lie along a line.
+    public static Dictionary<int, Vector3> Circle(IReadOnlyList<Vector3> pos, ICollection<int> points, float radius = 0)
+    {
+        var result = new Dictionary<int, Vector3>();
+        var list = points.Distinct().ToList();
+        if (list.Count < 3) return result;
+        var c = Middle(pos, list);
+        var n = LeastSpread(pos, list, c);
+        Vector3 Flat(Vector3 d) => d - n * Vector3.Dot(d, n);
+        int far = list.OrderByDescending(v => Flat(pos[v] - c).LengthSquared()).First();
+        if (Flat(pos[far] - c).LengthSquared() < 1e-12f) return result;
+        var u = Vector3.Normalize(Flat(pos[far] - c));
+        var w = Vector3.Cross(n, u);
+        var angle = list.ToDictionary(v => v, v => Math.Atan2(Vector3.Dot(pos[v] - c, w), Vector3.Dot(pos[v] - c, u)));
+        var order = list.OrderBy(v => angle[v]).ToList();
+        int count = order.Count;
+        // Along a line: the points, joined in turn, enclose next to nothing.
+        double area = 0;
+        for (int k = 0; k < count; k++)
+        {
+            Vector3 a = Flat(pos[order[k]] - c), b = Flat(pos[order[(k + 1) % count]] - c);
+            area += Vector3.Dot(Vector3.Cross(a, b), n) / 2;
+        }
+        double spread = list.Average(v => Flat(pos[v] - c).Length());
+        if (Math.Abs(area) < 0.05 * spread * spread) return result;
+        float r = radius > 0 ? radius : (float)spread;
+        // Evenly apart, each point as near its own turn as can be: the circle's start is the circular mean of offsets.
+        double sx = 0, sy = 0;
+        for (int k = 0; k < count; k++)
+        {
+            double off = angle[order[k]] - 2 * Math.PI * k / count;
+            sx += Math.Cos(off);
+            sy += Math.Sin(off);
+        }
+        double start = Math.Atan2(sy, sx);
+        for (int k = 0; k < count; k++)
+        {
+            double a = start + 2 * Math.PI * k / count;
+            result[order[k]] = c + r * ((float)Math.Cos(a) * u + (float)Math.Sin(a) * w);
+        }
+        return result;
+    }
+
+    // ---------- Fix mirror ----------
+
+    public enum MirrorKeep { Halfway, Right, Left }
+
+    /// Fix mirror: points that are nearly each other's mirror image (within `tolerance`) made exactly so, and points
+    /// within it of the centre put on it, so the editor's Mirror pairs them again (it wants them to a fraction of a
+    /// millimetre). `keep` says which side stays put (+x is the vehicle's right); Halfway moves both to meet. Starting
+    /// from `points` (their partners anywhere). Also returns the points left with no mirror image: the two sides differ
+    /// there (merged, split or filled on one side only).
+    public static (Dictionary<int, Vector3> Moved, List<int> Unmatched) FixMirror(IReadOnlyList<Vector3> pos, IEnumerable<int> points, float tolerance, MirrorKeep keep)
+    {
+        var start = points.Distinct().ToList();
+        var moved = new Dictionary<int, Vector3>();
+        var unmatched = new List<int>();
+        // Each candidate pair, closest first, so every point takes its best partner.
+        var candidates = new List<(float D, int R, int L)>();
+        var rights = pos.Select((p, i) => i).Where(i => pos[i].X > 0).ToList();
+        var lefts = pos.Select((p, i) => i).Where(i => pos[i].X < 0).ToList();
+        float cell = Math.Max(tolerance, 1e-5f);
+        (int, int, int) Cell(Vector3 v) => ((int)MathF.Floor(v.X / cell), (int)MathF.Floor(v.Y / cell), (int)MathF.Floor(v.Z / cell));
+        var grid = new Dictionary<(int, int, int), List<int>>();
+        foreach (int l in lefts) (grid.TryGetValue(Cell(pos[l]), out var here) ? here : grid[Cell(pos[l])] = new()).Add(l);
+        var wanted = start.ToHashSet();
+        foreach (int r in rights)
+        {
+            var m = new Vector3(-pos[r].X, pos[r].Y, pos[r].Z);
+            var (x, y, z) = Cell(m);
+            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
+                if (grid.TryGetValue((x + dx, y + dy, z + dz), out var near))
+                    foreach (int l in near)
+                        if ((wanted.Contains(r) || wanted.Contains(l)) && Vector3.Distance(pos[l], m) <= tolerance) candidates.Add((Vector3.Distance(pos[l], m), r, l));
+        }
+        var paired = new HashSet<int>();
+        foreach (var (_, r, l) in candidates.OrderBy(c => c.D))
+        {
+            if (paired.Contains(r) || paired.Contains(l)) continue;
+            paired.Add(r);
+            paired.Add(l);
+            Vector3 right = pos[r], left = pos[l];
+            Vector3 meet = keep switch
+            {
+                MirrorKeep.Right => right,
+                MirrorKeep.Left => new Vector3(-left.X, left.Y, left.Z),
+                _ => new Vector3((right.X - left.X) / 2, (right.Y + left.Y) / 2, (right.Z + left.Z) / 2),
+            };
+            if (Vector3.DistanceSquared(meet, right) > 1e-14f) moved[r] = meet;
+            var image = new Vector3(-meet.X, meet.Y, meet.Z);
+            if (Vector3.DistanceSquared(image, left) > 1e-14f) moved[l] = image;
+        }
+        foreach (int v in start)
+        {
+            if (paired.Contains(v)) continue;
+            if (Math.Abs(pos[v].X) <= tolerance) { if (pos[v].X != 0) moved[v] = new Vector3(0, pos[v].Y, pos[v].Z); }
+            else unmatched.Add(v);
+        }
+        return (moved, unmatched);
+    }
+
+    // ---------- Merge points ----------
+
+    /// Merge points into `keep` (the game's M, done again for the other side under Mirror): every face using them uses
+    /// `keep` instead; a side between two of them goes, and a face left with under three corners goes too. The caller
+    /// moves `keep` to where the merged point belongs. Refused if a face would be pinched (two of its corners merged
+    /// that aren't next to each other).
+    public static Rebuild MergePoints(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, ICollection<int> points, int keep)
+    {
+        var merged = points.Append(keep).ToHashSet();
+        if (merged.Count < 2) return Rebuild.Fail("select two or more points to merge");
+        var remove = new List<int>();
+        var add = new List<NewFace>();
+        for (int f = 0; f < faces.Count; f++)
+        {
+            if (!faces[f].Any(merged.Contains)) continue;
+            var mapped = faces[f].Select(v => merged.Contains(v) ? keep : v).ToArray();
+            var corners = mapped.Where((v, k) => v != mapped[(k + 1) % mapped.Length]).ToArray();
+            if (corners.Length == 0) corners = new[] { keep };
+            if (corners.Distinct().Count() != corners.Length) return Rebuild.Fail("merging these would pinch a face (two of its corners that aren't next to each other)");
+            remove.Add(f);
+            if (corners.Length >= 3) add.Add(new NewFace(corners, f));
+        }
+        return new Rebuild(remove, add, new(), null);
+    }
+
     // ---------- helpers ----------
 
     static Dictionary<(int, int), List<int>> EdgeFaces(IReadOnlyList<int[]> faces)

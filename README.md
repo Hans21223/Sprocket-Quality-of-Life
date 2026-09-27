@@ -26,7 +26,7 @@ found while building Quality of Life and the Battle Editor.
 | `SprocketQoL.Tests\` | Offline tests: Boolean cut, hole fill, face merge, and the turret conversion on your own blueprints |
 | `DataMods\Round Add-on Parts\` | Round add-on palette parts; a data mod that needs no BepInEx |
 | `MyFirstMod\` | A minimal mod to copy when starting a new one |
-| `SprocketTweaks\`, `HelloMelon\` | MelonLoader-style mods: gameplay tweaks, and a check that MelonLoader mods run |
+| `SprocketTweaks\`, `HelloMelon\` | Examples of the other kind: MelonLoader mods (they run through the loader's MLLoader). Quality of Life itself is a BepInEx mod |
 | `tools\RoundAddonParts\` | Regenerates the round add-on part files |
 | `tools\ApiLister\` | Lists the game's classes and methods from `BepInEx\interop` (reads files only) |
 | `tools\deploy.ps1` | Builds a mod and copies it into `Sprocket\BepInEx\plugins` |
@@ -36,9 +36,18 @@ found while building Quality of Life and the Battle Editor.
 
 ## Just want the Quality of Life mod?
 
-Download the zip from the [Releases page](https://github.com/Hans21223/Sprocket-Quality-of-Life/releases) and add it
-in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into `Sprocket\BepInEx\plugins\`. If you had the older
-`Sprocket.TurretAddon.dll`, delete it, because Quality of Life includes it. In the vehicle editor:
+**It's a BepInEx mod, not a MelonLoader one.** Sprocket has no mod loader of its own, and the official BepInEx
+freezes this Sprocket version, so install the fixed loader first:
+
+1. **Install the mod loader:** get **Sprocket Mod Loader** from <https://github.com/Hans21223/Sprocket-Mod-Loader>.
+   Its Mod Manager installs it with one click (**Install mod loader**). A MelonLoader on its own can't load this mod.
+2. **Download** `Quality-of-Life-<version>.zip` from the [Releases page](https://github.com/Hans21223/Sprocket-Quality-of-Life/releases).
+3. **Add it:** in the Mod Manager, **Add mod**, choose the ZIP, then enable it. Or copy
+   `Release\BepInEx\plugins\SprocketQoL.dll` into `Sprocket\BepInEx\plugins\` yourself.
+4. **Start Sprocket** and open the vehicle editor: the part panels have new sections.
+
+If you had the older `Sprocket.TurretAddon.dll`, delete it, because Quality of Life includes it. MelonLoader mods run
+alongside it through the loader's MLLoader. In the vehicle editor:
 
 - **Turret to Add-on:** select a turret ring or turret body, and its panel gets a **Convert to add-on** button.
   Select several turrets and it converts them all at once; a mirrored turret's twin converts with it.
@@ -120,6 +129,21 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
     front to back). In a straight view, **Ortho: measurements** (on by default) draws the vehicle's overall size as
     dimension lines: across the screen under it, up the screen beside it, to the centimetre (antennas not counted).
     The game's fog is off in orthographic view, and the move / turn / scale arrows keep a normal size.
+- **Bridge** (the **Bridge and circle** section; Blender's Bridge Edge Loops): in Edges mode, select the open edges of two
+  plates (or two loops of edges, for a tube) and press **Bridge**: a strip of faces joins them. **Bridge cuts** sets
+  how many rows of points go across it; **Bridge smooth** 0 goes straight across, 100 leaves each plate the way it runs
+  and curves round into the other (a rounded corner between a wall and a floor, say). Both chains need as many points;
+  the strip pairs them the shortest way round, so it doesn't twist. With Mirror on, the other side is bridged too.
+- **Circle** (LoopTools' Circle): select points round a loop (a hole's rim, a ring round a turret) and press **Circle**:
+  they spread evenly round a true circle, on their best plane, as far out as they are on average. For a rounder, higher-
+  poly circle, loop cut first to add points, then Circle. With Mirror on, the other side follows (a loop round the
+  middle stays exactly mirrored).
+- **Fix mirror** (the **Mirror fixes** section): the editor's Mirror only pairs points that match to a fraction of a
+  millimetre, so after a merge or split on one side only, or a few nudges, it silently stops moving both sides. Fix
+  mirror makes points that are nearly each other's mirror image (within the distance set, 5 mm by default) exact again,
+  puts points that near the middle onto it, and selects any point left with no mirror image, to show where the two
+  sides really differ. Choose which side is right (the right, +x, or the left), or let both meet halfway. Works on the
+  selected points, or the whole shape if none are selected.
 - **Exploded view (F2):** the running gear (tracks, road wheels, sprockets, idlers, suspension) stays on the ground and
   the hull lifts off it; every other part moves away from the part it's on, straight up or down or outward on the
   level, and parts on parts go further; **F3 / F4** bring them closer or further apart (the spread is remembered). F2 again
@@ -138,8 +162,10 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   like a drawing: the overall length and height beside the side view, the width beside the view from above and under
   the front view (to the centimetre), and a 1 m ruler with ticks every 10 cm. Antennas are left off, so the height is
   the vehicle's own. Under the drawing, a title block: the vehicle's name, its guns (the name you gave each, caliber
-  and length in calibers, how many of each) and its description. Two pictures: **lines only** (black on white) and **colour** (the paint, lit evenly from every side, with
-  the same lines over it). The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
+  and length in calibers, how many of each), its engine's horsepower and top speed forward and in reverse, and its
+  description, in three columns. Three pictures: **lines only** (black on white), **colour** (the paint and decals,
+  lit evenly from every side, with the same lines over it) and **see-through** (half the colour picture, half the
+  vehicle with its armour off: the armour as glass). The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
   the outline of curved parts, with what's hidden behind other parts left out; each view is outlined from its picture
   too, so every part has its outline. Saved as PNG in `Documents\My Games\Sprocket\Photos`. Takes a few seconds.
 - **Max-quality photo (F8 in photo mode):** takes a photo with every graphics quality setting at its best, without

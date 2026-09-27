@@ -5,7 +5,9 @@ Adds new sections to the vehicle editor's own panels. Every section folds away (
 folded.
 
 INSTALL
-Needs BepInEx 6 (IL2CPP) for Sprocket. Add the zip in Sprocket Mod Manager, or copy SprocketQoL.dll into
+A BepInEx mod (not a MelonLoader one). Install the Sprocket Mod Loader first: the official BepInEx freezes this
+Sprocket version. https://github.com/Hans21223/Sprocket-Mod-Loader (its Mod Manager: Install mod loader).
+Then add this zip in the Mod Manager (Add mod, then enable it), or copy SprocketQoL.dll into
 Sprocket\BepInEx\plugins.
 
 STRUCTURE TOOLS (hand-made structures and add-ons)
@@ -19,6 +21,13 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   and each whole piece becomes its own add-on.
 - Hole quality: segments and size for the Create Hole tool. Holes come out round and face the right way; the fill
   around them uses the fewest points by default (light or smooth rings, or the game's own fan, to choose from).
+- Bridge (Blender's Bridge Edge Loops): in Edges mode select the open edges of two plates (or two loops) and press
+  Bridge: a strip of faces joins them. Cuts: rows across it; Smooth 0 straight, 100 curves round like a fillet.
+- Circle: select points round a loop and press Circle: they spread evenly round a true circle (loop cut first for a
+  rounder, higher-poly one).
+- Fix mirror: Mirror only pairs points that match to a fraction of a mm. Fix mirror makes near pairs exact again
+  (within 5 mm by default), puts near-middle points on the middle, and selects points with no mirror image (where
+  the sides differ: merged, split or filled on one side only).
 - Turret to Add-on: turns a turret into a fixed add-on. Guns, crew and attached parts stay where they are.
 - Mesh tools (Blender-style; Mirror applies; Ctrl+Z undoes each; each is checked first and not done if it would crack
   the shape, turn or squash a face, or lay faces over each other; rivets on rebuilt faces stay, here and in Merge
@@ -42,8 +51,9 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   overlay come back after). Saved in Documents\My Games\Sprocket\Photos.
 - F9 drawing sheet: a technical drawing of the vehicle from above, the front, the side and the back, all at one
   scale, with its length, width and height and a 1 m ruler (antennas left out), and under it the vehicle's name,
-  its guns (name, caliber, L/xx) and its description. Saved twice in
-  Documents\My Games\Sprocket\Photos: lines only (black on white), and in colour with the lines over it.
+  horsepower and top speed, its guns (name, caliber, L/xx) and its description. Saved three times in
+  Documents\My Games\Sprocket\Photos: lines only (black on white), in colour (with its decals) with the lines
+  over it, and see-through (the armour as glass).
 - Own paint: a structure's panel can give the part (and the selected parts) its own paint job ("Own paint 1"
   to "Own paint 9"), with its colours, camo and wear right in the panel. Saved with the design; Ctrl+Z
   undoes each change.
