@@ -207,6 +207,9 @@ public static class Fill
                     if (d < best.d && Visible(plane, poly, holes, hole[i], poly[j])) best = (d, i, j);
                 }
             if (best.i < 0) continue;
+            // A corner an earlier bridge joined is in the outline twice: join at the copy whose side the hole is on.
+            var q = plane.P(hole[best.i]);
+            best.j = Enumerable.Range(0, poly.Count).FirstOrDefault(j => poly[j] == poly[best.j] && Opens(plane, poly, j, q), best.j);
             var spliced = poly.Take(best.j + 1).ToList();
             spliced.AddRange(Enumerable.Range(0, hole.Count + 1).Select(k => hole[(best.i + k) % hole.Count]));
             spliced.AddRange(poly.Skip(best.j));
@@ -293,6 +296,13 @@ public static class Fill
                 if (SegmentsCross(a, b, plane.P(u), plane.P(w))) return false;
             }
         return true;
+    }
+
+    /// Whether q lies inside the outline's corner j: turning left from the edge out round to the edge in.
+    static bool Opens(Frame plane, List<int> poly, int j, Vector2 q)
+    {
+        Vector2 v = plane.P(poly[j]), a = plane.P(poly[(j + 1) % poly.Count]) - v, b = plane.P(poly[(j - 1 + poly.Count) % poly.Count]) - v, d = q - v;
+        return Cross(a, b) > 0 ? Cross(a, d) > 0 && Cross(d, b) > 0 : Cross(a, d) > 0 || Cross(d, b) > 0;
     }
 
     static bool SegmentsCross(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
