@@ -666,14 +666,24 @@ public static class MeshTools
     }
 
     /// The antennas' renderers: a whip metres tall is left out of the vehicle's measured size (and off the drawing sheet).
+    /// The game's antenna parts, and anything else standing up tall and thin (a decorative whip, or one built from an
+    /// add-on): over AntennaTall high and under AntennaThin across both ways.
     internal static HashSet<IntPtr> AntennaRenderers()
     {
         var found = new HashSet<IntPtr>();
         foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
-            if (DesignEditor.Each(part.Components).Any(c => c?.TryCast<Sprocket.Vehicles.RadioSystems.Antenna>() != null))
-                foreach (var r in part.GetComponentsInChildren<Renderer>()) found.Add(r.Pointer);
+        {
+            bool antenna = DesignEditor.Each(part.Components).Any(c => c?.TryCast<Sprocket.Vehicles.RadioSystems.Antenna>() != null);
+            foreach (var r in part.GetComponentsInChildren<Renderer>())
+            {
+                var size = r.bounds.size;
+                if (antenna || (size.y > AntennaTall && size.x < AntennaThin && size.z < AntennaThin)) found.Add(r.Pointer);
+            }
+        }
         return found;
     }
+
+    const float AntennaTall = 0.5f, AntennaThin = 0.08f; // metres
 
     // ---------- mouse flashlight (F6) ----------
 

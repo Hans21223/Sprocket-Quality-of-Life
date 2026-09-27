@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace SprocketQoL;
 
@@ -283,6 +284,83 @@ internal static class Drawing
             Text(rgb, w, h, text, x0 - Mark - 10 - TextWidth(text, size), (y0 + y1 - TextHeight(size)) / 2, size, g);
         }
     }
+
+    // ---------- free text (names, descriptions: any letters, any language) ----------
+
+    /// `text` as Windows draws it (its own fonts, so any language shows, with the words wrapped to `maxWidth`): how much
+    /// each pixel is inked, 0 to 255, rows from the top. Empty text gives a 0 x 0 picture.
+    internal static (int W, int H, byte[] Ink) Words(string text, int pixelHeight, bool bold, int maxWidth)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return (0, 0, Array.Empty<byte>());
+        IntPtr dc = CreateCompatibleDC(IntPtr.Zero), font = IntPtr.Zero, bitmap = IntPtr.Zero;
+        try
+        {
+            font = CreateFontW(-pixelHeight, 0, 0, 0, bold ? 700 : 400, 0, 0, 0, 1, 0, 0, 4, 0, "Segoe UI"); // 4: anti-aliased, not ClearType
+            SelectObject(dc, font);
+            const uint Wrap = 0x10, NoPrefix = 0x800, Tabs = 0x40, Measure = 0x400;
+            var box = new Rect { Right = maxWidth };
+            DrawTextW(dc, text, -1, ref box, Wrap | NoPrefix | Tabs | Measure);
+            int w = Math.Max(1, box.Right), h = Math.Max(1, box.Bottom);
+            var info = new BitmapInfo { Size = 40, Width = w, Height = -h, Planes = 1, BitCount = 32 }; // -h: rows from the top
+            bitmap = CreateDIBSection(dc, ref info, 0, out var bits, IntPtr.Zero, 0);
+            if (bitmap == IntPtr.Zero) throw new InvalidOperationException("Windows couldn't make a picture for the text");
+            SelectObject(dc, bitmap);
+            SetTextColor(dc, 0xFFFFFF);
+            SetBkMode(dc, 1); // transparent: white letters on the picture's black
+            var area = new Rect { Right = w, Bottom = h };
+            DrawTextW(dc, text, -1, ref area, Wrap | NoPrefix | Tabs);
+            var bgra = new byte[w * h * 4];
+            Marshal.Copy(bits, bgra, 0, bgra.Length);
+            var ink = new byte[w * h];
+            for (int i = 0; i < ink.Length; i++) ink[i] = Math.Max(bgra[i * 4], Math.Max(bgra[i * 4 + 1], bgra[i * 4 + 2]));
+            return (w, h, ink);
+        }
+        finally
+        {
+            if (bitmap != IntPtr.Zero) DeleteObject(bitmap);
+            if (font != IntPtr.Zero) DeleteObject(font);
+            DeleteDC(dc);
+        }
+    }
+
+    /// A Words picture onto the sheet in grey `g`, its top left corner at (x, top) (sheet rows from the bottom).
+    internal static void Stamp(byte[] rgb, int w, int h, int x, int top, (int W, int H, byte[] Ink) words, byte g)
+    {
+        for (int row = 0; row < words.H; row++)
+        {
+            int y = top - row;
+            if (y < 0 || y >= h) continue;
+            for (int col = 0; col < words.W; col++)
+            {
+                int sx = x + col, a = words.Ink[row * words.W + col];
+                if (a == 0 || sx < 0 || sx >= w) continue;
+                int q = (y * w + sx) * 3;
+                for (int c = 0; c < 3; c++) rgb[q + c] = (byte)((rgb[q + c] * (255 - a) + g * a) / 255);
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BitmapInfo
+    {
+        public int Size, Width, Height;
+        public short Planes, BitCount;
+        public int Compression, SizeImage, XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant, Colours;
+    }
+
+    [DllImport("gdi32")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32")] static extern IntPtr SelectObject(IntPtr dc, IntPtr what);
+    [DllImport("gdi32")] static extern bool DeleteObject(IntPtr what);
+    [DllImport("gdi32")] static extern IntPtr CreateDIBSection(IntPtr dc, ref BitmapInfo info, uint usage, out IntPtr bits, IntPtr section, uint offset);
+    [DllImport("gdi32", CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateFontW(int height, int width, int escapement, int orientation, int weight, uint italic, uint underline, uint strikeOut,
+        uint charSet, uint outPrecision, uint clipPrecision, uint quality, uint pitchAndFamily, string face);
+    [DllImport("gdi32")] static extern uint SetTextColor(IntPtr dc, uint colour);
+    [DllImport("gdi32")] static extern int SetBkMode(IntPtr dc, int mode);
+    [DllImport("user32", CharSet = CharSet.Unicode)] static extern int DrawTextW(IntPtr dc, string text, int length, ref Rect rect, uint format);
 
     /// An RGB picture (three bytes a pixel, rows from the bottom) as a PNG file.
     internal static void SavePng(string path, int w, int h, byte[] rgb)

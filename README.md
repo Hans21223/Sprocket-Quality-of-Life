@@ -137,7 +137,8 @@ in Sprocket Mod Manager, or copy `Release\BepInEx\plugins\SprocketQoL.dll` into 
   from the front on top, from the side and from the back below, all at one scale, on white, each view named. Measured
   like a drawing: the overall length and height beside the side view, the width beside the view from above and under
   the front view (to the centimetre), and a 1 m ruler with ticks every 10 cm. Antennas are left off, so the height is
-  the vehicle's own. Two pictures: **lines only** (black on white) and **colour** (the paint, lit evenly from every side, with
+  the vehicle's own. Under the drawing, a title block: the vehicle's name, its guns (the name you gave each, caliber
+  and length in calibers, how many of each) and its description. Two pictures: **lines only** (black on white) and **colour** (the paint, lit evenly from every side, with
   the same lines over it). The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
   the outline of curved parts, with what's hidden behind other parts left out; each view is outlined from its picture
   too, so every part has its outline. Saved as PNG in `Documents\My Games\Sprocket\Photos`. Takes a few seconds.
