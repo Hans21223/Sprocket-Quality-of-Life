@@ -323,8 +323,8 @@ internal static class DrawingSheet
                 int left = Math.Max(views[0].Width, views[2].Width), right = Math.Max(views[1].Width, views[3].Width);
                 int low = Math.Max(views[2].Height, views[3].Height), high = Math.Max(views[0].Height, views[1].Height);
                 int xLeft = Margin + DimLeft, xRight = xLeft + left + Gap;
-                var block = TitleBlock(xRight + right - xLeft);
-                int blockHigh = block.Sum(b => b.H) + BlockLine * Math.Max(0, block.Count - 1);
+                var block = TitleBlock(xLeft, xRight + right - xLeft);
+                int blockHigh = block.Height;
                 bottom = Margin + (blockHigh > 0 ? blockHigh + BlockGap : 0);
                 int yLow = bottom + RulerHigh + DimBelow, yHigh = yLow + low + LabelHigh + Gap + DimBelow;
                 int w = xRight + right + Margin, h = yHigh + high + LabelHigh + Margin;
@@ -366,7 +366,8 @@ internal static class DrawingSheet
                     {
                         Drawing.Box(sheet, w, h, xLeft, Margin + blockHigh + BlockGap / 2, xRight + right, Margin + blockHigh + BlockGap / 2 + 1, 0);
                         int top = Margin + blockHigh - 1;
-                        foreach (var words in block) { Drawing.Stamp(sheet, w, h, xLeft, top, words, 0); top -= words.H + BlockLine; }
+                        foreach (var (x, yOffset, words) in block.Items)
+                            Drawing.Stamp(sheet, w, h, x, top - yOffset, words, 0);
                     }
                 var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "Sprocket", "Photos");
                 Directory.CreateDirectory(dir);
@@ -382,11 +383,20 @@ internal static class DrawingSheet
 
         static void Set(byte[] rgb, int q, byte grey) { rgb[q] = grey; rgb[q + 1] = grey; rgb[q + 2] = grey; }
 
-        /// The title block's lines, `width` pixels wide at most: the vehicle's name, each kind of gun (its name when it
-        /// has one, caliber and length in calibers, how many), and the description. Whatever can't be read is left out.
-        static List<(int W, int H, byte[] Ink)> TitleBlock(int width)
+        sealed class TitleBlockLayout
         {
-            var parts = new List<(int W, int H, byte[] Ink)>();
+            public int Height;
+            public readonly List<(int X, int YOffset, (int W, int H, byte[] Ink) Words)> Items = new();
+        }
+
+        /// The title block in three columns across `totalWidth` pixels:
+        /// Column 1 (left): vehicle name (56pt bold), followed by horsepower and top speed (36pt).
+        /// Column 2 (middle): weapons/armament (each kind of gun with caliber, name, L/length, count).
+        /// Column 3 (right): vehicle description.
+        /// Whatever can't be read is left out.
+        static TitleBlockLayout TitleBlock(int xLeft, int totalWidth)
+        {
+            var layout = new TitleBlockLayout();
             try
             {
                 string name = "", description = "";
@@ -405,12 +415,146 @@ internal static class DrawingSheet
                             guns.Add($"{gun.Caliber} mm{called}   L/{gun.BarrelLength / (float)gun.Caliber:0.#}");
                         }
                 var armament = string.Join("\n", guns.GroupBy(g => g).Select(g => (g.Count() > 1 ? $"{g.Count()} × " : "") + g.Key));
-                foreach (var (text, size, bold) in new[] { (name, 56, true), (armament, 36, false), (description, 36, false) })
-                    if (Drawing.Words(text, size, bold, width) is { W: > 0 } words) parts.Add(words);
-                Plugin.ModLog.LogInfo($"QOL_DRAWING title block: \"{name}\", {guns.Count} guns, {description.Length} characters of description");
+
+                var allComponents = DesignEditor.Instance?.AllComponents().ToList() ?? new();
+                var engines = allComponents.Select(c => c.TryCast<Sprocket.Vehicles.Engines.CombustionEngine>()).Where(e => e?.Blueprint != null).OfType<Sprocket.Vehicles.Engines.CombustionEngine>().ToList();
+                if (engines.Count == 0 && DesignEditor.Instance != null)
+                    engines = DesignEditor.Instance.AllParts().SelectMany(p => p.GetComponentsInChildren<Sprocket.Vehicles.Engines.CombustionEngine>()).Where(e => e?.Blueprint != null).ToList();
+                var engine = (engines.FirstOrDefault(e => e.SelectedInPowertrain) ?? engines.FirstOrDefault())?.Blueprint;
+
+                var gearboxes = allComponents.Select(c => c.TryCast<Sprocket.Vehicles.Transmissions.TransmissionBlock>()).OfType<Sprocket.Vehicles.Transmissions.TransmissionBlock>().ToList();
+                if (gearboxes.Count == 0 && DesignEditor.Instance != null)
+                    gearboxes = DesignEditor.Instance.AllParts().SelectMany(p => p.GetComponentsInChildren<Sprocket.Vehicles.Transmissions.TransmissionBlock>()).ToList();
+                var gearbox = gearboxes.FirstOrDefault(t => t.SelectedInPowertrain) ?? gearboxes.FirstOrDefault();
+
+                var tracks = allComponents.Select(c => c.TryCast<Sprocket.Vehicles.Tracks.TrackAssembly>()).Where(t => t?.BlueprintSlot?.HasBlueprint == true).OfType<Sprocket.Vehicles.Tracks.TrackAssembly>().ToList();
+                if (tracks.Count == 0 && DesignEditor.Instance != null)
+                    tracks = DesignEditor.Instance.AllParts().SelectMany(p => p.GetComponentsInChildren<Sprocket.Vehicles.Tracks.TrackAssembly>()).Where(t => t?.BlueprintSlot?.HasBlueprint == true).ToList();
+                var track = tracks.FirstOrDefault();
+
+                string powerText = "";
+                if (engine is { MaxRPM: > 0, MaxTorque: > 0 })
+                {
+                    float hp = 0;
+                    try
+                    {
+                        float idle = Math.Clamp(engine.IdleRPM, 1, Math.Max(1, engine.MaxRPM - 1)), max = Math.Max(1, engine.MaxRPM);
+                        float peakKw = Enumerable.Range(0, 101)
+                            .Select(k => idle + (max - idle) * k / 100f)
+                            .Select(rpm => Sprocket.Engines.EngineRules.CalculatePowerAtRPM(engine.MaxTorque, rpm, max))
+                            .DefaultIfEmpty(0)
+                            .Max();
+                        if (peakKw > 0) hp = peakKw * 1.341022f;
+                    }
+                    catch { }
+                    if (hp <= 0) hp = engine.MaxTorque * engine.MaxRPM / 7120.54f;
+                    string called = string.IsNullOrWhiteSpace(engine.Name) || engine.Name == "Unnamed Engine" || engine.Name == "Unnamed Combustion Engine" ? "" : "  " + engine.Name.Trim();
+                    powerText = $"{MathF.Round(hp).ToString("0", System.Globalization.CultureInfo.InvariantCulture)} hp{called}";
+                }
+
+                string speedText = "";
+                if (engine is { MaxRPM: > 0 } && gearbox != null && track?.BlueprintSlot?.HasBlueprint == true)
+                {
+                    var ratios = (gearbox.resultingDriveGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
+                    var reverse = (gearbox.resultingReverseGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
+                    float finalDrive = track.BlueprintSlot.Blueprint.FinalDriveRatio;
+                    var sprocket = track.SprocketAssembly?.WheelBlueprint;
+                    float radius = sprocket?.HasBlueprint == true ? sprocket.Blueprint.Radius : 0;
+                    if (ratios.Length > 0 && radius > 0 && finalDrive > 0)
+                    {
+                        float limit = float.MaxValue;
+                        try { if (track.TopSpeed > 0) limit = track.TopSpeed * 3.6f; } catch { }
+                        float Speed(float ratio) => Sprocket.VehicleDesigner.Powertrains.PowertrainInfo.CalculateSpeed(engine.MaxRPM, ratio * finalDrive, radius) * 3.6f;
+                        float fwdSpeed = Math.Min(Speed(ratios.Min()), limit);
+                        string fwdStr = MathF.Round(fwdSpeed).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+                        if (reverse.Length > 0)
+                        {
+                            float revSpeed = Math.Min(Speed(reverse.Min()), limit);
+                            string revStr = MathF.Round(revSpeed).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+                            speedText = $"Top speed:  {fwdStr} km/h (forward) / {revStr} km/h (reverse)";
+                        }
+                        else
+                        {
+                            speedText = $"Top speed:  {fwdStr} km/h";
+                        }
+                    }
+                }
+
+                var mobility = string.Join("\n", new[] { powerText, speedText }.Where(s => !string.IsNullOrEmpty(s)));
+
+                const int colGap = 80;
+                const int headerGap = 10;
+                const int sectionGap = 20;
+                int colWidth = Math.Max(100, (totalWidth - 2 * colGap) / 3);
+                int col1X = xLeft;
+                int col2X = xLeft + colWidth + colGap;
+                int col3X = xLeft + 2 * (colWidth + colGap);
+                int col3Width = Math.Max(100, (xLeft + totalWidth) - col3X);
+
+                var col1Items = new List<(int YOffset, (int W, int H, byte[] Ink) Words)>();
+                int col1High = 0;
+                if (Drawing.Words(name, 56, true, colWidth) is { } nameWords)
+                {
+                    col1Items.Add((col1High, nameWords));
+                    col1High += nameWords.H;
+                }
+                if (!string.IsNullOrWhiteSpace(mobility))
+                {
+                    if (col1High > 0) col1High += sectionGap;
+                    if (Drawing.Words("MOBILITY", 36, true, colWidth) is { } mobHeaderWords)
+                    {
+                        col1Items.Add((col1High, mobHeaderWords));
+                        col1High += mobHeaderWords.H + headerGap;
+                    }
+                    if (Drawing.Words(mobility, 36, false, colWidth) is { } mobWords)
+                    {
+                        col1Items.Add((col1High, mobWords));
+                        col1High += mobWords.H;
+                    }
+                }
+
+                var col2Items = new List<(int YOffset, (int W, int H, byte[] Ink) Words)>();
+                int col2High = 0;
+                if (!string.IsNullOrWhiteSpace(armament))
+                {
+                    if (Drawing.Words("WEAPONS", 36, true, colWidth) is { } gunHeaderWords)
+                    {
+                        col2Items.Add((col2High, gunHeaderWords));
+                        col2High += gunHeaderWords.H + headerGap;
+                    }
+                    if (Drawing.Words(armament, 36, false, colWidth) is { } gunWords)
+                    {
+                        col2Items.Add((col2High, gunWords));
+                        col2High += gunWords.H;
+                    }
+                }
+
+                var col3Items = new List<(int YOffset, (int W, int H, byte[] Ink) Words)>();
+                int col3High = 0;
+                if (!string.IsNullOrWhiteSpace(description))
+                {
+                    if (Drawing.Words("DESCRIPTION", 36, true, col3Width) is { } descHeaderWords)
+                    {
+                        col3Items.Add((col3High, descHeaderWords));
+                        col3High += descHeaderWords.H + headerGap;
+                    }
+                    if (Drawing.Words(description, 36, false, col3Width) is { } descWords)
+                    {
+                        col3Items.Add((col3High, descWords));
+                        col3High += descWords.H;
+                    }
+                }
+
+                int blockHigh = Math.Max(col1High, Math.Max(col2High, col3High));
+                layout.Height = blockHigh;
+                foreach (var (y, w) in col1Items) layout.Items.Add((col1X, y, w));
+                foreach (var (y, w) in col2Items) layout.Items.Add((col2X, y, w));
+                foreach (var (y, w) in col3Items) layout.Items.Add((col3X, y, w));
+
+                Plugin.ModLog.LogInfo($"QOL_DRAWING title block: \"{name}\", {guns.Count} guns, {powerText}, {speedText}, {description.Length} characters of description");
             }
             catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_DRAWING no title block: {ex.Message}"); }
-            return parts;
+            return layout;
         }
 
         /// The sheet's writing: each view's name over it; the overall length and height beside the side view, the width
