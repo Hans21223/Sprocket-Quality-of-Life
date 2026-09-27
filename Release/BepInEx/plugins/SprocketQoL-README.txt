@@ -28,6 +28,10 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 - Fix mirror: Mirror only pairs points that match to a fraction of a mm. Fix mirror makes near pairs exact again
   (within 5 mm by default), puts near-middle points on the middle, and selects points with no mirror image (where
   the sides differ: merged, split or filled on one side only).
+- Rotation snap: Mesh tools' Rotation snap (degrees) sets the step turns snap to while the game's rotation snap is
+  on (points and whole parts): 7.5 makes a 48-sided circle, 5 a 72-sided one. 0 keeps the game's step.
+- Merge (M) both sides: with Mirror on, merging points merges their mirror images too, in one step (Ctrl+Z undoes
+  both). Turn it off in Mirror fixes.
 - Turret to Add-on: turns a turret into a fixed add-on. Guns, crew and attached parts stay where they are.
 - Mesh tools (Blender-style; Mirror applies; Ctrl+Z undoes each; each is checked first and not done if it would crack
   the shape, turn or squash a face, or lay faces over each other; rivets on rebuilt faces stay, here and in Merge

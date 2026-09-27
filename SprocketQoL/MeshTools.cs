@@ -100,7 +100,7 @@ public static class MeshTools
         }
     }
 
-    static float Tolerance => MeshTransformation.MirrorMaxDistance > 0 ? MeshTransformation.MirrorMaxDistance : 0.0003f;
+    internal static float Tolerance => MeshTransformation.MirrorMaxDistance > 0 ? MeshTransformation.MirrorMaxDistance : 0.0003f;
 
     /// With Mirror on, the mirrored twins of these edges (both ends must have a twin, and a face must use the edge).
     static List<(int, int)> WithTwins(View v, List<(int A, int B)> edges, bool mirror)
@@ -1352,6 +1352,10 @@ public static class MeshTools
             halfGrid = v;
             if (!v && gridBefore is { } before) { __instance.meshEditor.GridSize = before; gridBefore = null; }
         }), "Snapping (hold Ctrl while moving) uses a 0.5 mm grid instead of the game's smallest, 1 mm.");
+        ui.Slider("Rotation snap (°, 0: the game's)", Plugin.RotationSnap?.Value ?? 0, 0, 90, Ui.FloatCallback(v =>
+        {
+            if (Plugin.RotationSnap != null) Plugin.RotationSnap.Value = MathF.Round(v * 4) / 4; // quarter degrees: 3.75° is a 96-sided circle
+        }));
         ui.ToggleField("Ortho: straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
             "Orthographic view snaps to front, back, sides or top (orbiting flips between them). Numpad 1 / 3 / 7: front, side, top; " +
             "with Ctrl, back and the other side. Off: orbit freely.");
@@ -1388,6 +1392,8 @@ public static class MeshTools
         ui.Slider("Fix mirror within (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
         ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), ref fixTip);
         ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), ref fixTip);
+        ui.ToggleField("Merge (M) both sides with Mirror", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
+            "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
     });
 }
 

@@ -144,6 +144,13 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   puts points that near the middle onto it, and selects any point left with no mirror image, to show where the two
   sides really differ. Choose which side is right (the right, +x, or the left), or let both meet halfway. Works on the
   selected points, or the whole shape if none are selected.
+- **Rotation snap angle:** **Rotation snap (°)** in Mesh tools sets the step turns snap to while the game's rotation
+  snap is on, for points in a hand-made structure and for whole parts: 7.5° makes a 48-sided circle, 5° a 72-sided
+  one, 3.75° a 96-sided one. 0 keeps the game's own step; the game's rotation snap key still turns snapping off.
+- **Merge (M) both sides with Mirror** (on by default, in Mirror fixes): the game's Merge ignores Mirror, so you had
+  to merge each side by hand and the two sides drifted apart. Now, with Mirror on, merging points also merges their
+  mirror images on the other side, the game's own merge run again in the same step (Ctrl+Z undoes both), with the
+  merged point put exactly opposite the first so Mirror keeps pairing them.
 - **Exploded view (F2):** the running gear (tracks, road wheels, sprockets, idlers, suspension) stays on the ground and
   the hull lifts off it; every other part moves away from the part it's on, straight up or down or outward on the
   level, and parts on parts go further; **F3 / F4** bring them closer or further apart (the spread is remembered). F2 again
