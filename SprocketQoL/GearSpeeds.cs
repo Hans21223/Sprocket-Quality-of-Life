@@ -46,7 +46,8 @@ public static class GearSpeeds
         var summary = string.Join(" | ", text.Split('\n').Where(l => !l.StartsWith("Gear")));
         if (summary != shown) { shown = summary; Plugin.ModLog.LogInfo($"{Title}: {shown}"); }
         Ui.Section(layout, Title);
-        ui.InfoField(text, text.Split('\n').Length); // every line is short, so none wraps past the space given
+        // A line each, and one more for each long line (it wraps in a narrow panel, and would run over what's below).
+        ui.InfoField(text, text.Split('\n').Sum(l => l.Length > 40 ? 2 : 1));
     }
 
     /// Everything the drive needs, read straight off the parts.
@@ -113,10 +114,9 @@ public static class GearSpeeds
         catch { return null; }
     }
 
-    /// Seconds from standing to top speed on flat ground at full throttle: the engine's torque at its current revs (the
-    /// game's power curve) through whichever gear pushes hardest, less rolling resistance and drag, on the vehicle's
-    /// mass plus the engine and sprockets spinning up; no drive while changing gear. Stops at the tracks' speed limit,
-    /// the top gear's max revs, or where drag and rolling resistance use up all the push.
+    /// Seconds from standing to top speed on flat ground at full throttle (see Acceleration): the engine's torque at its
+    /// current revs (the game's power curve), rolling resistance and drag. Top speed: the tracks' speed limit or the top
+    /// gear's max revs.
     static (float Seconds, float Reached, int Shifts) Accelerate(Drive d)
     {
         var e = d.Engine;
@@ -138,35 +138,6 @@ public static class GearSpeeds
 
         float top = Omega(max) / (d.Ratios.Min() * d.FinalDrive) * d.Radius;
         if (d.Limit > 0) top = Math.Min(top, d.Limit);
-        float v = 0, t = 0;
-        int gear = -1, shifts = 0;
-        const float dt = 0.02f;
-        while (v < top * 0.995f && t < 600)
-        {
-            // The gear that pushes hardest right now, counting the engine it has to spin up.
-            float best = 0;
-            int pick = -1;
-            for (int i = 0; i < d.Ratios.Length; i++)
-            {
-                float g = d.Ratios[i] * d.FinalDrive / d.Radius;          // sprocket-to-ground and gearing, per metre
-                float rpm = v * g * 30 / MathF.PI;
-                if (rpm > max) continue;
-                float a = TorqueAt(rpm) * g / (d.Mass + d.EngineInertia * g * g + d.SprocketInertia / (d.Radius * d.Radius));
-                if (a > best) { best = a; pick = i; }
-            }
-            if (pick < 0) break;
-            if (gear >= 0 && pick != gear)
-            {
-                // Changing gear: nothing drives, drag and rolling resistance still slow the vehicle.
-                shifts++;
-                for (float s = 0; s < d.ShiftTime; s += dt) { v = Math.Max(0, v - Resist(v) / d.Mass * dt); t += dt; }
-            }
-            gear = pick;
-            float net = best - Resist(v) / d.Mass;
-            if (net <= 1e-3f) break;                                           // it can't go any faster
-            v += net * dt;
-            t += dt;
-        }
-        return (t, v, shifts);
+        return Acceleration.Run(TorqueAt, Resist, d.Ratios, d.FinalDrive, d.Radius, d.Mass, d.EngineInertia, d.SprocketInertia, max, d.ShiftTime, top);
     }
 }
