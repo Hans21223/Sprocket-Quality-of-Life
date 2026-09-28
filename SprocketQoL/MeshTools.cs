@@ -100,7 +100,7 @@ public static class MeshTools
         }
     }
 
-    static float Tolerance => MeshTransformation.MirrorMaxDistance > 0 ? MeshTransformation.MirrorMaxDistance : 0.0003f;
+    internal static float Tolerance => MeshTransformation.MirrorMaxDistance > 0 ? MeshTransformation.MirrorMaxDistance : 0.0003f;
 
     /// With Mirror on, the mirrored twins of these edges (both ends must have a twin, and a face must use the edge).
     static List<(int, int)> WithTwins(View v, List<(int A, int B)> edges, bool mirror)
@@ -120,10 +120,10 @@ public static class MeshTools
 
     /// Takes out the plan's faces and puts in its new ones, with the game's own mesh calls. Old corners keep their face's
     /// thickness and thickening; new points blend from the corners they come from. Edges and points nothing uses go.
-    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did)
+    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true)
     {
         if (plan.Why != null) return (false, plan.Why);
-        if (MeshPlans.Check(view.Pos, view.Corners, plan) is string broken) return (false, "not done: " + broken);
+        if (MeshPlans.Check(view.Pos, view.Corners, plan, gaps) is string broken) return (false, "not done: " + broken);
         int old = view.Pos.Count;
         var verts = new List<Vertex>(view.Verts);
         var ids = new Dictionary<IntPtr, int>();
@@ -141,7 +141,8 @@ public static class MeshTools
         var anyCorner = new Dictionary<int, Loop>();
         foreach (int f in plan.Remove.Concat(Enumerable.Range(0, view.Faces.Count)))
             foreach (int v in view.Corners[f]) if (!anyCorner.ContainsKey(v)) anyCorner[v] = view.CornerIn(f, v)!;
-        Loop Corner(int f, int v) => view.CornerIn(f, v) ?? anyCorner[v];
+        // A point on no face (a loose edge's) takes its settings from the face the new one is made from.
+        Loop Corner(int f, int v) => view.CornerIn(f, v) ?? (anyCorner.TryGetValue(v, out var any) ? any : view.Faces[f].firstLoop);
         float Thickness(int f, int v) => v < old ? Corner(f, v).thickness
             : plan.Points[v - old].Blend.Sum(b => b.W * Thickness(f, b.V)) / plan.Points[v - old].Blend.Sum(b => b.W);
         Loop From(int f, int v) => Corner(f, v < old ? v : plan.Points[v - old].Blend[0].V);
@@ -360,6 +361,96 @@ public static class MeshTools
             }
             mesh.MarkDirty(MeshDirtyFlags.All);
             return (true, $"selected {found.Count} faces ({found.Count - v.SelectedFaces.Count} more)");
+        });
+    }
+
+    static int bridgeCuts = 4;
+    static float bridgeSmooth = 100; // percent: 0 straight across, 100 about round
+    static float mirrorMm = 5;
+    static MeshPlans.MirrorKeep mirrorKeep;
+    static readonly string[] KeepNames = { "Fix mirror: both sides meet halfway", "Fix mirror: keep the right side (+x)", "Fix mirror: keep the left side (-x)" };
+
+    static Num Image(Num p) => new(-p.X, p.Y, p.Z);
+
+    /// Bridge (Blender's Bridge Edge Loops): two chains of selected edges joined by a strip of faces.
+    static void Bridge(PlateStructureEditor e)
+    {
+        if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Bridge: switch to Edges and select two chains of edges"); return; }
+        bool mirror = e.meshEditor.Symmetry;
+        int cuts = bridgeCuts;
+        float smooth = bridgeSmooth / 100;
+        Run(e, "Bridge", mesh =>
+        {
+            var v = new View(mesh);
+            if (v.SelectedEdges.Count == 0) return (false, "select two chains of edges first (the open edges of two plates)");
+            var twins = mirror ? MeshPlans.Twins(v.Pos, Enumerable.Range(0, v.Pos.Count), Tolerance) : null;
+            // The strip's open sides are new open edges on purpose, so gaps aren't checked; faces laid over each other are.
+            return Apply(mesh, v, MeshPlans.Bridge(v.Pos, v.Corners, v.SelectedEdges, cuts, smooth, twins), $"bridge ({cuts} cuts, {smooth:P0} smooth)", gaps: false);
+        });
+    }
+
+    /// Circle (LoopTools' Circle): the selected points spread evenly round a true circle.
+    static void Circle(PlateStructureEditor e)
+    {
+        bool mirror = e.meshEditor.Symmetry;
+        Run(e, "Circle", mesh =>
+        {
+            var v = new View(mesh);
+            var points = new HashSet<int>(v.SelectedPoints);
+            if (points.Count < 3) return (false, "select three or more points round a loop (Alt+click an edge selects a loop)");
+            var moved = MeshPlans.Circle(v.Pos, points);
+            if (moved.Count == 0) return (false, "these points lie along a line: select points round a loop");
+            if (mirror)
+            {
+                var twins = MeshPlans.Twins(v.Pos, points, Tolerance);
+                foreach (var (p, twin) in twins)
+                {
+                    if (twin == p) { moved[p] = new Num(0, moved[p].Y, moved[p].Z); continue; } // on the middle: stays on it
+                    if (!points.Contains(twin)) { moved[twin] = Image(moved[p]); continue; } // one side selected: the other follows
+                    if (p < twin) continue;
+                    // Both sides selected (a loop round the middle): each pair set exactly mirrored, as Mirror wants.
+                    var meet = (moved[p] + Image(moved[twin])) / 2;
+                    moved[p] = meet;
+                    moved[twin] = Image(meet);
+                }
+            }
+            if (MeshPlans.Folds(v.Pos, v.Corners, moved) is string folds) return (false, "not done: " + folds);
+            foreach (var (p, at) in moved) v.Verts[p].position = new Vector3(at.X, at.Y, at.Z);
+            mesh.MarkDirty(MeshDirtyFlags.All);
+            var c = points.Aggregate(Num.Zero, (s, p) => s + moved[p]) / points.Count;
+            return (true, $"{points.Count} points spread round a circle {Num.Distance(moved[points.First()], c) * 2000:0} mm across" + (moved.Count > points.Count ? $", {moved.Count - points.Count} mirrored" : ""));
+        });
+    }
+
+    /// Fix mirror: points nearly each other's mirror image made exactly so (and near-centre points put on the middle),
+    /// so the editor's Mirror finds them again. The points left with no mirror image are selected, to show where the
+    /// two sides differ.
+    static void FixMirror(PlateStructureEditor e)
+    {
+        float tolerance = mirrorMm / 1000;
+        var keep = mirrorKeep;
+        Run(e, "Fix mirror", mesh =>
+        {
+            var v = new View(mesh);
+            var start = v.SelectedPoints.Count > 0 ? v.SelectedPoints.ToList() : Enumerable.Range(0, v.Pos.Count).ToList();
+            var (moved, unmatched) = MeshPlans.FixMirror(v.Pos, start, tolerance, keep);
+            if (MeshPlans.Folds(v.Pos, v.Corners, moved) is string folds) return (false, "not done: " + folds);
+            foreach (var (p, at) in moved) v.Verts[p].position = new Vector3(at.X, at.Y, at.Z);
+            if (unmatched.Count > 0)
+            {
+                // Show where: those points selected, nothing else.
+                var vertices = mesh.vertices;
+                for (int i = 0; i < vertices.Count; i++) vertices[i].DisableFlag(ElementFlags.Selected);
+                var edges = mesh.edges;
+                for (int i = 0; i < edges.Count; i++) edges[i].DisableFlag(ElementFlags.Selected);
+                var faces = mesh.faces;
+                for (int i = 0; i < faces.Count; i++) faces[i].DisableFlag(ElementFlags.Selected);
+                foreach (int p in unmatched) v.Verts[p].EnableFlag(ElementFlags.Selected);
+            }
+            mesh.MarkDirty(MeshDirtyFlags.All);
+            string scope = v.SelectedPoints.Count > 0 ? "selected points" : "whole shape";
+            return (true, $"{scope}: {moved.Count} points moved to match (within {mirrorMm:0.#} mm)" +
+                          (unmatched.Count == 0 ? ", every point has its mirror image" : $", {unmatched.Count} have no mirror image and are selected: the sides differ there (merged, split or filled on one side only)"));
         });
     }
 
@@ -1261,6 +1352,10 @@ public static class MeshTools
             halfGrid = v;
             if (!v && gridBefore is { } before) { __instance.meshEditor.GridSize = before; gridBefore = null; }
         }), "Snapping (hold Ctrl while moving) uses a 0.5 mm grid instead of the game's smallest, 1 mm.");
+        ui.Slider("Rotation snap (°, 0: the game's)", Plugin.RotationSnap?.Value ?? 0, 0, 90, Ui.FloatCallback(v =>
+        {
+            if (Plugin.RotationSnap != null) Plugin.RotationSnap.Value = MathF.Round(v * 4) / 4; // quarter degrees: 3.75° is a 96-sided circle
+        }));
         ui.ToggleField("Ortho: straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
             "Orthographic view snaps to front, back, sides or top (orbiting flips between them). Numpad 1 / 3 / 7: front, side, top; " +
             "with Ctrl, back and the other side. Off: orbit freely.");
@@ -1276,6 +1371,29 @@ public static class MeshTools
         ui.ToggleField("Ortho: measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
             "Orthographic view, looking straight from the front, back, side or top: the vehicle's overall size across the screen " +
             "(under it) and up the screen (beside it), to the centimetre. Antennas aren't counted.");
+
+        Ui.Section(layout, "Bridge and circle");
+        ui.InfoField("Bridge: in Edges, select the open edges of two\nplates (or two loops), then Bridge.\nCircle: select points round a loop.", 3);
+        var bridgeTip = new UITooltip("Bridge", "Joins two chains of selected edges with a strip of faces, like Blender's Bridge Edge Loops: " +
+            "the open edges of two plates, or two loops of edges (a tube). Both need as many points. Cuts: rows of points across the strip. " +
+            "Smooth: 0 goes straight across; 100 leaves each plate the way it runs and curves round into the other. With Mirror on, the other side too.");
+        ui.Slider("Bridge cuts", bridgeCuts, 0, 32, Ui.FloatCallback(v => bridgeCuts = (int)Math.Round(v)));
+        ui.Slider("Bridge smooth (%)", bridgeSmooth, 0, 200, Ui.FloatCallback(v => bridgeSmooth = MathF.Round(v)));
+        ui.Button("Bridge: select two chains of edges", Ui.Callback(() => Bridge(__instance)), ref bridgeTip);
+        var circleTip = new UITooltip("Circle", "The selected points spread evenly round a true circle (LoopTools' Circle): on their best plane, " +
+            "round their middle, as far out as they are on average. For a rounder shape, loop cut first (more points), then Circle. With Mirror on, the other side follows.");
+        ui.Button("Circle: selected points round a loop", Ui.Callback(() => Circle(__instance)), ref circleTip);
+
+        Ui.Section(layout, "Mirror fixes");
+        ui.InfoField("Mirror pairs points only if they match to a\nfraction of a mm. Fix mirror makes near pairs\nexact again, and selects points with no pair.", 3);
+        var fixTip = new UITooltip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
+            "that near the middle go onto it, so the editor's Mirror moves them together again. Selected points only, or the whole shape if none are selected. " +
+            "Points left with no mirror image are selected afterwards: the two sides differ there (merged, split or filled on one side only).");
+        ui.Slider("Fix mirror within (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
+        ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), ref fixTip);
+        ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), ref fixTip);
+        ui.ToggleField("Merge (M) both sides with Mirror", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
+            "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
     });
 }
 
