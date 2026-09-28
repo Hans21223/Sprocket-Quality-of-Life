@@ -16,7 +16,8 @@ using Sprocket.Vehicles.Transmissions.Editor;
 namespace SprocketQoL;
 
 /// Powertrain: a "Speed & acceleration" section in the Transmission and Engine panels with every gear's top speed
-/// (the game's own formula, capped by the tracks' speed limit) and how long the vehicle takes to reach top speed.
+/// (the game's own formula at the engine's rev limit, capped by the tracks' speed limit) and how long the vehicle takes
+/// to reach top speed, driven the way the game drives (see Acceleration).
 [HarmonyPatch]
 public static class GearSpeeds
 {
@@ -51,8 +52,27 @@ public static class GearSpeeds
     }
 
     /// Everything the drive needs, read straight off the parts.
-    sealed record Drive(EngineBlueprint Engine, float[] Ratios, float FinalDrive, float Radius, float Mass, float Limit,
-                        float ShiftTime, float EngineInertia, float SprocketInertia, float Drag, RollingResistanceParameters? Rolling, int Tracks);
+    sealed record Drive(EngineBlueprint Engine, float[] Ratios, float FinalDrive, float Radius, float Mass, float Limit, float RevLimit,
+                        float Disengage, float Engage, float EngineInertia, float SprocketInertia, float Drag, int Tracks);
+
+    /// The tracks' losses and grip as the game set them up when the vehicle last drove (a test drive or battle): rolling
+    /// resistance, sprocket drag, belt bending and friction depend on the track's technology and belt, which the design
+    /// editor doesn't hold. Until then, the game's defaults for standard tracks.
+    sealed record TrackPhysics(float Rolling, float RollingPerSpeed2, float Viscous, float Bending, float Friction, bool Measured);
+    static TrackPhysics tracksSeen = new(0.03f, 0.001f, 0, 0, 0.8f, false);
+
+    [HarmonyPostfix, HarmonyPatch(typeof(TrackAssembly), nameof(TrackAssembly.EnableBehaviour))]
+    static void TrackStarted(TrackAssembly __instance) => Ui.Guard(Title, () =>
+    {
+        var track = __instance.Controller?.TryCast<TrackBehaviour>();
+        if (track == null) return;
+        var info = track.UpdateInfo;
+        var job = track.UpdateJob;
+        var rr = info.rrParameters;
+        tracksSeen = new(rr.rollingResistanceConstant, rr.velocityDependentRollingResistanceConstant, job.viscousDragCoefficient,
+                         job.bendingResistance, info.dynamicFrictionCoefficient, true);
+        Plugin.ModLog.LogInfo($"{Title}: track physics {tracksSeen}");
+    });
 
     /// Gear ratios (this transmission, else the powertrain's), the engine (this one, else the powertrain's), the
     /// tracks' final drive, drive sprocket and speed limit.
@@ -76,48 +96,55 @@ public static class GearSpeeds
         float radius = sprocket?.HasBlueprint == true ? sprocket.Blueprint.Radius : 0;
         if (radius <= 0 || finalDrive <= 0 || engine.MaxRPM <= 0) return "Can't read the tracks' drive sprocket yet.";
 
-        var d = new Drive(engine, ratios, finalDrive, radius, mass, Try(() => track.TopSpeed), ShiftTime(gearbox), Try(() => engine.Inertia),
-            tracks.Sum(t => Try(() => t!.ComputeSprocketInertia())), Try(() => VehiclePhysics.DefaultLinearDrag), Rolling(track), Math.Max(1, tracks.Count));
-        string inputs = $"{engine.MaxRPM} rpm (idle {engine.IdleRPM}), {engine.MaxTorque:0} torque, gears {string.Join("/", ratios.Select(r => r.ToString("0.##")))}, " +
-                        $"final drive {finalDrive:0.##}, sprocket radius {radius:0.###}, mass {mass:0} kg, track limit {d.Limit * 3.6f:0.#} km/h, shift {d.ShiftTime:0.##} s, " +
-                        $"engine inertia {d.EngineInertia:0.###}, sprocket inertia {d.SprocketInertia:0.###}, drag {d.Drag:0.####}, " +
-                        $"rolling {(d.Rolling == null ? "not available" : $"{d.Rolling.Value.ComputeLongitudinalRollingResistance(mass * 9.81f, 10):0} N at 10 m/s")}, {tracks.Count} tracks";
+        // The engine never revs past its rev limit: its own setting, or (by default) the upshift rpm + 50.
+        float revLimit = Try(() => engine.RevLimit);
+        if (revLimit <= 0 || revLimit > engine.MaxRPM) revLimit = engine.MaxRPM;
+        var (disengage, engage) = ShiftTimes(gearbox);
+        var d = new Drive(engine, ratios, finalDrive, radius, mass, Try(() => track.TopSpeed), revLimit, disengage, engage, Try(() => engine.Inertia),
+            tracks.Sum(t => Try(() => t!.ComputeSprocketInertia())), Try(() => VehiclePhysics.DefaultLinearDrag), Math.Max(1, tracks.Count));
+        var p = tracksSeen;
+        string inputs = $"{engine.MaxRPM} rpm (idle {engine.IdleRPM}, upshift {engine.Upshift}, rev limit {revLimit}), {engine.MaxTorque:0} torque, " +
+                        $"gears {string.Join("/", ratios.Select(r => r.ToString("0.##")))}, final drive {finalDrive:0.##}, sprocket radius {radius:0.###}, " +
+                        $"mass {mass:0} kg, track limit {d.Limit * 3.6f:0.#} km/h, shift {disengage:0.##} + {engage:0.##} s, engine inertia {d.EngineInertia:0.###}, " +
+                        $"sprocket inertia {d.SprocketInertia:0.###}, drag {d.Drag:0.####}, tracks {p} x {tracks.Count}";
         if (inputs != logged) { logged = inputs; Plugin.ModLog.LogInfo($"{Title} inputs: {inputs}"); }
 
         float limit = d.Limit > 0 ? d.Limit * 3.6f : float.MaxValue;
-        float Speed(float ratio) => PowertrainInfo.CalculateSpeed(engine.MaxRPM, ratio * finalDrive, radius) * 3.6f; // m/s -> km/h
+        float Speed(float ratio) => PowertrainInfo.CalculateSpeed(revLimit, ratio * finalDrive, radius) * 3.6f; // m/s -> km/h
         var text = new StringBuilder();
         for (int i = 0; i < ratios.Length; i++)
             text.Append(Speed(ratios[i]) > limit ? $"Gear {i + 1}:  {limit:0} km/h (track limit; gearing {Speed(ratios[i]):0})\n" : $"Gear {i + 1}:  {Speed(ratios[i]):0} km/h\n");
         if (reverse.Length > 0) text.Append($"Reverse:  {Math.Min(Speed(reverse.Min()), limit):0} km/h\n");
+        text.Append(revLimit < engine.MaxRPM ? $"At the rev limit, {revLimit:0} rpm (upshift {engine.Upshift} + 50)\n" : $"At max revs, {revLimit:0} rpm\n");
         if (mass <= 0) return text.ToString().TrimEnd('\n');
-        var (seconds, reached, shifts) = Accelerate(d);
+        var (seconds, reached, shifts) = Accelerate(d, p);
         text.Append($"0 to {reached * 3.6f:0} km/h in about {seconds:0} s ({shifts} shifts)\n");
-        text.Append(d.Rolling == null ? "Flat ground, full power; no track rolling drag." : "Flat ground, full power, best gear.");
+        text.Append(p.Measured ? "Flat ground, full throttle, automatic gears; track losses from the last drive."
+                               : "Flat ground, full throttle, automatic gears; standard track losses (test drive once for this tank's own).");
         return text.ToString();
     }
 
     static float Try(Func<float> read) { try { return read(); } catch { return 0; } }
 
-    /// Engaging plus disengaging time of the gearbox's type (synchromesh, constant or sliding mesh).
-    static float ShiftTime(TransmissionBlock gearbox) => Try(() => TransmissionMeshTypes.ParseMeshType(gearbox.Blueprint.meshType) switch
+    /// Disengaging and engaging time of the gearbox's type (synchromesh, constant or sliding mesh).
+    static (float Disengage, float Engage) ShiftTimes(TransmissionBlock gearbox)
     {
-        TransmissionMeshType.Synchromesh => TransmissionBehaviour.SynchromeshDisengageTime + TransmissionBehaviour.SynchromeshEngageTime,
-        TransmissionMeshType.ConstantMesh => TransmissionBehaviour.ConstantMeshDisengageTime + TransmissionBehaviour.ConstantMeshEngageTime,
-        _ => TransmissionBehaviour.SlidingMeshDisengageTime + TransmissionBehaviour.SlidingMeshEngageTime,
-    });
-
-    /// The tracks' own rolling resistance numbers, when the game has set them up (a driving vehicle).
-    static RollingResistanceParameters? Rolling(TrackAssembly track)
-    {
-        try { return track.Controller?.TryCast<TrackBehaviour>()?.UpdateInfo.rrParameters; }
-        catch { return null; }
+        try
+        {
+            return TransmissionMeshTypes.ParseMeshType(gearbox.Blueprint.meshType) switch
+            {
+                TransmissionMeshType.Synchromesh => (TransmissionBehaviour.SynchromeshDisengageTime, TransmissionBehaviour.SynchromeshEngageTime),
+                TransmissionMeshType.ConstantMesh => (TransmissionBehaviour.ConstantMeshDisengageTime, TransmissionBehaviour.ConstantMeshEngageTime),
+                _ => (TransmissionBehaviour.SlidingMeshDisengageTime, TransmissionBehaviour.SlidingMeshEngageTime),
+            };
+        }
+        catch { return (0, 0); }
     }
 
-    /// Seconds from standing to top speed on flat ground at full throttle (see Acceleration): the engine's torque at its
-    /// current revs (the game's power curve), rolling resistance and drag. Top speed: the tracks' speed limit or the top
-    /// gear's max revs.
-    static (float Seconds, float Reached, int Shifts) Accelerate(Drive d)
+    /// Seconds from standing to top speed on flat ground at full throttle (see Acceleration): the engine's torque curve
+    /// (the game's power figures) under its rev limiter, the automatic gearbox's shifts, the tracks' losses and grip,
+    /// and drag. Top speed: where nothing pushes harder, or the tracks' speed limit.
+    static (float Seconds, float Reached, int Shifts) Accelerate(Drive d, TrackPhysics p)
     {
         var e = d.Engine;
         float idle = Math.Clamp(e.IdleRPM, 1, e.MaxRPM - 1), max = e.MaxRPM;
@@ -128,16 +155,16 @@ public static class GearSpeeds
             .Select(rpm => EngineRules.CalculatePowerAtRPM(e.MaxTorque, rpm, max) / Omega(rpm)).ToArray();
         float peak = torque.Max();
         if (peak <= 0) return (float.NaN, 0, 0);
-        float TorqueAt(float rpm)
+        float Curve(float rpm)
         {
             float x = Math.Clamp((rpm - idle) / (max - idle), 0, 1) * 100;
             int k = Math.Min((int)x, 99);
             return e.MaxTorque * (torque[k] + (torque[k + 1] - torque[k]) * (x - k)) / peak;
         }
-        float Resist(float v) => (d.Rolling?.ComputeLongitudinalRollingResistance(d.Mass * 9.81f / d.Tracks, v) ?? 0) * d.Tracks + d.Drag * d.Mass * v;
-
-        float top = Omega(max) / (d.Ratios.Min() * d.FinalDrive) * d.Radius;
-        if (d.Limit > 0) top = Math.Min(top, d.Limit);
-        return Acceleration.Run(TorqueAt, Resist, d.Ratios, d.FinalDrive, d.Radius, d.Mass, d.EngineInertia, d.SprocketInertia, max, d.ShiftTime, top);
+        float weight = d.Mass * 9.81f;
+        float Resist(float v) => Acceleration.TrackLosses(v, weight, p.Rolling, p.RollingPerSpeed2, p.Viscous, p.Bending, d.Tracks, d.Radius) + d.Drag * d.Mass * v;
+        var drive = new Acceleration.Drivetrain(Acceleration.RevLimited(Curve, d.RevLimit, Try(() => e.FrictionCoefficient)), d.Ratios, d.FinalDrive,
+            d.Radius, d.Mass, d.EngineInertia, d.SprocketInertia, idle, Math.Min(e.Upshift, d.RevLimit), d.Disengage, d.Engage, p.Friction * weight);
+        return Acceleration.Run(drive, Resist, d.Limit > 0 ? d.Limit : float.MaxValue);
     }
 }

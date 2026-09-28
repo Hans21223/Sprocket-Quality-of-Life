@@ -4,7 +4,10 @@ using Sprocket.Vehicles.Cannons.Editor;
 
 namespace SprocketQoL;
 
-/// Firepower: shows the gun's length in calibers (L/xx) in the Cannon panel.
+/// Firepower: shows the gun's length in calibers (L/xx) in the Cannon panel. L counts from the muzzle to the face of the
+/// breech block, as guns are measured: the barrel plus the chamber, which holds the whole round. In the game the round is
+/// its propellant plus a 3-caliber shell (CannonBlueprint.ShellLength), sitting behind the barrel segments, and
+/// BoreLength is the barrel plus that round.
 [HarmonyPatch]
 public static class GunLength
 {
@@ -14,9 +17,11 @@ public static class GunLength
         var gun = __instance.Component?.Blueprint;
         var ui = layout.TryCast<IGUIElementDrawer>();
         if (gun == null || ui == null || gun.Caliber == 0) return;
+        int barrel = gun.BarrelLength, round = gun.ShellLength, propellant = gun.PropellantLength;
         Ui.Section(layout, "Gun length");
-        ui.InfoField($"Barrel  L/{Calibers(gun.BarrelLength, gun.Caliber)}   ({gun.BarrelLength} mm, {gun.Caliber} mm bore)\n" +
-                     $"Bore  L/{Calibers(gun.BoreLength, gun.Caliber)}   ({gun.BoreLength} mm)", 2);
+        ui.InfoField($"L/{Calibers(gun.BoreLength, gun.Caliber)}   ({gun.BoreLength} mm, muzzle to breech face, {gun.Caliber} mm bore)\n" +
+                     $"Barrel {barrel} mm (L/{Calibers(barrel, gun.Caliber)}) + chamber {round} mm\n" +
+                     $"Round {round} mm: propellant {propellant} + shell {round - propellant}", 3);
     });
 
     static string Calibers(int lengthMm, int caliberMm) => (lengthMm / (float)caliberMm).ToString("0.#");

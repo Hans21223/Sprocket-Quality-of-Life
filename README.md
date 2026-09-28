@@ -73,11 +73,21 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   part really shows is read from the game (parts on scaled mantlets or flipped parents included). The add-on must be a
   closed shape (an open plate has no inside to cut with, and is refused). The add-on is removed or kept
   (**Keep add-on**).
-- **Gun length:** select a cannon, and its panel shows the barrel and bore length in calibers (L/xx).
+- **Gun length:** select a cannon, and its panel shows its length in calibers, **L/xx**, measured as guns are: from
+  the muzzle to the face of the breech block. That's the barrel plus the chamber, which holds the whole round (in the
+  game, the propellant plus a 3-caliber shell). The barrel alone and the round's length are listed below it.
 - **Speed & acceleration:** select a transmission or an engine, and its panel lists every gear's top speed (and
-  reverse), capped by the tracks' speed limit, and how many seconds the vehicle takes from standing to top speed on
-  flat ground. That counts the engine's power curve, the vehicle's mass, the engine and sprockets spinning up, gear
-  changes (by gearbox type), drag, and the tracks' rolling resistance when the game has it set up.
+  reverse) and how many seconds the vehicle takes from standing to top speed on flat ground, worked out the way the
+  game drives (read from its engine, gearbox and track code):
+  - top speeds at the engine's **rev limit** (by default the engine's upshift rpm + 50, not its max rpm), capped by the
+    tracks' speed limit;
+  - the automatic gearbox: first gear, then up a gear each time the engine passes the upshift rpm, if the next gear
+    still pulls; while changing, drive fades out and back in over the gearbox type's times;
+  - the engine's power curve, faded out over the last 50 rpm before the rev limit;
+  - the vehicle's mass, the engine and sprockets spinning up, drag, the tracks' rolling resistance, sprocket drag and
+    belt bending, and no more push than the tracks can grip.
+  The tracks' own figures depend on their technology and belt, which the editor doesn't hold: after a test drive the
+  numbers use the ones the game set up for that drive, before it the game's defaults for standard tracks.
 - **Hole quality:** in a hand-made structure's panel, choose how many segments and how big the game's Create Hole tool
   makes a hole. Holes come out round, stay inside their face, and no longer leave faces inside out. **Hole fill:
   fewest points** (default) joins the hole's ring to the face's corners with no new points; **light rings** puts one
