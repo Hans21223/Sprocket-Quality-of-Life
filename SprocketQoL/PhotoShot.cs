@@ -93,14 +93,28 @@ internal static class PhotoShot
     static System.Collections.IEnumerator Shoot()
     {
         yield return new WaitForEndOfFrame(); // after everything is drawn
+        Texture2D? shot = null;
         try
         {
-            var shot = ScreenCapture.CaptureScreenshotAsTexture();
-            byte[] png = ImageConversion.EncodeToPNG(shot);
-            UnityEngine.Object.Destroy(shot);
-            File.WriteAllBytes(file, png);
+            shot = ScreenCapture.CaptureScreenshotAsTexture();
+            var pixels = shot.GetPixels32();
+            var rgb = new byte[checked(pixels.Length * 3)];
+            int nonOpaque = 0;
+            for (int p = 0; p < pixels.Length; p++)
+            {
+                var pixel = pixels[p];
+                rgb[p * 3] = pixel.r; rgb[p * 3 + 1] = pixel.g; rgb[p * 3 + 2] = pixel.b;
+                if (pixel.a != 255) nonOpaque++;
+            }
+            // HDRP's final RGB already contains smoke blended over the scene, but its alpha may still contain
+            // particle coverage/distortion values. Encoding that alpha makes viewers blend the smoke AGAIN.
+            // Save an opaque RGB photograph without multiplying or compositing its already-finished colours.
+            // GetPixels32 and SavePng both use bottom-up rows, so the original orientation is preserved.
+            Drawing.SavePng(file, shot.width, shot.height, rgb);
+            Plugin.ModLog.LogInfo($"QOL_PHOTO opaque RGB output; discarded render alpha on {nonOpaque} pixels");
         }
         catch (Exception ex) { shotError = ex; }
+        finally { if (shot != null) UnityEngine.Object.Destroy(shot); }
         shotDone = true;
     }
 

@@ -15,7 +15,9 @@ namespace SprocketQoL;
 /// front on top, from the side and from the back below, all at one scale, with a 1 m ruler. Saved three times to
 /// Documents\My Games\Sprocket\Photos: in lines only (black on white), in colour (the paint, lit evenly from every
 /// side, with its decals) with the same lines over it, and see-through (half the colour sheet, half the vehicle with its armour
-/// off). The lines come from the vehicle's own shapes (where faces meet at an angle, open
+/// off). Colour and see-through have
+/// independently chosen lines: colour defaults to clean part contours, see-through to the silhouette only. Drawing: no
+/// wireframe omits both overlays. The lines come from the vehicle's own shapes (where faces meet at an angle, open
 /// edges, the outline of curved parts), with what's behind other parts left out; each view's outline comes from its
 /// picture, so parts whose shapes can't be read are still outlined.
 internal static class DrawingSheet
@@ -99,6 +101,9 @@ internal static class DrawingSheet
     /// One sheet in the making: the views' sizes on it, the camera that takes them, what it changed to take them.
     sealed class Sheet
     {
+        readonly bool noWireframe = Plugin.DrawingNoWireframe?.Value ?? false;
+        readonly bool seeThroughOutline = Plugin.DrawingSeeThroughOutline?.Value ?? true;
+        readonly bool colourOutline = Plugin.DrawingColourOutline?.Value ?? true;
         Bounds box;
         float scale;                                   // pixels per metre, the same in every view
         readonly Drawing.View[] views = new Drawing.View[Views.Length];
@@ -111,7 +116,7 @@ internal static class DrawingSheet
         RenderTexture? target;
         int layers;
         int bottom = Margin;                          // where the drawing starts, over the title block
-        bool fullbrightWas, fogWas;
+        bool fullbrightWas, fogWas, lightingCaptured;
         HashSet<IntPtr> aerials = new(); // the antennas' renderers
         // Everything else in the scene, out of sight while the views are taken: the editor's studio floor and wall
         // share the vehicle's layer, and would stand behind it.
@@ -120,6 +125,7 @@ internal static class DrawingSheet
         // The vehicle's decals: on the pictures with it, off with the armour for the see-through ones.
         readonly List<DecalProjector> projectors = new();
         readonly List<DecalProjector> armourProjectors = new();
+        readonly List<DecalProjector> hiddenEnvironmentProjectors = new();
         readonly List<(DecalProjector Projector, float Distance, float FadeScale)> restoredDecals = new();
         int ownLayer = -1; // the layer the vehicle is moved onto for the pictures (-1: none free, its own layers used)
         readonly Dictionary<IntPtr, (GameObject Object, int Layer)> movedLayers = new();
@@ -129,7 +135,12 @@ internal static class DrawingSheet
         internal static Sheet? Begin()
         {
             var sheet = new Sheet();
-            try { return sheet.Setup() ? sheet : null; }
+            try
+            {
+                if (sheet.Setup()) return sheet;
+                sheet.End();
+                return null;
+            }
             catch (Exception ex) { Fail("couldn't start", ex); sheet.End(); return null; }
         }
 
@@ -187,7 +198,16 @@ internal static class DrawingSheet
             // Every decal's layer too (the map's included): a decal shows only to a camera that sees its layer, so the
             // pictures' layer must be one no decal is on, and only the vehicle's are moved onto it.
             foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<DecalProjector>()))
-                if (o.TryCast<DecalProjector>() is { } dp) used.Add(dp.gameObject.layer);
+                if (o.TryCast<DecalProjector>() is { } dp)
+                {
+                    used.Add(dp.gameObject.layer);
+                    // Hide non-vehicle projectors so they don't bleed into the drawing.
+                    if (dp.enabled && !projectors.Any(p => p.Pointer == dp.Pointer))
+                    {
+                        dp.enabled = false;
+                        hiddenEnvironmentProjectors.Add(dp);
+                    }
+                }
             foreach (var t in Terrain.activeTerrains)
                 if (t != null && t.enabled) { t.enabled = false; hiddenGround.Add(t); }
             // The vehicle on a layer of its own while the views are taken, and the camera sees only that: what the map
@@ -213,17 +233,27 @@ internal static class DrawingSheet
             // The camera stands further back than the editor's: decals that fade with distance are drawn fully. Back in End.
             foreach (var dp in projectors)
             {
-                float distance = dp.drawDistance, fade = dp.fadeScale;
-                if (distance >= 200 && fade >= 1) continue;
-                restoredDecals.Add((dp, distance, fade));
-                dp.drawDistance = Math.Max(distance, 200);
-                dp.fadeScale = 1;
+                if (dp != null)
+                {
+                    float origDist = dp.drawDistance;
+                    float origFade = dp.fadeScale;
+                    if (origDist < 200f || origFade < 1f)
+                    {
+                        restoredDecals.Add((dp, origDist, origFade));
+                        if (origDist < 200f) dp.drawDistance = 200f;
+                        if (origFade < 1f) dp.fadeScale = 1f;
+                    }
+                    // HDRP caches gameObject.layer; changing the layer alone does not update its decal data.
+                    // Refresh even if this projector already had the required distance/fade settings.
+                    dp.OnValidate();
+                }
             }
             // The game's fog, off too: it stood in front of the backdrop (below hull height, and all of the view from
             // above) and hazed the paint.
             fogWas = MeshTools.FogOff;
-            MeshTools.Fog(off: true);
             fullbrightWas = MeshTools.FullbrightOn;
+            lightingCaptured = true;
+            MeshTools.Fog(off: true);
             if (!fullbrightWas) MeshTools.ToggleFullbright();
             var go = new GameObject("Quality of Life drawing camera");
             cam = go.AddComponent<Camera>();
@@ -275,6 +305,7 @@ internal static class DrawingSheet
                 movedLayers[key] = (obj, obj.layer);
                 obj.layer = ownLayer;
             }
+            foreach (var dp in projectors) if (dp != null && dp.enabled) dp.OnValidate();
         }
 
         /// The camera straight at view `i`, just far enough back, drawing only the depth the vehicle fills.
@@ -313,9 +344,9 @@ internal static class DrawingSheet
 
         internal void PutArmourBack()
         {
-            foreach (var r in armour) if (r != null) r.enabled = true;
+            foreach (var r in armour) Restore("armour renderer", () => { if (r != null) r.enabled = true; });
             armour.Clear();
-            foreach (var dp in armourProjectors) if (dp != null) dp.enabled = true;
+            foreach (var dp in armourProjectors) Restore("armour decal", () => { if (dp != null) dp.enabled = true; });
             armourProjectors.Clear();
         }
 
@@ -350,13 +381,15 @@ internal static class DrawingSheet
             catch (Exception ex) { Fail($"couldn't take the {Views[i].Name} view", ex); return false; }
         }
 
-        /// The lines of every view, both sheets put together and saved.
+        /// The lines of every view, all three sheets put together and saved.
         internal void Finish()
         {
             try
             {
                 var shapes = Shapes(out int unreadable);
                 var ink = new bool[Views.Length][];
+                var outlines = new bool[Views.Length][];
+                var cleanOutlines = new bool[Views.Length][];
                 for (int i = 0; i < Views.Length; i++)
                 {
                     var v = views[i];
@@ -365,7 +398,12 @@ internal static class DrawingSheet
                     // Every shape read: the vehicle is only where they are (unread ones are only in the picture).
                     if (unreadable == 0) { Drawing.Clip(solid[i], depth.Z, v.Width, v.Height, 3); Drawing.Clip(insideSolid[i], depth.Z, v.Width, v.Height, 3); }
                     Drawing.Lines(shapes, v, depth, ink[i]);
-                    Drawing.Outline(solid[i], v.Width, v.Height, ink[i]);
+                    // Keep the silhouette separate: mesh creases must not bleed into the see-through overlay.
+                    outlines[i] = new bool[v.Width * v.Height];
+                    Drawing.Outline(solid[i], v.Width, v.Height, outlines[i]);
+                    cleanOutlines[i] = (bool[])outlines[i].Clone();
+                    if (colourOutline && !noWireframe) Drawing.CleanContours(shapes, v, depth, cleanOutlines[i]);
+                    for (int p = 0; p < ink[i].Length; p++) ink[i][p] |= outlines[i][p];
                 }
                 // Top row: from above, then the front; below: the side, then the back (their bottoms level: the ground).
                 // Left of the views and under them, room for the dimensions; over each, its name; under them the ruler,
@@ -398,7 +436,7 @@ internal static class DrawingSheet
                         for (int x = 0; x < v.Width; x++)
                         {
                             int p = y * v.Width + x, q = ((at[i].Y + y) * w + at[i].X + x) * 3;
-                            if (ink[i][p]) { Set(lines, q, 0); Set(painted, q, 30); Set(seeThrough, q, 30); continue; }
+                            if (ink[i][p]) Set(lines, q, 0);
                             bool shell = solid[i][p], core = insideSolid[i][p];
                             for (int c = 0; c < 3; c++)
                             {
@@ -406,6 +444,11 @@ internal static class DrawingSheet
                                 painted[q + c] = (byte)paint;
                                 // Half the paint, half what's inside (white where there's nothing): the armour as glass.
                                 seeThrough[q + c] = (byte)((paint + under) / 2);
+                            }
+                            if (!noWireframe)
+                            {
+                                if (colourOutline ? cleanOutlines[i][p] : ink[i][p]) Set(painted, q, colourOutline ? (byte)65 : (byte)30);
+                                if (seeThroughOutline ? outlines[i][p] : ink[i][p]) Set(seeThrough, q, 30);
                             }
                         }
                 }
@@ -425,7 +468,7 @@ internal static class DrawingSheet
                 Drawing.SavePng(name + ".png", w, h, lines);
                 Drawing.SavePng(name + " (colour).png", w, h, painted);
                 Drawing.SavePng(name + " (see-through).png", w, h, seeThrough);
-                Plugin.ModLog.LogInfo($"QOL_DRAWING saved {name}.png, (colour) and (see-through), {w}x{h}: {shapes.Count} shapes drawn, {unreadable} meshes the game keeps unreadable (outlined only)");
+                Plugin.ModLog.LogInfo($"QOL_DRAWING saved {name}.png, (colour) and (see-through), {w}x{h}: {shapes.Count} shapes drawn, {unreadable} meshes the game keeps unreadable (outlined only); overlays: colour={(noWireframe ? "none" : colourOutline ? "outline" : "wireframe")}, see-through={(noWireframe ? "none" : seeThroughOutline ? "outline" : "wireframe")}");
                 DesignEditor.Instance?.Say($"Drawing sheet saved (lines, colour and see-through): {name}.png", 8);
             }
             catch (Exception ex) { Fail("couldn't draw the sheet", ex); }
@@ -650,7 +693,9 @@ internal static class DrawingSheet
                     var mesh = filter.sharedMesh;
                     if (r == null || aerials.Contains(r.Pointer) || !MeshTools.Drawn(r) || !r.gameObject.activeInHierarchy || mesh == null) continue;
                     if (!mesh.isReadable) { unreadable++; continue; }
-                    shapes.Add(Shape(mesh, filter.transform.localToWorldMatrix));
+                    var shape = Shape(mesh, filter.transform.localToWorldMatrix);
+                    shape.ContourGroup = filter.GetComponentInParent<Sprocket.Vehicles.VehicleObject>()?.VUID ?? part.VUID;
+                    shapes.Add(shape);
                 }
             // Crew figures (anything animated), as they stand now: they hide what's behind them and hold their place
             // in the picture. Their outline is the picture's; the lines inside a figure would only clutter it.
@@ -687,25 +732,47 @@ internal static class DrawingSheet
         /// Everything as it was: the camera gone, the light and the floor back.
         internal void End()
         {
-            try
+            // Restore layers BEFORE re-enabling or refreshing projectors. HDRP caches the layer on registration
+            // and OnValidate; doing this in the opposite order leaves the decal cached on the export-only layer.
+            foreach (var (obj, layer) in movedLayers.Values)
+                Restore("object layer", () => { if (obj != null) obj.layer = layer; });
+            movedLayers.Clear();
+            PutArmourBack();
+            foreach (var dp in hiddenEnvironmentProjectors)
+                Restore("environment decal", () => { if (dp != null) dp.enabled = true; });
+            hiddenEnvironmentProjectors.Clear();
+            foreach (var (dp, dist, fade) in restoredDecals)
             {
-                if (cam != null) { cam.targetTexture = null; UnityEngine.Object.Destroy(cam.gameObject); }
-                if (target != null) { target.Release(); UnityEngine.Object.Destroy(target); }
-                cam = null; target = null;
-                if (!fullbrightWas && MeshTools.FullbrightOn) MeshTools.ToggleFullbright();
-                foreach (var r in hidden) if (r != null) r.enabled = true;
-                PutArmourBack();
-                foreach (var (dp, dist, fade) in restoredDecals) if (dp != null) { dp.drawDistance = dist; dp.fadeScale = fade; }
-                restoredDecals.Clear();
-                projectors.Clear();
-                foreach (var t in hiddenGround) if (t != null) t.enabled = true;
-                foreach (var (obj, layer) in movedLayers.Values) if (obj != null) obj.layer = layer;
-                movedLayers.Clear();
-                if (!fogWas) MeshTools.Fog(off: false);
-                hidden.Clear();
-                hiddenGround.Clear();
+                Restore("decal distance", () => { if (dp != null) dp.drawDistance = dist; });
+                Restore("decal fade", () => { if (dp != null) dp.fadeScale = fade; });
             }
-            catch (Exception ex) { Plugin.ModLog.LogError($"QOL_DRAWING couldn't tidy up: {ex}"); }
+            restoredDecals.Clear();
+            // Includes projectors whose distance/fade never needed changing, and those re-enabled for geometry.
+            int refreshed = 0;
+            foreach (var dp in projectors)
+                Restore("decal render cache", () => { if (dp != null && dp.enabled) { dp.OnValidate(); refreshed++; } });
+            if (projectors.Count > 0) Plugin.ModLog.LogInfo($"QOL_DRAWING restored decal render caches after layers: {refreshed}/{projectors.Count}");
+            projectors.Clear();
+            foreach (var r in hidden) Restore("scene renderer", () => { if (r != null) r.enabled = true; });
+            hidden.Clear();
+            foreach (var t in hiddenGround) Restore("terrain", () => { if (t != null) t.enabled = true; });
+            hiddenGround.Clear();
+            Restore("drawing camera", () => { if (cam != null) { cam.targetTexture = null; UnityEngine.Object.Destroy(cam.gameObject); } });
+            Restore("render target", () => { if (target != null) { target.Release(); UnityEngine.Object.Destroy(target); } });
+            cam = null; target = null;
+            if (lightingCaptured)
+            {
+                Restore("fullbright", () => { if (!fullbrightWas && MeshTools.FullbrightOn) MeshTools.ToggleFullbright(); });
+                Restore("fog", () => { if (!fogWas) MeshTools.Fog(off: false); });
+                lightingCaptured = false;
+            }
+        }
+
+        // One removed scene object or failed restoration must not prevent all remaining decals from returning.
+        static void Restore(string what, Action action)
+        {
+            try { action(); }
+            catch (Exception ex) { Plugin.ModLog.LogError($"QOL_DRAWING couldn't restore {what}: {ex}"); }
         }
 
         static void Fail(string what, Exception ex)

@@ -120,10 +120,18 @@ public static class MeshTools
 
     /// Takes out the plan's faces and puts in its new ones, with the game's own mesh calls. Old corners keep their face's
     /// thickness and thickening; new points blend from the corners they come from. Edges and points nothing uses go.
-    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true)
+    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true, bool preserveBevelEdges = false)
     {
         if (plan.Why != null) return (false, plan.Why);
         if (MeshPlans.Check(view.Pos, view.Corners, plan, gaps) is string broken) return (false, "not done: " + broken);
+        var edgeSources = preserveBevelEdges ? BevelEdges.Sources(view.Pos, view.Corners, plan) : null;
+        // Keep the authored state before creating any topology. The prototype's temporary
+        // tessellation/check flags must not spread into the new chamfer or its neighbouring sides.
+        const ElementFlags edgeSettings = ElementFlags.Selected | ElementFlags.Sharp | ElementFlags.AlternatePlateConnection;
+        var oldEdges = new Dictionary<(int, int), (Edge Edge, ElementFlags Settings)>();
+        if (preserveBevelEdges)
+            foreach (var edge in mesh.edges)
+                oldEdges[FaceMerge.Key(view.Id(edge.v0), view.Id(edge.v1))] = (edge, edge.flags & edgeSettings);
         int old = view.Pos.Count;
         var verts = new List<Vertex>(view.Verts);
         var ids = new Dictionary<IntPtr, int>();
@@ -165,8 +173,19 @@ public static class MeshTools
                 var a = vs[k];
                 var b = vs[(k + 1) % vs.Length];
                 if (Edge.GetConnectingEdge(a, b) is { } existing) { es[k] = existing; continue; }
-                es[k] = mesh.CreateEdge(a, b, source.firstLoop.edge);
-                es[k].DisableFlag(ElementFlags.Sharp);
+                if (edgeSources != null)
+                {
+                    var key = FaceMerge.Key(nf.Corners[k], nf.Corners[(k + 1) % vs.Length]);
+                    bool inherited = edgeSources.TryGetValue(key, out var from) && oldEdges.ContainsKey(from);
+                    var prototype = inherited ? oldEdges[from] : default;
+                    es[k] = mesh.CreateEdge(a, b, inherited ? prototype.Edge : null);
+                    es[k].flags = inherited ? prototype.Settings : ElementFlags.None;
+                }
+                else
+                {
+                    es[k] = mesh.CreateEdge(a, b, source.firstLoop.edge);
+                    es[k].DisableFlag(ElementFlags.Sharp);
+                }
             }
             made.Add((mesh.CreateFace(new Il2CppReferenceArray<Vertex>(vs), new Il2CppReferenceArray<Edge>(es), source,
                 new Il2CppStructArray<ushort>(nf.Corners.Select(i => (ushort)Math.Round(Thickness(nf.Source, i))).ToArray())), nf.Source));
@@ -340,7 +359,7 @@ public static class MeshTools
         {
             var v = new View(mesh);
             if (v.SelectedEdges.Count == 0) return (false, "select edges first");
-            return Apply(mesh, v, MeshPlans.Bevel(v.Pos, v.Corners, WithTwins(v, v.SelectedEdges, mirror), width), "bevel");
+            return Apply(mesh, v, MeshPlans.Bevel(v.Pos, v.Corners, WithTwins(v, v.SelectedEdges, mirror), width), "bevel", preserveBevelEdges: true);
         });
     }
 
@@ -1034,6 +1053,34 @@ public static class MeshTools
     static GameObject? arrowsViewpoint;
     static readonly Dictionary<IntPtr, (Sprocket.Transformations.Gizmos.TransformGizmo Gizmo, Transform Observer)> arrowObservers = new();
 
+    // TransformGizmoHandle.Update passes a fixed 100 m to GetAxis. The whole-view camera is
+    // pulled back by 100 m in addition to its orbit distance: rings draw, but the ray stops
+    // short of their colliders. Extend only orthographic picking to cover this gizmo's bounds.
+    [HarmonyPrefix, HarmonyPatch(typeof(Sprocket.Transformations.Gizmos.TransformGizmo), nameof(Sprocket.Transformations.Gizmos.TransformGizmo.GetAxis))]
+    static void ReachOrthoGizmo(Sprocket.Transformations.Gizmos.TransformGizmo __instance, Ray r, ref float maxDistance)
+    {
+        if (!ortho || Camera.main?.orthographic != true) return;
+        try
+        {
+            var centre = __instance.transform.position;
+            float radius = 0;
+            var axes = __instance.axes;
+            if (axes != null)
+                foreach (var axis in axes)
+                    if (axis?.Collider is { } collider)
+                    {
+                        var bounds = collider.bounds;
+                        radius = Math.Max(radius, Vector3.Distance(centre, bounds.center) + bounds.extents.magnitude);
+                    }
+            maxDistance = GizmoPicking.Reach(maxDistance, Vector3.Distance(r.origin, centre), radius, true);
+        }
+        catch (Exception ex) { Ui.Guard("Orthographic gizmo picking", () => throw ex); }
+    }
+
+    [HarmonyPrefix, HarmonyPatch(typeof(Sprocket.Transformations.Gizmos.TransformGizmo), nameof(Sprocket.Transformations.Gizmos.TransformGizmo.GetSingleAxis))]
+    static void ReachSingleOrthoGizmo(Sprocket.Transformations.Gizmos.TransformGizmo __instance, Ray r, ref float maxDistance)
+        => ReachOrthoGizmo(__instance, r, ref maxDistance);
+
     [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.GizmoRendering.TransformGizmos), nameof(Sprocket.GizmoRendering.TransformGizmos.DrawTransform))]
     static void ArrowSize(float scale, Sprocket.Transformations.Gizmos.ITransformGizmo __result) => Ui.Guard("Orthographic view", () =>
     {
@@ -1339,6 +1386,18 @@ public static class MeshTools
         ui.ToggleField("Proportional (O)", proportional, Ui.BoolCallback(v => proportional = v),
             "Moving, scaling or rotating points pulls the points around them too, less the further away (up to the radius).");
         ui.Slider("Proportional radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
+        ui.ToggleField("Drawing: no wireframe", Plugin.DrawingNoWireframe?.Value ?? false, Ui.BoolCallback(v =>
+        {
+            if (Plugin.DrawingNoWireframe != null) Plugin.DrawingNoWireframe.Value = v;
+        }), "F9 colour and see-through drawings without any added lines, including outlines. Off by default; remembered between sessions. The separate lines-only drawing is unchanged.");
+        ui.ToggleField("Colour: clean outlines", Plugin.DrawingColourOutline?.Value ?? true, Ui.BoolCallback(v =>
+        {
+            if (Plugin.DrawingColourOutline != null) Plugin.DrawingColourOutline.Value = v;
+        }), "F9 colour drawing: outline visible parts and sharp corners, suppressing triangle seams and shallow facets. On by default; turn off for wireframe. Drawing: no wireframe hides all added lines in both coloured exports.");
+        ui.ToggleField("See-through: outline only", Plugin.DrawingSeeThroughOutline?.Value ?? true, Ui.BoolCallback(v =>
+        {
+            if (Plugin.DrawingSeeThroughOutline != null) Plugin.DrawingSeeThroughOutline.Value = v;
+        }), "F9 see-through drawing: highlight only the vehicle silhouette over the visible interior, with no mesh edges. On by default; turn off for wireframe. Drawing: no wireframe hides all added lines in both coloured exports.");
         ui.Slider("Flashlight (% of sun)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
         ui.Slider("Fullbright (% of sun, each light)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
         {

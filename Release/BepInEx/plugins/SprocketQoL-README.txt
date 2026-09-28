@@ -1,6 +1,14 @@
 Quality of Life - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
+Local build 1.7.9.9: bevel preserves settings on recreated surrounding edges and starts new
+chamfer edges with clean flags. Existing edges keep their settings. Includes the earlier fixes below.
+
+Local build 1.7.9.8: orthographic gizmo picking reaches beyond the game's fixed 100 m limit,
+so the displayed rotation rings remain clickable with the pulled-back camera.
+D selects rotation rings; R rotates directly (default bindings, shown in the hotkeys box).
+Includes the previous clean drawing outlines, decal restoration and opaque F8 photo fixes.
+
 Adds new sections to the vehicle editor's own panels. Every section folds away (click its header) and stays
 folded.
 
@@ -53,11 +61,18 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   brightness is in Mesh tools.
 - F8 in photo mode takes a photo at the best graphics settings without leaving photo mode (settings and
   overlay come back after). Saved in Documents\My Games\Sprocket\Photos.
+  Local build 1.7.9.7 saves opaque RGB photos: smoke retains its rendered colour instead of becoming transparent
+  or dark when an image viewer blends the render target's leftover alpha. Existing photos are unchanged.
 - F9 drawing sheet: a technical drawing of the vehicle from above, the front, the side and the back, all at one
   scale, with its length, width and height and a 1 m ruler (antennas left out), and under it the vehicle's name,
   horsepower and top speed, its guns (name, caliber, L/xx) and its description. Saved three times in
   Documents\My Games\Sprocket\Photos: lines only (black on white), in colour (with its decals) with the lines
   over it, and see-through (the armour as glass).
+  Colour uses thin clean outlines around visible parts and sharp corners, filtering flat
+  triangle seams, shallow facets and isolated speckles. See-through keeps its silhouette-only overlay.
+  In Mesh tools, turn off "Colour: clean outlines" or "See-through: outline only" to restore that export's wireframe.
+  Enable "Drawing: no wireframe" to omit all added lines from both coloured exports.
+  These choices are saved between sessions; lines-only stays the same.
 - Own paint: a structure's panel can give the part (and the selected parts) its own paint job ("Own paint 1"
   to "Own paint 9"), with its colours, camo and wear right in the panel. Saved with the design; Ctrl+Z
   undoes each change.

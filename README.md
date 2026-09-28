@@ -124,6 +124,8 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   - **Inset (I):** the selected faces shrink inward by the width set in the panel, with a ring of faces around them.
   - **Bevel (V):** in Edges mode, the selected edges become chamfer strips; where three meet, a cap closes the corner,
     and where a bevel ends inside the plate the strip runs to the point there (no hole left).
+    Recreated surrounding sides inherit their own sharp/connection settings; new chamfer edges do not copy
+    unrelated or temporary edge flags. Existing edges are reused without changing their settings.
   - **Select linked flat faces (U):** grows the selection over faces lying flat with it (angle in the panel).
   - **Proportional editing (O):** moving, scaling or rotating points pulls the points around them too, less the
     further away, up to the radius in the panel. Cancelling, Ctrl+Z and redo take the followers along.
@@ -139,6 +141,8 @@ alongside it through the loader's MLLoader. In the vehicle editor:
     front to back). In a straight view, **Ortho: measurements** (on by default) draws the vehicle's overall size as
     dimension lines: across the screen under it, up the screen beside it, to the centimetre (antennas not counted).
     The game's fog is off in orthographic view, and the move / turn / scale arrows keep a normal size.
+    Gizmo clicks also reach the pulled-back orthographic camera's full distance, so visible rotation rings can
+    be dragged on selected points and edges. **D** selects the rotation rings; **R** rotates directly (default keys).
 - **Bridge** (the **Bridge and circle** section; Blender's Bridge Edge Loops): in Edges mode, select the open edges of two
   plates (or two loops of edges, for a tube) and press **Bridge**: a strip of faces joins them. **Bridge cuts** sets
   how many rows of points go across it; **Bridge smooth** 0 goes straight across, 100 leaves each plate the way it runs
@@ -182,12 +186,20 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   and length in calibers, how many of each), its engine's horsepower and top speed forward and in reverse, and its
   description, in three columns. Three pictures: **lines only** (black on white), **colour** (the paint and decals,
   lit evenly from every side, with the same lines over it) and **see-through** (half the colour picture, half the
-  vehicle with its armour off: the armour as glass). The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
+  vehicle with its armour off: the armour as glass). Colour uses **clean outlines** around visible parts, depth steps and sharp corners, suppressing flat
+  triangle seams, shallow facets and isolated speckles. These thin dark-grey contours preserve detail throughout
+  the vehicle without a mesh overlay. See-through keeps only the vehicle silhouette by default.
+  In **Mesh tools**, turn off **Colour: clean outlines** or **See-through: outline only** to restore that export's wireframe, or enable
+  **Drawing: no wireframe** to omit all added lines from both coloured exports. These choices are remembered between
+  sessions and leave the separate line drawing unchanged.
+  The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
   the outline of curved parts, with what's hidden behind other parts left out; each view is outlined from its picture
   too, so every part has its outline. Saved as PNG in `Documents\My Games\Sprocket\Photos`. Takes a few seconds.
 - **Max-quality photo (F8 in photo mode):** takes a photo with every graphics quality setting at its best, without
   leaving photo mode: the settings go up and the photo mode overlay hides for about a second, then both come back as
   they were. Resolution, anti-aliasing type and looks (vignette, film grain, depth of field on or off) stay yours.
+  The finished photo is saved as opaque RGB: exhaust and other transparent effects keep their rendered colour
+  without leaking the render target's alpha into the PNG and being blended again by image viewers.
   Saved as PNG in `Documents\My Games\Sprocket\Photos`.
 - **Own paint (per part):** a structure's panel has **Paint: vehicle**; click it to give the part (and the other
   selected parts) its own paint job, "Own paint 1", "Own paint 2" and so on (up to 9), using spare paint slots the game

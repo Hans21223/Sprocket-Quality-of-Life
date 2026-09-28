@@ -1,6 +1,11 @@
 using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
+if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
+if (args.Contains("--gizmo-only")) { GizmoPickingTests.Run(); return; }
+if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
+GizmoPickingTests.Run();
+BevelEdgeTests.Run();
 int checks=0, conversions=0;
 void Check(bool ok,string message) { checks++; if(!ok)throw new Exception(message); }
 void Run(string json,int id)

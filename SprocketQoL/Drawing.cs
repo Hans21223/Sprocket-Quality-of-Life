@@ -20,6 +20,7 @@ internal static class Drawing
         public Vector3[] N = Array.Empty<Vector3>();  // each triangle's normal
         public readonly List<(int A, int B, int F1, int F2, bool Crease)> E = new(); // F2 -1: an open edge
         public bool Edges = true; // false: it only hides what's behind it (a crew figure: its outline is the picture's)
+        public int ContourGroup = -1; // vehicle part ID; meshes belonging to one part share an outline group
     }
 
     /// A mesh (world space) as a shape: corners within 0.1 mm made one, so faces that share an edge (even across a
@@ -206,6 +207,67 @@ internal static class Drawing
                 if (solid[y * w + x] && (x == 0 || y == 0 || x == w - 1 || y == h - 1 ||
                     !solid[y * w + x - 1] || !solid[y * w + x + 1] || !solid[(y - 1) * w + x] || !solid[(y + 1) * w + x]))
                     ink[y * w + x] = true;
+    }
+
+    /// Clean technical contours from the frontmost surfaces, not triangle edges. Show part boundaries,
+    /// genuine depth steps and sharp bends; ignore coplanar splits, reversed winding and shallow facets.
+    internal static void CleanContours(IReadOnlyList<Shape> shapes, View v, (float[] Z, int[] Face) depth, bool[] ink)
+    {
+        int count = shapes.Sum(s => s.N.Length), at = 0;
+        var normals = new Vector3[count];
+        var groups = new long[count];
+        var enabled = new bool[count];
+        for (int s = 0; s < shapes.Count; s++)
+            foreach (var normal in shapes[s].N)
+            {
+                normals[at] = normal;
+                groups[at] = shapes[s].ContourGroup >= 0 ? shapes[s].ContourGroup : -1L - s;
+                enabled[at++] = shapes[s].Edges;
+            }
+        var clean = new bool[ink.Length];
+        float step = 1 / v.Scale, jump = MathF.Max(0.002f, step * 0.75f);
+        float sharp = MathF.Cos(50 * MathF.PI / 180);
+        void Compare(int p, int q, Vector3 across)
+        {
+            int a = depth.Face[p], b = depth.Face[q];
+            // The captured silhouette is added separately, including unreadable parts.
+            if (a < 0 || b < 0 || a == b || !enabled[a] || !enabled[b]) return;
+            var delta = across * step + v.Look * (depth.Z[q] - depth.Z[p]);
+            bool part = groups[a] != groups[b];
+            // Both surfaces must see a step off their planes: a steep continuous face is not a depth break.
+            bool gap = MathF.Abs(Vector3.Dot(normals[a], delta)) > jump &&
+                       MathF.Abs(Vector3.Dot(normals[b], delta)) > jump;
+            bool corner = MathF.Abs(Vector3.Dot(normals[a], normals[b])) < sharp;
+            if (part || gap || corner) clean[depth.Z[p] <= depth.Z[q] ? p : q] = true;
+        }
+        for (int y = 0; y < v.Height; y++)
+            for (int x = 0; x < v.Width; x++)
+            {
+                int p = y * v.Width + x;
+                if (x + 1 < v.Width) Compare(p, p + 1, v.Right);
+                if (y + 1 < v.Height) Compare(p, p + v.Width, v.Up);
+            }
+        // Subpixel hardware and grazing triangles can make isolated dots. Keep connected contours of 5+ pixels.
+        var visited = new bool[clean.Length];
+        var component = new List<int>();
+        for (int p = 0; p < clean.Length; p++)
+        {
+            if (!clean[p] || visited[p]) continue;
+            component.Clear(); component.Add(p); visited[p] = true;
+            for (int k = 0; k < component.Count; k++)
+            {
+                int x = component[k] % v.Width, y = component[k] / v.Width;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int xx = x + dx, yy = y + dy;
+                        if (xx < 0 || yy < 0 || xx >= v.Width || yy >= v.Height) continue;
+                        int q = yy * v.Width + xx;
+                        if (clean[q] && !visited[q]) { visited[q] = true; component.Add(q); }
+                    }
+            }
+            if (component.Count >= 5) foreach (int q in component) ink[q] = true;
+        }
     }
 
     // ---------- writing on the sheet: a filled box, text, dimensions ----------

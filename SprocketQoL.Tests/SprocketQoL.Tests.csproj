@@ -16,5 +16,7 @@
     <Compile Include="..\SprocketQoL\MeshPlans.cs" Link="MeshPlans.cs" />
     <Compile Include="..\SprocketQoL\Drawing.cs" Link="Drawing.cs" />
     <Compile Include="..\SprocketQoL\Acceleration.cs" Link="Acceleration.cs" />
+    <Compile Include="..\SprocketQoL\GizmoPicking.cs" Link="GizmoPicking.cs" />
+    <Compile Include="..\SprocketQoL\BevelEdges.cs" Link="BevelEdges.cs" />
   </ItemGroup>
 </Project>

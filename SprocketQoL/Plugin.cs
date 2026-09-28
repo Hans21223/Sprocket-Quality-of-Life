@@ -16,6 +16,9 @@ public sealed class Plugin : BasePlugin
     internal static ManualLogSource ModLog = null!;
     internal static ConfigEntry<string>? Folded;
     internal static ConfigEntry<bool>? ShowHotkeys;
+    internal static ConfigEntry<bool>? DrawingNoWireframe;
+    internal static ConfigEntry<bool>? DrawingSeeThroughOutline;
+    internal static ConfigEntry<bool>? DrawingColourOutline;
     internal static ConfigEntry<float>? ExplodeSpread, FlashlightPercent, FullbrightPercent;
     internal static ConfigEntry<int>? BackupsKept;
     internal static ConfigEntry<float>? RotationSnap;
@@ -23,6 +26,9 @@ public sealed class Plugin : BasePlugin
     public override void Load()
     {
         ModLog = Log;
+        DrawingNoWireframe = Config.Bind("Drawing sheet", "No wireframe", false, "Omit the wireframe overlay from F9 colour and see-through exports. The separate lines-only drawing is unchanged.");
+        DrawingSeeThroughOutline = Config.Bind("Drawing sheet", "See-through outline only", true, "Use only the vehicle silhouette over the see-through interior, instead of mesh edges. No wireframe disables this outline too.");
+        DrawingColourOutline = Config.Bind("Drawing sheet", "Colour outline only", true, "Use clean visible part contours and sharp corners on the colour drawing, without mesh triangulation. No wireframe disables these outlines too.");
         Folded = Config.Bind("Panels", "Folded sections", "", "Quality of Life sections folded away in the editor panels, separated by |");
         ShowHotkeys = Config.Bind("Panels", "Show hotkeys box", true, "The Hotkeys box beside a hand-made structure's panel (F1 in the editor shows or hides it)");
         ExplodeSpread = Config.Bind("Panels", "Exploded view spread", 0.5f, "How far apart the exploded view (F2) moves parts, in metres (F3 / F4 change it)");

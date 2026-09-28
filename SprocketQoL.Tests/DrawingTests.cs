@@ -73,6 +73,54 @@ static class DrawingTests
         Drawing.Outline(solid, 10, 10, edge);
         Check(edge[2 * 10 + 4] && edge[4 * 10 + 7] && !edge[4 * 10 + 4] && !edge[0], "outline: the square's border, not its inside or outside");
 
+        // Clean contours see a hatch sitting on a larger plate, but never a hidden part or the plate's triangles.
+        var clean = new bool[140 * 140];
+        Drawing.CleanContours(shapes, view, depth, clean);
+        Check(!clean.Any(x => x), "clean contours: a flat top and hidden box create no interior lines");
+        var (hp, ht) = Box(new Vector3(0, 0.65f, 0), 0.3f);
+        var hatch = Drawing.Weld(hp, ht);
+        var hatched = new[] { cube, hatch, hidden };
+        var hatchDepth = Drawing.Depths(hatched, view);
+        Drawing.CleanContours(hatched, view, hatchDepth, clean);
+        Check(clean.Count(x => x) >= 100 && !clean[70 * 140 + 70], "clean contours: hatch border remains, centre stays clear");
+        Check(Enumerable.Range(53, 4).Any(x => clean[70 * 140 + x]), "clean contours: raised hatch edge is visible inside the hull silhouette");
+
+        // Splitting a sloping surface into meshes (including one with reversed winding) must not draw a seam.
+        var planeNormal = Vector3.Normalize(view.Look - view.Right * 2);
+        var surface = new[]
+        {
+            new Drawing.Shape { N = new[] { planeNormal }, ContourGroup = 7 },
+            new Drawing.Shape { N = new[] { -planeNormal }, ContourGroup = 7 }
+        };
+        var planeZ = new float[140 * 140];
+        var planeFaces = new int[planeZ.Length];
+        for (int y = 0; y < 140; y++) for (int x = 0; x < 140; x++)
+        { int p = y * 140 + x; planeZ[p] = x * 0.02f; planeFaces[p] = x < 70 ? 0 : 1; }
+        Array.Clear(clean);
+        Drawing.CleanContours(surface, view, (planeZ, planeFaces), clean);
+        Check(!clean.Any(x => x), "clean contours: steep coplanar mesh seam and reversed winding are suppressed");
+        surface[1].ContourGroup = 8;
+        Drawing.CleanContours(surface, view, (planeZ, planeFaces), clean);
+        Check(clean.Count(x => x) == 140, "clean contours: distinct adjoining parts get a single-pixel boundary");
+        surface[1].ContourGroup = 7;
+        surface[0].N[0] = view.Look;
+        surface[1].N[0] = Vector3.Normalize(view.Look + view.Right * 0.2f);
+        Array.Clear(planeZ); Array.Clear(clean);
+        Drawing.CleanContours(surface, view, (planeZ, planeFaces), clean);
+        Check(!clean.Any(x => x), "clean contours: shallow facets do not become wireframe");
+        surface[1].N[0] = Vector3.Normalize(view.Look + view.Right * 2);
+        Drawing.CleanContours(surface, view, (planeZ, planeFaces), clean);
+        Check(clean.Count(x => x) == 140, "clean contours: strong corner remains");
+        surface[1].N[0] = view.Look;
+        for (int p = 0; p < planeZ.Length; p++) if (planeFaces[p] == 1) planeZ[p] = 0.02f;
+        Array.Clear(clean);
+        Drawing.CleanContours(surface, view, (planeZ, planeFaces), clean);
+        Check(clean.Count(x => x) == 140, "clean contours: parallel surfaces with a real depth step remain outlined");
+        Array.Clear(planeFaces); Array.Clear(planeZ); Array.Clear(clean);
+        surface[1].ContourGroup = 8; planeFaces[70 * 140 + 70] = 1;
+        Drawing.CleanContours(surface, view, (planeZ, planeFaces), clean);
+        Check(!clean.Any(x => x), "clean contours: isolated subpixel noise is removed");
+
         // Writing: text inks inside its box only; a dimension draws its line, end marks and measure under it.
         int tw = 400, th = 200;
         var sheet = Enumerable.Repeat((byte)255, tw * th * 3).ToArray();
@@ -105,6 +153,9 @@ static class DrawingTests
         Drawing.SavePng(file, 3, 2, rgb);
         var bytes = File.ReadAllBytes(file);
         Check(bytes.Take(8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }), "PNG signature");
+        int ihdr = FindChunk(bytes, "IHDR", out int headerLength);
+        Check(headerLength == 13 && bytes[ihdr + 8] == 8 && bytes[ihdr + 9] == 2,
+              "photo output uses 8-bit opaque RGB, never the render target's particle alpha");
         int idat = FindChunk(bytes, "IDAT", out int length);
         using var unpacked = new ZLibStream(new MemoryStream(bytes, idat, length), CompressionMode.Decompress);
         var raw = new MemoryStream();
@@ -112,8 +163,10 @@ static class DrawingTests
         var rows = raw.ToArray();
         Check(rows.Length == 2 * (1 + 3 * 3), $"PNG rows: 2 of 1 + 9 bytes (got {rows.Length})");
         Check(rows[1] == rgb[9] && rows[11] == rgb[0], "PNG rows go from the top (the picture's bottom row last)");
+        Check(rows.Skip(1).Take(9).SequenceEqual(rgb.Skip(9)) && rows.Skip(11).SequenceEqual(rgb.Take(9)),
+              "opaque photo encoding preserves every RGB value, including black, without blending or premultiplication");
         File.Delete(file);
-        Console.WriteLine("DRAWING_TESTS_OK: cube edges, hidden box, clip, steep walls, outline, PNG");
+        Console.WriteLine("DRAWING_TESTS_OK: cube edges, hidden box, clip, steep walls, outline, clean part contours, suppressed seams/facets/noise, PNG");
     }
 
     static int FindChunk(byte[] png, string type, out int length)
