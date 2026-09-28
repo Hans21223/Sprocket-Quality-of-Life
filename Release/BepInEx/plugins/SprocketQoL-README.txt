@@ -81,7 +81,7 @@ ADD-ON TOOLS
 
 INFO
 - Gun length: L/xx in calibers from the muzzle to the breech face (barrel + chamber holding the whole round),
-  with the barrel alone and the round's length.
+  with the barrel alone and the round's length; a muzzle brake isn't counted.
 - Speed & acceleration (transmission and engine panels): every gear's top speed at the engine's rev limit (yours
   if set, else upshift rpm + 50), the most power below it, capped by the tracks' speed limit, and the time from standing to top speed on flat
   ground, shifting like the game's automatic gearbox. Test drive once so it uses your tracks' own losses.
