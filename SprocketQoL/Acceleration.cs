@@ -1,6 +1,6 @@
 namespace SprocketQoL;
 
-/// Standing to top speed on flat ground at full throttle, the way the game drives, stepped 50 times a second (no game
+/// Standing to top speed on flat ground at full throttle, the way the game drives, in steps of up to 1/50 s (no game
 /// code: tested offline). Each rule is read from the game's own drivetrain jobs:
 /// - Engine (EngineUpdateJob): its torque curve, faded out as 1 - x^4 over the last 50 rpm below the rev limit, with
 ///   the engine's friction braking there too, so it settles just under the limit.
@@ -42,7 +42,6 @@ internal static class Acceleration
     {
         float v = 0, t = 0;
         int gear = 0, shifts = 0;
-        const float dt = 0.02f;
         float Gearing(int i) => d.Ratios[i] * d.FinalDrive / d.Radius;          // engine rad/s per m/s
         float Rpm(int i, float speed) => speed * Gearing(i) * 30 / MathF.PI;
         // The push of gear `i` at the ground (engaged by `share`), no more than the tracks can grip.
@@ -50,25 +49,36 @@ internal static class Acceleration
             Math.Min(d.TorqueAt(Math.Max(Rpm(i, speed), d.IdleRpm)) * Gearing(i) * share, d.Grip);
         float Accel(int i, float share) =>
             (Push(i, v, share) - resist(v)) / (d.Mass + d.EngineInertia * Gearing(i) * Gearing(i) * share + d.SprocketInertia / (d.Radius * d.Radius));
-        void Step(int i, float share) { v = Math.Max(0, v + Accel(i, share) * dt); t += dt; }
+        // Up to 1/50 s, but short enough that the engine changes by no more than 5 rpm: in a low gear it would otherwise
+        // jump right over the 50 rpm between the upshift point and the rev limit.
+        float Step(int i, float share, float most)
+        {
+            float a = Accel(i, share);
+            float dt = Math.Min(Math.Max(5 / Math.Max(1e-6f, MathF.Abs(a) * Gearing(i) * 30 / MathF.PI), 1e-4f), Math.Min(0.02f, most));
+            v = Math.Max(0, v + a * dt);
+            t += dt;
+            return dt;
+        }
 
         while (v < top * 0.995f && t < 600)
         {
             if (gear < d.Ratios.Length - 1 && Rpm(gear, v) > d.UpshiftRpm && Push(gear, v, 1) > resist(v))
             {
-                // The game's check: after the change (coasting meanwhile), is the next gear still worth it?
-                float after = Math.Max(0, v - resist(v) / d.Mass * (d.DisengageTime + d.EngageTime));
+                // The game's check: after the change, is the next gear still worth it? It guesses the speed lost as the
+                // resistance torque at the gearbox (F r / final drive) over mass x radius², which is the real coasting
+                // loss / final drive², so it barely expects any (with the real loss, low first gears never shifted).
+                float after = Math.Max(0, v - resist(v) / d.Mass * (d.DisengageTime + d.EngageTime) / (d.FinalDrive * d.FinalDrive));
                 if (Rpm(gear + 1, after) > 1.2f * d.IdleRpm && Push(gear + 1, after, 1) > resist(after))
                 {
-                    for (float s = 0; s < d.DisengageTime; s += dt) Step(gear, 1 - s / d.DisengageTime);
+                    for (float s = 0; s < d.DisengageTime;) s += Step(gear, 1 - s / d.DisengageTime, d.DisengageTime - s);
                     gear++;
                     shifts++;
-                    for (float s = 0; s < d.EngageTime; s += dt) Step(gear, s / d.EngageTime);
+                    for (float s = 0; s < d.EngageTime;) s += Step(gear, s / d.EngageTime, d.EngageTime - s);
                     continue;
                 }
             }
             if (Accel(gear, 1) <= 1e-3f) break;                                  // it can't go any faster
-            Step(gear, 1);
+            Step(gear, 1, 0.02f);
         }
         return (t, v, shifts);
     }
