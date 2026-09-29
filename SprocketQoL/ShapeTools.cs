@@ -41,16 +41,27 @@ public static class ShapeTools
         // Short labels: a toggle's label only gets the narrow left column.
         ui.ToggleField("Keep add-on", keepCutter, Ui.BoolCallback(v => keepCutter = v),
             "Off: the cutting add-on is removed. On: it stays (e.g. to cut again elsewhere).");
+        ui.ToggleField("Rectangle box", rectangleBox, Ui.BoolCallback(v =>
+        {
+            rectangleBox = v;
+            fill = v ? Fill.Mode.Rectangle : (fill == Fill.Mode.Rectangle ? Fill.Mode.Fewest : fill);
+            __instance.RequestRedraw();
+        }), "Off: hole connects directly to plate corners. On: surrounds the cut with a clean rectangular box, keeping the rest of the plate clean.");
         var fillTip = new UITooltip("Fill", "How the plate around the cut is filled. Fewest points: only the cut's own points and the " +
-            "face's corners, no new ones (like Blender's Boolean). Light rings: one ring of new points between the hole and the corners, " +
-            "for even faces. Smooth rings: a ring of quads hugging the hole, then rings stepping out (most points, even slices).");
-        ui.Button($"Fill: {Fill.ModeNames[(int)fill]}  (click to change)", Ui.Callback(() => { fill = (Fill.Mode)(((int)fill + 1) % Fill.ModeNames.Length); __instance.RequestRedraw(); }), ref fillTip);
+            "face's corners, no new ones (like Blender's Boolean). Rectangle box: a clean rectangular box around the cut. " +
+            "Light rings: one ring of new points between the hole and the corners, for even faces. Smooth rings: a ring of quads hugging the hole, then rings stepping out (most points, even slices).");
+        ui.Button($"Fill: {Fill.ModeNames[(int)fill]}  (click to change)", Ui.Callback(() =>
+        {
+            fill = (Fill.Mode)(((int)fill + 1) % Fill.ModeNames.Length);
+            rectangleBox = (fill == Fill.Mode.Rectangle);
+            __instance.RequestRedraw();
+        }), ref fillTip);
         foreach (bool pocket in new[] { false, true })
         {
             var tip = new UITooltip(pocket ? "Cut pocket" : "Cut hole", pocket
                 ? "Cuts a recess the add-on's shape: its surface inside the structure becomes plates with its armour."
                 : "Cuts a hole the add-on's shape through every plate it passes through. A mirrored plate (twin pair, or shown on both sides) is cut on both sides.");
-            var mode = fill;
+            var mode = rectangleBox ? Fill.Mode.Rectangle : fill;
             ui.Button(pocket ? "Cut pocket (with walls)" : "Cut hole", Ui.Callback(() =>
                 editor.RequestLiveEdit(pocket ? "Cutting a pocket" : "Cutting a hole", pocket ? "Pocket cut." : "Hole cut.",
                     json => AddonEdits.PlanCut(json, addon, targets, !keepCutter, pocket, mode, editor.LiveShapes(json)))), ref tip);
@@ -58,5 +69,6 @@ public static class ShapeTools
     });
 
     static bool keepCutter;
+    static bool rectangleBox;
     static Fill.Mode fill = Fill.Mode.Fewest;
 }

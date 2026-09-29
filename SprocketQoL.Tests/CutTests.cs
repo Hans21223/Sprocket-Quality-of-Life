@@ -130,7 +130,7 @@ static class CutTests
     /// The fill on its own: a square with a round hole, and a many-sided polygon. Faces must exactly cover the region.
     static void CheckFill()
     {
-        foreach (var mode in new[] { Fill.Mode.Fewest, Fill.Mode.Light, Fill.Mode.Smooth })
+        foreach (var mode in new[] { Fill.Mode.Fewest, Fill.Mode.Rectangle, Fill.Mode.Light, Fill.Mode.Smooth })
         foreach (var (shape, holeSides, offset) in new[] { ("square with a round hole", 32, new Vector2(0, 0)), ("square with an off-centre hole", 16, new Vector2(0.15f, -0.1f)), ("many-sided polygon", 0, Vector2.Zero) })
         {
             string what = Fill.ModeNames[(int)mode] + ": " + shape;
@@ -145,8 +145,9 @@ static class CutTests
             double want = Signed(outer) + (hole.Count > 0 ? -Math.Abs(Signed(hole)) : 0);
             int before = pos.Count;
             var faces = Fill.Region(pos, outer, hole.Count > 0 ? new List<List<int>> { Enumerable.Reverse(hole).ToList() } : new(), normal,
-                                    mode == Fill.Mode.Fewest ? null : new List<Fill.Added>(), mode == Fill.Mode.Light);
+                                    mode == Fill.Mode.Fewest ? null : new List<Fill.Added>(), mode == Fill.Mode.Light, mode);
             if (mode == Fill.Mode.Fewest) Check(pos.Count == before && faces.SelectMany(f => f).All(i => i < before), $"fill {what}: no new points");
+            if (mode == Fill.Mode.Rectangle) Check(pos.Count == (holeSides > 0 ? before + 4 : before), $"fill {what}: adds 4 box corner points for hole, 0 for cap");
             double got = faces.Sum(Signed), unsigned = faces.Sum(f => Math.Abs(Signed(f)));
             if (Math.Abs(got - want) > 1e-5 || Math.Abs(unsigned - want) > 1e-5)
             {
@@ -1049,10 +1050,11 @@ static class CutTests
             // points than light rings, which use fewer than smooth.
             foreach (bool pocket in new[] { false, true })
             {
-                var counts = new[] { Fill.Mode.Fewest, Fill.Mode.Light, Fill.Mode.Smooth }
+                var counts = new[] { Fill.Mode.Fewest, Fill.Mode.Rectangle, Fill.Mode.Light, Fill.Mode.Smooth }
                     .Select(m => MeshVerts(CutBox($"{Fill.ModeNames[(int)m]} {(pocket ? "pocket" : "hole")}", SolidOf(Tool16, p => Vector3.Transform(p, Top)), pocket, null, m).Box["mesh"]!.AsObject()).Length).ToArray();
-                Check(counts[0] < counts[1] && counts[1] < counts[2], $"fill points for a {(pocket ? "pocket" : "hole")}: fewest {counts[0]}, light {counts[1]}, smooth {counts[2]}");
-                Console.WriteLine($"  {(pocket ? "pocket" : "hole")} in the top: {counts[0]} points (fewest), {counts[1]} (light), {counts[2]} (smooth)");
+                Check(counts[0] < counts[1] && counts[1] < counts[2] && counts[2] < counts[3], $"fill points for a {(pocket ? "pocket" : "hole")}: fewest {counts[0]}, box {counts[1]}, light {counts[2]}, smooth {counts[3]}");
+                Check(counts[1] == counts[0] + 4, $"rectangle box adds 4 box corners ({counts[1]} vs {counts[0]} + 4)");
+                Console.WriteLine($"  {(pocket ? "pocket" : "hole")} in the top: {counts[0]} points (fewest), {counts[1]} (box), {counts[2]} (light), {counts[3]} (smooth)");
             }
         }
         CheckHole("cut the top", Top, 1);

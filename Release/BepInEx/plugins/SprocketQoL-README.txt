@@ -1,6 +1,11 @@
 Quality of Life - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
+Local build 1.8.0.7: engine/transmission slider drag fix & Boolean cut rectangle box.
+Sliders in the Engine and Transmission panels update smoothly while dragging without locking up.
+Boolean cuts include a Rectangle box option to enclose cuts in a clean rectangular box, pairing
+triangles into quads and eliminating starburst fan lines across the armor plate.
+
 Local build 1.8.0.6: fixed nested gun-mount annotations.
 Each gun belongs to its closest trunnions. Disabling an outer gun no longer borrows a nested turret's
 larger barrel and draws the outer gun's angles on it. Existing per-gun selections are retained.
@@ -130,7 +135,7 @@ ADD-ON TOOLS
 - Boolean cut: uses an add-on to cut a hole, or a pocket with walls and a floor, into the structure under it.
   Any closed shape works, and rivets move onto the new faces. Mirrored plates (twin pairs, or one part shown on
   both sides) share one shape, so they're cut on both sides and stay mirrored. The add-on must be a closed shape. The fill around the cut uses the
-  fewest points by default (Fill: light or smooth rings for evener faces).
+  fewest points by default (Fill: rectangle box to enclose the cut in a clean rectangular box, or light / smooth rings for evener faces).
 
 INFO
 - Gun length: L/xx in calibers from the muzzle to the breech face (barrel + chamber holding the whole round),

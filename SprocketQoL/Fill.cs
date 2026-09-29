@@ -12,10 +12,11 @@ public static class Fill
     public sealed record Added(Vector3 P, (int V, float W)[] Blend);
 
     /// How a region is filled: from its own points only (the fewest points; triangles paired into quads), with one ring
-    /// of new points between a hole and the corners (light), or with a quad ring hugging the rim and more rings (smooth).
-    public enum Mode { Fewest, Light, Smooth }
+    /// of new points between a hole and the corners (light), with a quad ring hugging the rim and more rings (smooth),
+    /// or with a rectangular box enclosing the cut (rectangle box).
+    public enum Mode { Fewest, Light, Smooth, Rectangle, TriangleBox = Rectangle }
 
-    public static readonly string[] ModeNames = { "fewest points", "light rings", "smooth rings" };
+    public static readonly string[] ModeNames = { "fewest points", "light rings", "smooth rings", "rectangle box" };
 
     /// Faces (vertex indices, turning the same way as `outer`) covering the region between `outer` and `holes`. New
     /// vertices are appended to `pos` and described in `added` (same order).
@@ -25,14 +26,14 @@ public static class Fill
     /// `light`: as few new points as will still avoid long thin fans (one ring between a hole and the face's corners).
     /// Otherwise "smooth": a quad ring hugging the rim plus rings stepping down, more points but all even slices.
     /// `added` null: no new points at all (fewest faces from the outline's own points).
-    public static List<int[]> Region(List<Vector3> pos, List<int> outer, List<List<int>> holes, Vector3 normal, List<Added>? added, bool light = true)
+    public static List<int[]> Region(List<Vector3> pos, List<int> outer, List<List<int>> holes, Vector3 normal, List<Added>? added, bool light = true, Mode mode = Mode.Fewest)
     {
-        var faces = RegionFaces(pos, outer, holes, normal, added, light, out string path);
+        var faces = RegionFaces(pos, outer, holes, normal, added, light, mode, out string path);
         Paths.Add(path);
         return faces;
     }
 
-    static List<int[]> RegionFaces(List<Vector3> pos, List<int> outer, List<List<int>> holes, Vector3 normal, List<Added>? added, bool light, out string path)
+    static List<int[]> RegionFaces(List<Vector3> pos, List<int> outer, List<List<int>> holes, Vector3 normal, List<Added>? added, bool light, Mode mode, out string path)
     {
         path = "as is";
         var plane = new Frame(pos, normal, outer);
@@ -46,11 +47,173 @@ public static class Fill
         if (holes.Count == 0)
         {
             if (outer.Count <= 4 && plane.StrictlyConvex(outer)) return new() { outer.ToArray() };
-            if (added != null && outer.Count >= 8 && plane.StrictlyConvex(outer)) { faces = Cap(pos, plane, outer, added, light); path = "cap"; }
+            if (added != null && mode != Mode.Rectangle && outer.Count >= 8 && plane.StrictlyConvex(outer)) { faces = Cap(pos, plane, outer, added, light); path = "cap"; }
+        }
+        else if (added != null && (mode == Mode.Rectangle || mode == Mode.TriangleBox))
+        {
+            faces = RectangleBox(pos, plane, outer, holes, added);
+            path = faces != null ? "rectangle box" : "delaunay (rectangle box didn't fit)";
+            if (faces != null) return faces;
         }
         else if (added != null && holes.Count == 1) { faces = Annulus(pos, plane, outer, holes[0], added, light); path = faces != null ? "rings" : WhyNotRings(plane, outer, holes[0]); }
         if (faces == null) { faces = Delaunay(plane, outer, holes); path = holes.Count == 1 && added != null ? path : "delaunay"; }
         return PairUp(plane, faces, Boundary(outer, holes));
+    }
+
+    // ---------- rectangle box ----------
+
+    /// Surrounds the hole with a clean rectangular box: a 4-corner rectangle enclosing the cut,
+    /// so the region between the hole and the rectangle is triangulated/quad-paired, and the region outside the
+    /// rectangle connects the 4 rectangle corners cleanly to the outer plate corners.
+    static List<int[]>? RectangleBox(List<Vector3> pos, Frame plane, List<int> outer, List<List<int>> holes, List<Added> added)
+    {
+        if (holes.Count == 0) return null;
+        var allHoleVerts = holes.SelectMany(h => h).Distinct().ToList();
+        if (allHoleVerts.Count < 3) return null;
+
+        var angles = new List<float> { 0f };
+        foreach (var h in holes)
+            for (int i = 0; i < h.Count; i++)
+            {
+                var d = plane.P(h[(i + 1) % h.Count]) - plane.P(h[i]);
+                if (d.LengthSquared() > 1e-8f) angles.Add(MathF.Atan2(d.Y, d.X));
+            }
+        for (int i = 0; i < outer.Count; i++)
+        {
+            var d = plane.P(outer[(i + 1) % outer.Count]) - plane.P(outer[i]);
+            if (d.LengthSquared() > 1e-8f) angles.Add(MathF.Atan2(d.Y, d.X));
+        }
+
+        // Test angle 0 first (axis-aligned rectangle parallel to plate axes), then candidate angles.
+        var candidateAngles = angles.Select(NormAngle).Distinct().OrderBy(a => MathF.Abs(a) < 1e-3f ? 0 : 1).ToList();
+
+        Vector2[]? validBox = null;
+        foreach (var a in candidateAngles)
+        {
+            float cos = MathF.Cos(a), sin = MathF.Sin(a);
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minY = float.MaxValue, maxY = float.MinValue;
+            foreach (int v in allHoleVerts)
+            {
+                var p = plane.P(v);
+                float rx = p.X * cos + p.Y * sin;
+                float ry = -p.X * sin + p.Y * cos;
+                if (rx < minX) minX = rx; if (rx > maxX) maxX = rx;
+                if (ry < minY) minY = ry; if (ry > maxY) maxY = ry;
+            }
+
+            float width = maxX - minX, height = maxY - minY;
+            if (width <= 1e-4f || height <= 1e-4f) continue;
+            float size = MathF.Max(width, height);
+
+            foreach (float scale in new[] { 0.10f, 0.15f, 0.20f, 0.08f, 0.05f, 0.03f })
+            {
+                float m = MathF.Max(0.015f, scale * size);
+                var c0 = new Vector2(minX - m, minY - m);
+                var c1 = new Vector2(maxX + m, minY - m);
+                var c2 = new Vector2(maxX + m, maxY + m);
+                var c3 = new Vector2(minX - m, maxY + m);
+                Vector2 RotBack(Vector2 c) => new(c.X * cos - c.Y * sin, c.X * sin + c.Y * cos);
+                var box = new[] { RotBack(c0), RotBack(c1), RotBack(c2), RotBack(c3) };
+
+                if (Cross(box[1] - box[0], box[2] - box[0]) <= 1e-8) continue;
+                if (box.Any(b => !plane.Inside(outer, b))) continue;
+                if (box.Any(b => holes.Any(hole => plane.Inside(hole, b)))) continue;
+
+                bool edgeCross = false;
+                for (int k = 0; k < 4 && !edgeCross; k++)
+                {
+                    var b1 = box[k]; var b2 = box[(k + 1) % 4];
+                    for (int j = 0; j < outer.Count && !edgeCross; j++)
+                    {
+                        var o1 = plane.P(outer[j]); var o2 = plane.P(outer[(j + 1) % outer.Count]);
+                        if (SegmentsCross(b1, b2, o1, o2)) edgeCross = true;
+                    }
+                }
+                if (edgeCross) continue;
+
+                for (int k = 0; k < 4 && !edgeCross; k++)
+                {
+                    var b1 = box[k]; var b2 = box[(k + 1) % 4];
+                    foreach (var hole in holes)
+                    {
+                        for (int j = 0; j < hole.Count && !edgeCross; j++)
+                        {
+                            var h1 = plane.P(hole[j]); var h2 = plane.P(hole[(j + 1) % hole.Count]);
+                            if (SegmentsCross(b1, b2, h1, h2)) edgeCross = true;
+                        }
+                        if (edgeCross) break;
+                    }
+                }
+                if (edgeCross) continue;
+
+                bool allInside = true;
+                foreach (int v in allHoleVerts)
+                {
+                    var p = plane.P(v);
+                    for (int k = 0; k < 4; k++)
+                    {
+                        if (Cross(box[(k + 1) % 4] - box[k], p - box[k]) <= 1e-4) { allInside = false; break; }
+                    }
+                    if (!allInside) break;
+                }
+                if (!allInside) continue;
+
+                validBox = box;
+                break;
+            }
+
+            if (validBox != null) break;
+        }
+
+        if (validBox == null) return null;
+
+        int mark = pos.Count, addedMark = added.Count;
+        var boxIndices = new List<int>();
+        for (int k = 0; k < 4; k++)
+        {
+            var p2 = validBox[k];
+            var p3 = plane.At(p2);
+            var nearest = outer.OrderBy(v => Vector2.DistanceSquared(plane.P(v), p2)).Take(4).ToList();
+            var blend = nearest.Select(v => (v, 1f / MathF.Max(1e-4f, Vector2.Distance(plane.P(v), p2)))).ToArray();
+            float sumW = blend.Sum(b => b.Item2);
+            var normBlend = blend.Select(b => (b.v, b.Item2 / sumW)).ToArray();
+            pos.Add(p3);
+            added.Add(new Added(p3, normBlend));
+            boxIndices.Add(pos.Count - 1);
+        }
+
+        var innerTris = Delaunay(plane, boxIndices, holes);
+        var innerFaces = PairUp(plane, innerTris, Boundary(boxIndices, holes));
+
+        var boxHole = new List<List<int>> { Enumerable.Reverse(boxIndices).ToList() };
+        var outerTris = Delaunay(plane, outer, boxHole);
+        var outerFaces = PairUp(plane, outerTris, Boundary(outer, boxHole));
+
+        if (innerFaces == null || outerFaces == null || innerTris.Any(t => plane.Area(t) <= 1e-12) || outerTris.Any(t => plane.Area(t) <= 1e-12))
+        {
+            pos.RemoveRange(mark, pos.Count - mark);
+            added.RemoveRange(addedMark, added.Count - addedMark);
+            return null;
+        }
+
+        double wantArea = plane.Area(outer) + holes.Sum(h => plane.Area(h));
+        double gotArea = innerFaces.Sum(f => plane.Area(f)) + outerFaces.Sum(f => plane.Area(f));
+        if (Math.Abs(gotArea - wantArea) > 1e-5)
+        {
+            pos.RemoveRange(mark, pos.Count - mark);
+            added.RemoveRange(addedMark, added.Count - addedMark);
+            return null;
+        }
+
+        return innerFaces.Concat(outerFaces).ToList();
+    }
+
+    static float NormAngle(float a)
+    {
+        while (a < 0) a += MathF.PI;
+        while (a >= MathF.PI / 2f) a -= MathF.PI / 2f;
+        return a;
     }
 
     // ---------- rings ----------
@@ -436,7 +599,7 @@ public static class Fill
         public bool Nested(List<int> inner, List<int> outer) =>
             inner.All(v => Inside(outer, P(v))) && outer.All(v => !Inside(inner, P(v)));
 
-        bool Inside(List<int> loop, Vector2 q)
+        public bool Inside(List<int> loop, Vector2 q)
         {
             bool inside = false;
             for (int k = 0; k < loop.Count; k++)

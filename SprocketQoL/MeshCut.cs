@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Text.Json.Nodes;
 
 namespace SprocketQoL;
@@ -310,7 +310,7 @@ public static class MeshCut
                 var mine = outers.Count == 1 ? holes : holes.Where(h => InsideLoop(outer, verts[h[0]], o.Normal, verts)).ToList();
                 var extra = new List<Fill.Added>();
                 int first = verts.Count;
-                var faces = Fill.Region(verts, outer, mine, o.Normal, fill == Fill.Mode.Fewest ? null : extra, fill == Fill.Mode.Light);
+                var faces = Fill.Region(verts, outer, mine, o.Normal, fill == Fill.Mode.Fewest ? null : extra, fill == Fill.Mode.Light, fill);
                 for (int i = 0; i < extra.Count; i++)
                 {
                     // A new vertex takes its thickness from the rim and outer corners it lies between.

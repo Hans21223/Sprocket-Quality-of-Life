@@ -65,7 +65,7 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   works, dents included. A pocket turns the add-on's surface inside the structure into plates with the add-on's
   armour. **Fill** chooses how the plate around the cut is rebuilt: **fewest points** (default) uses only the cut's
   own points and the face's corners, no new ones (like Blender's Boolean; triangles paired into quads where they
-  fit), **light rings** adds one ring of points between the hole and the corners for evener faces, and **smooth
+  fit), **rectangle box** surrounds the cut with a clean rectangular box (also toggled via the **Rectangle box** checkbox), **light rings** adds one ring of points between the hole and the corners for evener faces, and **smooth
   rings** a quad ring hugging the rim and more rings stepping out. Flat neighbouring faces with the same armour are
   rebuilt together. Rivets move onto the new faces. Happens in place; Ctrl+Z undoes it. A mirrored twin of the add-on
   cuts too. A mirrored plate (a twin pair, or one part the game shows on both sides) shares one shape, so it's cut on
