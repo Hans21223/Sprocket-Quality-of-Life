@@ -115,9 +115,17 @@ public static class GearSpeeds
         for (int i = 0; i < ratios.Length; i++)
             text.Append(Speed(ratios[i]) > limit ? $"Gear {i + 1}:  {limit:0} km/h (track limit; gearing {Speed(ratios[i]):0})\n" : $"Gear {i + 1}:  {Speed(ratios[i]):0} km/h\n");
         if (reverse.Length > 0) text.Append($"Reverse:  {Math.Min(Speed(reverse.Min()), limit):0} km/h\n");
-        text.Append(revLimit < engine.MaxRPM ? $"At the rev limit, {revLimit:0} rpm (upshift {engine.Upshift} + 50)\n" : $"At max revs, {revLimit:0} rpm\n");
+        bool custom = Try(() => engine.RevLimitOverride ? 1 : 0) > 0;
+        text.Append(custom ? $"At your rev limit, {revLimit:0} rpm\n"
+                  : revLimit < engine.MaxRPM ? $"At the rev limit, {revLimit:0} rpm (upshift {engine.Upshift} + 50)\n" : $"At max revs, {revLimit:0} rpm\n");
+        var torque = EngineTorque(engine, revLimit);
+        if (torque == null) return text.ToString().TrimEnd('\n');
+        // The most power the engine gives below its rev limit (not the engine's rated figure at max revs).
+        var (power, powerRpm) = Enumerable.Range(0, 201).Select(k => torque.Idle + (revLimit - torque.Idle) * k / 200f)
+            .Select(rpm => (Kw: torque.At(rpm) * rpm * MathF.PI / 30 / 1000, Rpm: rpm)).MaxBy(x => x.Kw);
+        text.Append($"Max power {power:0} kW ({power * 1.341f:0} hp) at {powerRpm:0} rpm, up to the rev limit\n");
         if (mass <= 0) return text.ToString().TrimEnd('\n');
-        var (seconds, reached, shifts) = Accelerate(d, p);
+        var (seconds, reached, shifts) = Accelerate(d, p, torque);
         text.Append($"0 to {reached * 3.6f:0} km/h in about {seconds:0} s ({shifts} shifts)\n");
         text.Append(p.Measured ? "Flat ground, full throttle, automatic gears; track losses from the last drive."
                                : "Flat ground, full throttle, automatic gears; standard track losses (test drive once for this tank's own).");
@@ -141,30 +149,39 @@ public static class GearSpeeds
         catch { return (0, 0); }
     }
 
-    /// Seconds from standing to top speed on flat ground at full throttle (see Acceleration): the engine's torque curve
-    /// (the game's power figures) under its rev limiter, the automatic gearbox's shifts, the tracks' losses and grip,
-    /// and drag. Top speed: where nothing pushes harder, or the tracks' speed limit.
-    static (float Seconds, float Reached, int Shifts) Accelerate(Drive d, TrackPhysics p)
+    /// The engine's torque (N·m) at a rev count: its torque curve from the game's power figures, scaled so its peak is
+    /// the engine's max torque (works whatever unit the power comes back in), under the game's rev limiter.
+    sealed record Torque(Func<float, float> At, float Idle);
+
+    static Torque? EngineTorque(EngineBlueprint e, float revLimit)
     {
-        var e = d.Engine;
         float idle = Math.Clamp(e.IdleRPM, 1, e.MaxRPM - 1), max = e.MaxRPM;
         static float Omega(float rpm) => rpm * MathF.PI / 30; // rad/s
-        // Torque across the rev range from the game's power figures, scaled so its peak is the engine's max torque
-        // (works whatever unit the power comes back in).
         var torque = Enumerable.Range(0, 101).Select(k => idle + (max - idle) * k / 100f)
             .Select(rpm => EngineRules.CalculatePowerAtRPM(e.MaxTorque, rpm, max) / Omega(rpm)).ToArray();
         float peak = torque.Max();
-        if (peak <= 0) return (float.NaN, 0, 0);
+        if (peak <= 0) return null;
         float Curve(float rpm)
         {
             float x = Math.Clamp((rpm - idle) / (max - idle), 0, 1) * 100;
             int k = Math.Min((int)x, 99);
             return e.MaxTorque * (torque[k] + (torque[k + 1] - torque[k]) * (x - k)) / peak;
         }
+        return new(Acceleration.RevLimited(Curve, revLimit, Try(() => e.FrictionCoefficient)), idle);
+    }
+
+    /// Seconds from standing to top speed on flat ground at full throttle (see Acceleration): the engine's torque under
+    /// its rev limiter, the automatic gearbox's shifts, the tracks' losses and grip, and drag. Top speed: where nothing
+    /// pushes harder, or the tracks' speed limit.
+    static (float Seconds, float Reached, int Shifts) Accelerate(Drive d, TrackPhysics p, Torque torque)
+    {
         float weight = d.Mass * 9.81f;
         float Resist(float v) => Acceleration.TrackLosses(v, weight, p.Rolling, p.RollingPerSpeed2, p.Viscous, p.Bending, d.Tracks, d.Radius) + d.Drag * d.Mass * v;
-        var drive = new Acceleration.Drivetrain(Acceleration.RevLimited(Curve, d.RevLimit, Try(() => e.FrictionCoefficient)), d.Ratios, d.FinalDrive,
-            d.Radius, d.Mass, d.EngineInertia, d.SprocketInertia, idle, Math.Min(e.Upshift, d.RevLimit), d.Disengage, d.Engage, p.Friction * weight);
+        // The gearbox shifts up once the engine passes the upshift rpm; the engine never gets past its rev limit, so an
+        // upshift set at or above it is taken just under it (else it would never leave first gear).
+        float upshift = Math.Min(d.Engine.Upshift, d.RevLimit - 25);
+        var drive = new Acceleration.Drivetrain(torque.At, d.Ratios, d.FinalDrive, d.Radius, d.Mass, d.EngineInertia, d.SprocketInertia,
+            torque.Idle, upshift, d.Disengage, d.Engage, p.Friction * weight);
         return Acceleration.Run(drive, Resist, d.Limit > 0 ? d.Limit : float.MaxValue);
     }
 }

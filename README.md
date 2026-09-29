@@ -75,12 +75,12 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   (**Keep add-on**).
 - **Gun length:** select a cannon, and its panel shows its length in calibers, **L/xx**, measured as guns are: from
   the muzzle to the face of the breech block. That's the barrel plus the chamber, which holds the whole round (in the
-  game, the propellant plus a 3-caliber shell). The barrel alone and the round's length are listed below it.
+  game, the propellant plus a 3-caliber shell). The barrel alone and the round's length are listed below it, to 0.01 caliber; a muzzle brake isn't counted.
 - **Speed & acceleration:** select a transmission or an engine, and its panel lists every gear's top speed (and
   reverse) and how many seconds the vehicle takes from standing to top speed on flat ground, worked out the way the
   game drives (read from its engine, gearbox and track code):
-  - top speeds at the engine's **rev limit** (by default the engine's upshift rpm + 50, not its max rpm), capped by the
-    tracks' speed limit;
+  - top speeds at the engine's **rev limit** (your own rev limit if you set one, else the engine's upshift rpm + 50,
+    never more than its max rpm), capped by the tracks' speed limit, and the most power the engine gives below it;
   - the automatic gearbox: first gear, then up a gear each time the engine passes the upshift rpm, if the next gear
     still pulls; while changing, drive fades out and back in over the gearbox type's times;
   - the engine's power curve, faded out over the last 50 rpm before the rev limit;

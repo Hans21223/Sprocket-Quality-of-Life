@@ -96,9 +96,9 @@ ADD-ON TOOLS
 
 INFO
 - Gun length: L/xx in calibers from the muzzle to the breech face (barrel + chamber holding the whole round),
-  with the barrel alone and the round's length.
-- Speed & acceleration (transmission and engine panels): every gear's top speed at the engine's rev limit (by
-  default upshift rpm + 50), capped by the tracks' speed limit, and the time from standing to top speed on flat
+  with the barrel alone and the round's length; a muzzle brake isn't counted.
+- Speed & acceleration (transmission and engine panels): every gear's top speed at the engine's rev limit (yours
+  if set, else upshift rpm + 50), the most power below it, capped by the tracks' speed limit, and the time from standing to top speed on flat
   ground, shifting like the game's automatic gearbox. Test drive once so it uses your tracks' own losses.
 
 Merges, cuts and face edits happen in place, and Ctrl+Z undoes them. Each edit also saves a backup of the design

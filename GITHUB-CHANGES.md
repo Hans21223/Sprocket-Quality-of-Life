@@ -1,5 +1,16 @@
 # GitHub changes and local fixes
 
+## Latest sync, 2026-09-29
+
+Combined `main` at `48e2bc0` with `bridge-circle-mirror` at `a376aee` locally for testing.
+`main` now includes the previous local bevel, gizmo, drawing, decal and photo fixes, plus the
+1.8.0 Bridge, Circle, Fix mirror, rotation-snap and mirrored point-merge features.
+The latest branch adds acceleration upshift fixes, smaller simulation steps around the rev limit,
+power below the rev limit, and gun-length display to 0.01 caliber with a muzzle-brake clarification.
+The packaged DLL was rebuilt from the combined source to resolve its binary merge conflict.
+
+## Previous audit snapshot (before the updates above)
+
 Verified against https://github.com/Hans21223/Sprocket-Quality-of-Life on 2026-09-29 (Asia/Bangkok).
 
 `origin/main` is `227e97dc060f247ce9e4be136c27b8070efdd19c`.

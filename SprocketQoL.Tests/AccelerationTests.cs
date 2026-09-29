@@ -44,6 +44,17 @@ static class AccelerationTests
         var (_, still, none) = Acceleration.Run(Drive(engine), v => 1e7f, float.MaxValue);
         Check(still == 0 && none == 0, "can't move: stops at once");
 
+        // A low first gear with real track losses: the game barely expects to lose speed while changing gear, so it
+        // shifts up (guessing the real coasting loss, it stayed in first at 5 km/h for ever).
+        {
+            float[] low = { 7, 4, 2.5f, 1.6f, 1.1f };
+            float w = 30000 * 9.81f;
+            var tank = new Acceleration.Drivetrain(Acceleration.RevLimited(r => 1600, 2050, 0.5f), low, 8, 0.3f, 30000, 1.5f, 20, 800, 2000, 0.4f, 0.4f, 0.8f * w);
+            var (_, got, changes) = Acceleration.Run(tank, v => Acceleration.TrackLosses(v, w, 0.03f, 0.001f, 0, 0, 2, 0.3f), float.MaxValue);
+            float topGear = 2050 * MathF.PI / 30 / (1.1f * 8) * 0.3f;
+            Check(changes == low.Length - 1 && got > topGear * 0.8f, $"low first gear still shifts up ({changes} shifts, {got * 3.6f:0} km/h)");
+        }
+
         // Track losses: rolling grows with speed, fades in from standing, and sprocket losses add to it.
         float weight = mass * 9.81f;
         Check(Acceleration.TrackLosses(0, weight, 0.03f, 0.001f, 0, 0, 2, radius) == 0, "no rolling resistance standing still");
