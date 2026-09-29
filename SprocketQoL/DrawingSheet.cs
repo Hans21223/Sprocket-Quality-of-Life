@@ -104,7 +104,16 @@ internal static class DrawingSheet
         readonly bool noWireframe = Plugin.DrawingNoWireframe?.Value ?? false;
         readonly bool seeThroughOutline = Plugin.DrawingSeeThroughOutline?.Value ?? true;
         readonly bool colourOutline = Plugin.DrawingColourOutline?.Value ?? true;
+        readonly float intensity = DrawingOptions.Strength(Plugin.DrawingIntensity?.Value ?? 100);
+        readonly bool elevation = Plugin.DrawingElevation?.Value ?? false, traverse = Plugin.DrawingTraverse?.Value ?? false;
+        readonly bool blue = Plugin.DrawingBlue?.Value ?? false;
+        readonly bool grid = Plugin.DrawingGrid?.Value ?? false;
+        readonly float gridStrength = DrawingOptions.Strength(Plugin.DrawingGridIntensity?.Value ?? 20);
+        readonly bool turretTraverse = Plugin.DrawingTurretTraverse?.Value ?? false;
+        readonly GunAnnotationPreferences gunLimits = new(Plugin.DrawingHiddenGunLimits?.Value);
+        readonly List<DrawingOptions.Ghost> motion = new();
         Bounds box;
+        Bounds frame;
         float scale;                                   // pixels per metre, the same in every view
         readonly Drawing.View[] views = new Drawing.View[Views.Length];
         readonly byte[][] colour = new byte[Views.Length][]; // RGB, rows from the bottom
@@ -163,7 +172,13 @@ internal static class DrawingSheet
                 }
             if (main == null || around is not { } b) { DesignEditor.Instance?.Say("Drawing sheet: no vehicle to draw", 4); return false; }
             box = b;
-            var size = box.size;
+            frame = box;
+            if (elevation || traverse) ReadGunMotion();
+            if (turretTraverse) ReadTurretMotion();
+            foreach (var ghost in motion)
+                foreach (var p in ghost.Shapes.SelectMany(s => s.P).Concat(ghost.Arc).Append(ghost.Pivot).Append(ghost.Tip))
+                    frame.Encapsulate(new Vector3(p.X, p.Y, p.Z));
+            var size = frame.size;
 
             // The vehicle's decals: under its parts, or held by its decal components.
             var decalSeen = new HashSet<IntPtr>();
@@ -185,8 +200,10 @@ internal static class DrawingSheet
                 var right = turn * Vector3.right;
                 var up = turn * Vector3.up;
                 float across = Math.Abs(Vector3.Dot(size, right)), high = Math.Abs(Vector3.Dot(size, up));
-                int w = (int)MathF.Ceiling(across * scale) + 2 * Pad, h = (int)MathF.Ceiling(high * scale) + 2 * Pad;
-                views[i] = new Drawing.View(V(box.center), V(right), V(up), V(Views[i].Look), scale, w, h);
+                // Room for angle labels outside the barrel limits; the physical dimensions still use the original box.
+                int pad = motion.Count > 0 ? 100 : Pad;
+                int w = (int)MathF.Ceiling(across * scale) + 2 * pad, h = (int)MathF.Ceiling(high * scale) + 2 * pad;
+                views[i] = new Drawing.View(V(frame.center), V(right), V(up), V(Views[i].Look), scale, w, h);
             }
             var used = new HashSet<int>();
             foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>()))
@@ -278,6 +295,8 @@ internal static class DrawingSheet
                 // where it does in the editor.
                 overrides.mask[(uint)FrameSettingsField.Decals] = true;
                 own.renderingPathCustomFrameSettings.SetEnabled(FrameSettingsField.Decals, true);
+                overrides.mask[(uint)FrameSettingsField.DecalLayers] = true;
+                own.renderingPathCustomFrameSettings.SetEnabled(FrameSettingsField.DecalLayers, false);
                 own.renderingPathCustomFrameSettingsOverrideMask = overrides;
             }
             cam.orthographic = true;
@@ -315,13 +334,13 @@ internal static class DrawingSheet
             {
                 var v = views[i];
                 var look = Views[i].Look;
-                float radius = box.extents.magnitude;
-                var at = box.center - look * (radius + 10);
+                float radius = frame.extents.magnitude;
+                var at = frame.center - look * (radius + 10);
                 cam!.transform.SetPositionAndRotation(at, Quaternion.LookRotation(look, Views[i].Up));
                 cam.orthographicSize = v.Height / 2f / scale;
                 cam.aspect = v.Width / (float)v.Height;
-                cam.nearClipPlane = Math.Max(0.01f, 10 - 0.1f);
-                cam.farClipPlane = 10 + 2 * radius + 0.1f;
+                cam.nearClipPlane = 0.1f;
+                cam.farClipPlane = 10 + 2 * radius + 10f;
                 if (target != null) { cam.targetTexture = null; target.Release(); UnityEngine.Object.Destroy(target); }
                 target = new RenderTexture(v.Width, v.Height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
                 cam.targetTexture = target;
@@ -436,7 +455,7 @@ internal static class DrawingSheet
                         for (int x = 0; x < v.Width; x++)
                         {
                             int p = y * v.Width + x, q = ((at[i].Y + y) * w + at[i].X + x) * 3;
-                            if (ink[i][p]) Set(lines, q, 0);
+                            if (ink[i][p]) DrawingOptions.Ink(lines, q, 0, intensity);
                             bool shell = solid[i][p], core = insideSolid[i][p];
                             for (int c = 0; c < 3; c++)
                             {
@@ -447,11 +466,12 @@ internal static class DrawingSheet
                             }
                             if (!noWireframe)
                             {
-                                if (colourOutline ? cleanOutlines[i][p] : ink[i][p]) Set(painted, q, colourOutline ? (byte)65 : (byte)30);
-                                if (seeThroughOutline ? outlines[i][p] : ink[i][p]) Set(seeThrough, q, 30);
+                                if (colourOutline ? cleanOutlines[i][p] : ink[i][p]) DrawingOptions.Ink(painted, q, colourOutline ? (byte)65 : (byte)30, intensity);
+                                if (seeThroughOutline ? outlines[i][p] : ink[i][p]) DrawingOptions.Ink(seeThrough, q, 30, intensity);
                             }
                         }
                 }
+                DrawingOptions.DrawMotion(motion, new[] { lines, painted, seeThrough }, views, w, h, at);
                 foreach (var sheet in new[] { lines, painted, seeThrough }) Annotate(sheet, w, h, at, xLeft);
                 // The title block, from its top down, over a rule the width of the views.
                 if (blockHigh > 0)
@@ -468,8 +488,10 @@ internal static class DrawingSheet
                 Drawing.SavePng(name + ".png", w, h, lines);
                 Drawing.SavePng(name + " (colour).png", w, h, painted);
                 Drawing.SavePng(name + " (see-through).png", w, h, seeThrough);
-                Plugin.ModLog.LogInfo($"QOL_DRAWING saved {name}.png, (colour) and (see-through), {w}x{h}: {shapes.Count} shapes drawn, {unreadable} meshes the game keeps unreadable (outlined only); overlays: colour={(noWireframe ? "none" : colourOutline ? "outline" : "wireframe")}, see-through={(noWireframe ? "none" : seeThroughOutline ? "outline" : "wireframe")}");
-                DesignEditor.Instance?.Say($"Drawing sheet saved (lines, colour and see-through): {name}.png", 8);
+                if (blue) Drawing.SavePng(name + " (blueprint).png", w, h,
+                    DrawingOptions.Blueprint(lines, w, h, grid ? Math.Max(1, (int)MathF.Round(scale / 4)) : 0, gridStrength));
+                Plugin.ModLog.LogInfo($"QOL_DRAWING saved {name}.png, (colour) and (see-through), {w}x{h}: {shapes.Count} shapes drawn, {unreadable} meshes the game keeps unreadable (outlined only); overlays: colour={(noWireframe ? "none" : colourOutline ? "outline" : "wireframe")}, see-through={(noWireframe ? "none" : seeThroughOutline ? "outline" : "wireframe")}; intensity={intensity:P0}, gun limits={motion.Count}, blue blueprint={blue}");
+                DesignEditor.Instance?.Say($"Drawing sheet saved (lines, colour, see-through{(blue ? ", blue blueprint" : "")}): {name}.png", 8);
             }
             catch (Exception ex) { Fail("couldn't draw the sheet", ex); }
         }
@@ -483,7 +505,7 @@ internal static class DrawingSheet
         }
 
         /// The title block in three columns across `totalWidth` pixels:
-        /// Column 1 (left): vehicle name (56pt bold), followed by horsepower and top speed (36pt).
+        /// Full-width header: vehicle name and weight (56pt bold). Column 1: horsepower and top speed (36pt).
         /// Column 2 (middle): weapons/armament (each kind of gun with caliber, name, L/length, count).
         /// Column 3 (right): vehicle description.
         /// Whatever can't be read is left out.
@@ -586,10 +608,15 @@ internal static class DrawingSheet
 
                 var col1Items = new List<(int YOffset, (int W, int H, byte[] Ink) Words)>();
                 int col1High = 0;
-                if (Drawing.Words(name, 56, true, colWidth) is { } nameWords)
+                string weight = DrawingOptions.Weight(allComponents.FirstOrDefault(c => c.Vehicle != null)?.Vehicle?.Mass ?? 0);
+                var weightWords = Drawing.Words(weight, 56, true, Math.Max(100, totalWidth / 4));
+                var nameWords = Drawing.Words(name, 56, true, totalWidth - weightWords.W - 60);
+                int titleHigh = Math.Max(nameWords.H, weightWords.H);
+                if (titleHigh > 0)
                 {
-                    col1Items.Add((col1High, nameWords));
-                    col1High += nameWords.H;
+                    layout.Items.Add((xLeft, 0, nameWords));
+                    layout.Items.Add((xLeft + totalWidth - weightWords.W, 0, weightWords));
+                    titleHigh += sectionGap;
                 }
                 if (!string.IsNullOrWhiteSpace(mobility))
                 {
@@ -639,10 +666,10 @@ internal static class DrawingSheet
                 }
 
                 int blockHigh = Math.Max(col1High, Math.Max(col2High, col3High));
-                layout.Height = blockHigh;
-                foreach (var (y, w) in col1Items) layout.Items.Add((col1X, y, w));
-                foreach (var (y, w) in col2Items) layout.Items.Add((col2X, y, w));
-                foreach (var (y, w) in col3Items) layout.Items.Add((col3X, y, w));
+                layout.Height = titleHigh + blockHigh;
+                foreach (var (y, w) in col1Items) layout.Items.Add((col1X, titleHigh + y, w));
+                foreach (var (y, w) in col2Items) layout.Items.Add((col2X, titleHigh + y, w));
+                foreach (var (y, w) in col3Items) layout.Items.Add((col3X, titleHigh + y, w));
 
                 Plugin.ModLog.LogInfo($"QOL_DRAWING title block: \"{name}\", {guns.Count} guns, {powerText}, {speedText}, {description.Length} characters of description");
             }
@@ -662,11 +689,16 @@ internal static class DrawingSheet
             var size = box.size;
             int Px(float metres) => (int)MathF.Round(metres * scale);
             string M(float metres) => metres.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " m"; // the pixel font has no comma
-            (int x, int y) side = (at[2].X + Pad, at[2].Y + Pad), top = (at[0].X + Pad, at[0].Y + Pad), front = (at[1].X + Pad, at[1].Y + Pad);
-            Drawing.Dimension(rgb, w, h, side.x, side.y - 50, side.x + Px(size.z), side.y - 50, M(size.z), Letter, 0);
-            Drawing.Dimension(rgb, w, h, side.x - 50, side.y, side.x - 50, side.y + Px(size.y), M(size.y), Letter, 0);
-            Drawing.Dimension(rgb, w, h, top.x - 50, top.y, top.x - 50, top.y + Px(size.x), M(size.x), Letter, 0);
-            Drawing.Dimension(rgb, w, h, front.x, front.y - 50, front.x + Px(size.x), front.y - 50, M(size.x), Letter, 0);
+            (int x, int y) Origin(int i, float across, float high)
+            {
+                var centre = views[i].Project(V(box.center));
+                return (at[i].X + (int)MathF.Round(centre.X - across * scale / 2), at[i].Y + (int)MathF.Round(centre.Y - high * scale / 2));
+            }
+            var side = Origin(2, size.z, size.y); var top = Origin(0, size.z, size.x); var front = Origin(1, size.x, size.y);
+            Drawing.Dimension(rgb, w, h, side.x, at[2].Y - 50, side.x + Px(size.z), at[2].Y - 50, M(size.z), Letter, 0);
+            Drawing.Dimension(rgb, w, h, at[2].X - 50, side.y, at[2].X - 50, side.y + Px(size.y), M(size.y), Letter, 0);
+            Drawing.Dimension(rgb, w, h, at[0].X - 50, top.y, at[0].X - 50, top.y + Px(size.x), M(size.x), Letter, 0);
+            Drawing.Dimension(rgb, w, h, front.x, at[1].Y - 50, front.x + Px(size.x), at[1].Y - 50, M(size.x), Letter, 0);
             // The ruler.
             int x0 = xLeft, y0 = bottom + 50;
             Drawing.Box(rgb, w, h, x0, y0, x0 + Px(1), y0 + 2, 0);
@@ -676,6 +708,106 @@ internal static class DrawingSheet
                 Drawing.Box(rgb, w, h, x, y0, x + 1, y0 + (k % 5 == 0 ? 24 : 12), 0);
             }
             Drawing.Text(rgb, w, h, "1 m", x0 + Px(1) + 20, y0, Letter, 0);
+        }
+
+        // Read the gun and its actual laying drive without posing anything in the editor. One principal barrel per
+        // trunnion keeps coaxial guns from covering the drawing in duplicate angle labels.
+        void ReadGunMotion()
+        {
+            var components = DesignEditor.Instance?.AllComponents().ToList() ?? new();
+            var guns = components.Select(c => c.TryCast<Sprocket.Vehicles.Cannons.Cannon>()).OfType<Sprocket.Vehicles.Cannons.Cannon>()
+                .GroupBy(g => (int)g.VehicleObject.VUID).ToDictionary(g => g.Key, g => g.First());
+            var parts = new Dictionary<int, DrawingMounts.Part>();
+            foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
+            {
+                var parent = part.VehicleTransform?.Parent?.VehicleObject;
+                parts[(int)part.VUID] = new(parent == null ? -1 : (int)parent.VUID,
+                    part.GUID == DrawingMounts.TrunnionGuid, part.GUID == Conversion.RingGuid);
+            }
+            var candidates = guns.Select(g => (Id: g.Key, Caliber: (int)(g.Value.Blueprint?.Caliber ?? 0))).ToArray();
+            var included = guns.Where(g => gunLimits.Shows(DrawingSettings.GunKey(g.Value))).Select(g => g.Key).ToHashSet();
+            foreach (var drive in components.Select(c => c.TryCast<Sprocket.Vehicles.Weapons.LayingDrive>()).OfType<Sprocket.Vehicles.Weapons.LayingDrive>())
+            {
+                try
+                {
+                    var trunnions = drive.Trunnions;
+                    if (trunnions == null || drive.BlueprintSlot?.HasBlueprint != true) continue;
+                    int mountId = (int)trunnions.VehicleObject.VUID;
+                    int? gunId = DrawingMounts.SelectGun(mountId, candidates, parts, included.Contains);
+                    if (!gunId.HasValue)
+                    {
+                        Plugin.ModLog.LogInfo($"QOL_DRAWING mount {mountId}: no enabled gun on this mount; annotations skipped");
+                        continue;
+                    }
+                    var cannon = guns[gunId.Value];
+                    if (cannon?.Barrel == null) continue;
+                    var shapes = new List<Drawing.Shape>();
+                    var seen = new HashSet<IntPtr>();
+                    foreach (var t in cannon.Barrel.BarrelTransforms)
+                        if (t != null)
+                            foreach (var filter in t.GetComponentsInChildren<MeshFilter>())
+                                if (seen.Add(filter.Pointer) && filter.sharedMesh is { isReadable: true } mesh)
+                                    shapes.Add(Shape(mesh, filter.transform.localToWorldMatrix));
+                    var points = shapes.SelectMany(s => s.P).ToArray();
+                    if (points.Length == 0) { Plugin.ModLog.LogWarning("QOL_DRAWING gun limits: barrel mesh unavailable; skipped this mount"); continue; }
+                    var pivot = V(trunnions.transform.position);
+                    var forward = V(cannon.transform.forward);
+                    float end = points.Max(p => N.Vector3.Dot(p, forward));
+                    var muzzle = points.Where(p => end - N.Vector3.Dot(p, forward) < 0.002f).ToArray();
+                    if (muzzle.Length == 0) { Plugin.ModLog.LogWarning($"QOL_DRAWING gun limits: no muzzle vertices matched; skipped this mount"); continue; }
+                    var tip = muzzle.Aggregate(N.Vector3.Zero, (sum, p) => sum + p) / muzzle.Length;
+                    var bp = drive.BlueprintSlot.Blueprint;
+                    Plugin.ModLog.LogInfo($"QOL_DRAWING mount {mountId}: gun {gunId.Value}, {cannon.Blueprint?.Caliber} mm, elevation {bp.Elevation.Min} to {bp.Elevation.Max}");
+                    motion.AddRange(DrawingOptions.Motion(shapes, pivot, tip, V(trunnions.transform.right), V(trunnions.transform.up),
+                        bp.Elevation.Min, bp.Elevation.Max, bp.Azimuth.Min, bp.Azimuth.Max, elevation, traverse));
+                }
+                catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_DRAWING gun limits: {ex.Message}; skipped this mount"); }
+            }
+            Plugin.ModLog.LogInfo($"QOL_DRAWING {motion.Count} gun limit positions (elevation={elevation}, traverse={traverse})");
+        }
+
+        // A separate ring-centred overlay, including guns mounted directly to the turret with no laying drive.
+        // Use the nearest turret ancestor so a nested turret is not attributed to its outer turret as well.
+        void ReadTurretMotion()
+        {
+            var components = DesignEditor.Instance?.AllComponents().ToList() ?? new();
+            var guns = components.Select(c => c.TryCast<Sprocket.Vehicles.Cannons.Cannon>()).OfType<Sprocket.Vehicles.Cannons.Cannon>()
+                .Where(g => gunLimits.Shows(DrawingSettings.GunKey(g))).ToList();
+            IntPtr Owner(Sprocket.Vehicles.Cannons.Cannon cannon)
+            {
+                var seen = new HashSet<IntPtr>();
+                for (var t = cannon.VehicleTransform; t != null && seen.Add(t.Pointer); t = t.Parent)
+                    if (t.VehicleObject?.GUID == Conversion.RingGuid) return t.VehicleObject.Pointer;
+                return IntPtr.Zero;
+            }
+            foreach (var ring in components.Select(c => c.TryCast<Sprocket.Vehicles.Turrets.TurretRing>()).OfType<Sprocket.Vehicles.Turrets.TurretRing>())
+            {
+                try
+                {
+                    var slot = ring.motor?.TraverseBlueprintSlot;
+                    if (slot?.HasBlueprint != true) continue;
+                    var cannon = guns.Where(g => Owner(g) == ring.VehicleObject.Pointer).OrderByDescending(c => c.Blueprint?.Caliber ?? 0).FirstOrDefault();
+                    if (cannon?.Barrel == null) continue;
+                    var shapes = new List<Drawing.Shape>();
+                    var seen = new HashSet<IntPtr>();
+                    foreach (var t in cannon.Barrel.BarrelTransforms)
+                        if (t != null)
+                            foreach (var filter in t.GetComponentsInChildren<MeshFilter>())
+                                if (seen.Add(filter.Pointer) && filter.sharedMesh is { isReadable: true } mesh)
+                                    shapes.Add(Shape(mesh, filter.transform.localToWorldMatrix));
+                    var points = shapes.SelectMany(s => s.P).ToArray();
+                    if (points.Length == 0) { Plugin.ModLog.LogWarning("QOL_DRAWING turret limits: unreadable barrel, skipped ring"); continue; }
+                    var forward = V(cannon.transform.forward);
+                    float end = points.Max(p => N.Vector3.Dot(p, forward));
+                    var muzzle = points.Where(p => end - N.Vector3.Dot(p, forward) < 0.002f).ToArray();
+                    if (muzzle.Length == 0) { Plugin.ModLog.LogWarning("QOL_DRAWING turret limits: unreadable muzzle, skipped ring"); continue; }
+                    var tip = muzzle.Aggregate(N.Vector3.Zero, (sum, p) => sum + p) / muzzle.Length;
+                    var bp = slot.Blueprint;
+                    motion.AddRange(DrawingOptions.TurretMotion(shapes, V(ring.transform.position), tip, V(ring.transform.up), bp.MinAngle, bp.MaxAngle));
+                    Plugin.ModLog.LogInfo($"QOL_DRAWING turret {ring.VehicleObject.VUID}: limits {bp.MinAngle} to {bp.MaxAngle} degrees");
+                }
+                catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_DRAWING turret limits: {ex.Message}; skipped ring"); }
+            }
         }
 
         /// Every mesh of the vehicle as a shape (world space). Some meshes the game keeps only on the graphics card:

@@ -189,9 +189,28 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   vehicle with its armour off: the armour as glass). Colour uses **clean outlines** around visible parts, depth steps and sharp corners, suppressing flat
   triangle seams, shallow facets and isolated speckles. These thin dark-grey contours preserve detail throughout
   the vehicle without a mesh overlay. See-through keeps only the vehicle silhouette by default.
-  In **Mesh tools**, turn off **Colour: clean outlines** or **See-through: outline only** to restore that export's wireframe, or enable
-  **Drawing: no wireframe** to omit all added lines from both coloured exports. These choices are remembered between
+  In **Drawing sheet (F9)**, turn off **Colour outlines** or **Interior outline** to restore that export's wireframe, or enable
+  **No wireframe** to omit all added lines from both coloured exports. These choices are remembered between
   sessions and leave the separate line drawing unchanged.
+  **Intensity (%)** adjusts geometry-line strength from 0 to 100 on all sheets, without fading
+  paint, dimensions or labels. **Gun elevation** adds dashed barrel positions and angle labels
+  in the side view; **Gun traverse** independently shows the laying drive's left/right limits in the top
+  view, useful for casemates. These use the configured laying-drive limits and the principal barrel on each mount,
+  keep the vehicle intact, and leave space around the views for the movement. Missing/unreadable barrel meshes are
+  skipped and logged. **Blue blueprint** saves an extra `(blueprint).png` with light lines on blue paper.
+  **Turret rotation** separately draws ring-centred rotation using the traverse motor's Min and Max settings,
+  including asymmetric limits. Full rotation gets one 360-degree arc; a locked turret gets none. These controls
+  live in their own foldout on structure, turret-ring and cannon panels, with short labels and detailed tooltips.
+  Select a cannon and turn off **This gun's limits** in **Drawing sheet (F9)** to omit only its movement-limit
+  lines and angle labels from all F9 sheets. Its geometry, decals and weapon specifications stay visible.
+  On shared mounts, the largest enabled gun supplies the annotations; disable all guns on that mount to hide them all.
+  Choices are remembered per design name and gun ID in the mod settings. Renaming a design starts a separate selection;
+  copies with the same name and gun IDs share the choices. The global movement toggles must also be enabled.
+  Each gun uses only its nearest trunnions: a nested turret or gun cannot supply annotations for an outer mount.
+  The vehicle's weight in tonnes appears in the same bold header row as its name on every sheet.
+  **Blueprint grid** adds optional square background lines to the blue export, with **Grid strength (%)** controlling
+  their visibility. Minor squares follow 0.25 m at drawing scale; every fourth line is stronger (1 m). The grid is
+  drawn under the white vehicle lines and text. Enable **Blue blueprint** as well; other exports keep their backgrounds.
   The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
   the outline of curved parts, with what's hidden behind other parts left out; each view is outlined from its picture
   too, so every part has its outline. Saved as PNG in `Documents\My Games\Sprocket\Photos`. Takes a few seconds.
@@ -213,7 +232,10 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   the copy of its parent. With Mirror on, a turret gets a mirrored twin on the other side like other parts; the game
   mirrors only the ring, so once you let go the mod mirrors the turret body, guns and everything else on it onto the
   twin (the design reloads once; Restore undoes it). The twin body shares the original's shape, so later edits to it
-  apply to both sides.
+  apply to both sides. Each mirrored ring references its own traverse motor, including nested turrets.
+  For an existing pair sharing or crossing drive connections, select a turret ring or traverse motor and press
+  **Fix mirrored turret drives**. It reconnects each ring to its own attached motor, reloads an unsaved result and
+  keeps a backup (Restore undoes it). Missing or ambiguous motors and unrelated external connections are left alone.
 - **Hotkeys:** while a hand-made structure is selected, a box beside the panel lists the mesh editing keys,
   including the ones the game's hint bar leaves out: **B** box select (then drag), **C** circle select, **A** select
   all / none, **E** extrude, **J** split, **M** merge points, **H** slope, **X / Y / Z** lock to an axis, and more. The

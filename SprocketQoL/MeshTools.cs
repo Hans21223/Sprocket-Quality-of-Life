@@ -149,10 +149,14 @@ public static class MeshTools
         var anyCorner = new Dictionary<int, Loop>();
         foreach (int f in plan.Remove.Concat(Enumerable.Range(0, view.Faces.Count)))
             foreach (int v in view.Corners[f]) if (!anyCorner.ContainsKey(v)) anyCorner[v] = view.CornerIn(f, v)!;
-        // A point on no face (a loose edge's) takes its settings from the face the new one is made from.
         Loop Corner(int f, int v) => view.CornerIn(f, v) ?? (anyCorner.TryGetValue(v, out var any) ? any : view.Faces[f].firstLoop);
-        float Thickness(int f, int v) => v < old ? Corner(f, v).thickness
-            : plan.Points[v - old].Blend.Sum(b => b.W * Thickness(f, b.V)) / plan.Points[v - old].Blend.Sum(b => b.W);
+        float Thickness(int f, int v)
+        {
+            if (v < old) return Corner(f, v).thickness;
+            var blend = plan.Points[v - old].Blend;
+            float total = blend.Sum(b => b.W);
+            return total > 0 ? blend.Sum(b => b.W * Thickness(f, b.V)) / total : Corner(f, blend.Length > 0 ? blend[0].V : (old > 0 ? 0 : 0)).thickness;
+        }
         Loop From(int f, int v) => Corner(f, v < old ? v : plan.Points[v - old].Blend[0].V);
 
         // Edges and points still in use afterwards: everything the kept and new faces touch, and loose edges.
@@ -753,6 +757,7 @@ public static class MeshTools
         foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
             foreach (var r in part.GetComponentsInChildren<Renderer>(true))
                 if (own.Add(r.Pointer) && Drawn(r) && r.gameObject.activeInHierarchy && !aerials.Contains(r.Pointer)) counted.Add(r);
+        if (counted.Count == 0) return;
         string Say(Renderer r) => $"{(r.transform.parent != null ? r.transform.parent.name + "/" : "")}{r.name} {r.bounds.min:F2}..{r.bounds.max:F2}";
         var sides = new (string Side, Func<Renderer, float> By, bool Low)[]
         {
@@ -1386,18 +1391,6 @@ public static class MeshTools
         ui.ToggleField("Proportional (O)", proportional, Ui.BoolCallback(v => proportional = v),
             "Moving, scaling or rotating points pulls the points around them too, less the further away (up to the radius).");
         ui.Slider("Proportional radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
-        ui.ToggleField("Drawing: no wireframe", Plugin.DrawingNoWireframe?.Value ?? false, Ui.BoolCallback(v =>
-        {
-            if (Plugin.DrawingNoWireframe != null) Plugin.DrawingNoWireframe.Value = v;
-        }), "F9 colour and see-through drawings without any added lines, including outlines. Off by default; remembered between sessions. The separate lines-only drawing is unchanged.");
-        ui.ToggleField("Colour: clean outlines", Plugin.DrawingColourOutline?.Value ?? true, Ui.BoolCallback(v =>
-        {
-            if (Plugin.DrawingColourOutline != null) Plugin.DrawingColourOutline.Value = v;
-        }), "F9 colour drawing: outline visible parts and sharp corners, suppressing triangle seams and shallow facets. On by default; turn off for wireframe. Drawing: no wireframe hides all added lines in both coloured exports.");
-        ui.ToggleField("See-through: outline only", Plugin.DrawingSeeThroughOutline?.Value ?? true, Ui.BoolCallback(v =>
-        {
-            if (Plugin.DrawingSeeThroughOutline != null) Plugin.DrawingSeeThroughOutline.Value = v;
-        }), "F9 see-through drawing: highlight only the vehicle silhouette over the visible interior, with no mesh edges. On by default; turn off for wireframe. Drawing: no wireframe hides all added lines in both coloured exports.");
         ui.Slider("Flashlight (% of sun)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
         ui.Slider("Fullbright (% of sun, each light)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
         {

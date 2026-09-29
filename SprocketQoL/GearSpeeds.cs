@@ -155,7 +155,7 @@ public static class GearSpeeds
 
     static Torque? EngineTorque(EngineBlueprint e, float revLimit)
     {
-        float idle = Math.Clamp(e.IdleRPM, 1, e.MaxRPM - 1), max = e.MaxRPM;
+        float idle = Math.Clamp(e.IdleRPM, 1, Math.Max(1, e.MaxRPM - 1)), max = Math.Max(idle + 1, e.MaxRPM);
         static float Omega(float rpm) => rpm * MathF.PI / 30; // rad/s
         var torque = Enumerable.Range(0, 101).Select(k => idle + (max - idle) * k / 100f)
             .Select(rpm => EngineRules.CalculatePowerAtRPM(e.MaxTorque, rpm, max) / Omega(rpm)).ToArray();

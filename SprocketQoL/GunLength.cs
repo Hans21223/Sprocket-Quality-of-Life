@@ -26,5 +26,5 @@ public static class GunLength
                      "A muzzle brake isn't counted, as for real guns", 4);
     });
 
-    static string Calibers(int lengthMm, int caliberMm) => (lengthMm / (float)caliberMm).ToString("0.##");
+    static string Calibers(int lengthMm, int caliberMm) => caliberMm > 0 ? (lengthMm / (float)caliberMm).ToString("0.##") : "0";
 }

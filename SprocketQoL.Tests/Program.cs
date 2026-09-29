@@ -4,6 +4,8 @@ using System.Numerics;
 if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
 if (args.Contains("--gizmo-only")) { GizmoPickingTests.Run(); return; }
 if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
+if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
+TurretDriveTests.Run();
 GizmoPickingTests.Run();
 BevelEdgeTests.Run();
 int checks=0, conversions=0;

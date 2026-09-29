@@ -1,6 +1,44 @@
 Quality of Life - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
+Local build 1.8.0.6: fixed nested gun-mount annotations.
+Each gun belongs to its closest trunnions. Disabling an outer gun no longer borrows a nested turret's
+larger barrel and draws the outer gun's angles on it. Existing per-gun selections are retained.
+
+Earlier build 1.8.0.5: per-gun movement annotations.
+Select a cannon, open Drawing sheet (F9), and turn off This gun's limits to hide only its movement-limit
+lines and angle labels. The gun, decals, weight and weapon specifications stay in the drawings.
+Applies to elevation, gun traverse and turret rotation on all F9 exports; their global toggles still apply.
+Shared mounts use their largest enabled gun. Disable every gun on a shared mount to hide all of its annotations.
+Choices are saved per design name and gun ID. Renaming starts a separate selection; same-name copies with
+the same gun IDs share choices. This setting does not edit the tank blueprint.
+
+Earlier build 1.8.0.4: optional square background grid for blue blueprints.
+Drawing sheet (F9): enable Blue blueprint and Blueprint grid; adjust Grid strength (%), default 20.
+Quarter-metre squares at drawing scale, with a stronger line every metre. Text and vehicle lines stay above it.
+The grid is off by default and does not affect white, colour or see-through exports.
+
+Local build 1.8.0.3: Drawing sheet (F9) has its own foldout on structure, turret-ring and cannon panels.
+Short labels keep the controls readable; hover for details. Existing drawing settings are retained.
+New Turret rotation toggle: uses the traverse motor's Min/Max angles around the turret ring.
+Asymmetric limits show the actual allowed arc; full rotation shows one 360-degree circle; locked turrets show none.
+Gun elevation and Gun traverse remain separate options for the gun's own laying drive.
+
+Earlier build 1.8.0.2: F9 drawing options (now in Drawing sheet):
+- Wireframe intensity (%): geometry lines from 0 to 100, without fading paint, dimensions or text.
+- Elevation / depression: dashed gun limits in the side view, over the intact vehicle.
+- Gun traverse: separate top-view left/right laying-drive limits, useful for casemates.
+  Movement uses the configured laying-drive limits and main barrel on each mount. Unreadable barrels are skipped.
+- Blue blueprint: an extra white-on-blue (blueprint).png alongside the normal sheets.
+- Vehicle weight in tonnes beside the name in the same bold header row.
+All options are remembered. Gun movement and blue style are off by default.
+
+Local build 1.8.0.1: mirrored turret rings connect to their own traverse motors, including nested turrets.
+Existing affected designs: select a turret ring or traverse motor, open Mirrored turret drives, and press
+Fix mirrored turret drives. Reconnects crossed/shared drives to their own attached turret; leaves ambiguous
+motors and unrelated external connections alone. Loads an unsaved result with a backup; Restore undoes it.
+Includes the upstream 1.8.0 updates and earlier local fixes below.
+
 Local build 1.7.9.9: bevel preserves settings on recreated surrounding edges and starts new
 chamfer edges with clean flags. Existing edges keep their settings. Includes the earlier fixes below.
 

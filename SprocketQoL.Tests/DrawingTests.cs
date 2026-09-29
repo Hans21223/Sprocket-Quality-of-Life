@@ -28,6 +28,7 @@ static class DrawingTests
 
     public static void Run()
     {
+        DrawingOptionsTests.Run();
         var (cp, ct) = Box(Vector3.Zero, 1);
         var cube = Drawing.Weld(cp, ct);
         Check(cube.P.Length == 8 && cube.T.Length == 36, $"cube welds to 8 corners, 12 triangles (got {cube.P.Length}, {cube.T.Length / 3})");

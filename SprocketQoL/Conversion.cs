@@ -102,6 +102,61 @@ public static class Conversion
     static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && char.IsLetter(kv.Key[0])
         && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList();
 
+    // Ring settings can be shared between mirror twins, but the motor is a component reference, not a setting.
+    // Clone before remapping so changing the twin never redirects the original ring as well.
+    static void RemapRingMotor(JsonObject ring, JsonArray blocks, IReadOnlyDictionary<int, int> map, ref int nextBlock)
+    {
+        if (GuidOf(ring) != RingGuid || ring["ringBlueprintVuid"] is not JsonValue slot) return;
+        var block = blocks.First(x => Id(x!, "id") == slot.GetValue<int>())!;
+        if (block["blueprint"]?["motorVuid"] is not JsonValue motor || !map.TryGetValue(motor.GetValue<int>(), out int replacement)
+            || replacement == motor.GetValue<int>()) return;
+        var own = JsonNode.Parse(block.ToJsonString())!.AsObject();
+        own["id"] = nextBlock;
+        own["blueprint"]!["motorVuid"] = replacement;
+        blocks.Add(own);
+        ring["ringBlueprintVuid"] = nextBlock++;
+    }
+
+    /// Repair existing explicit mirror pairs using their own motor's parent hierarchy. Ambiguous/missing motors
+    /// are left alone; proximity is not ownership, and nested turrets must keep their own drive.
+    public static (string Json, int Repaired, int Unresolved) RepairMirroredTurretDrives(string json)
+    {
+        var b = Parse(json);
+        var objects = Objects(b);
+        var blocks = b["blueprints"]!.AsArray();
+        int nextBlock = blocks.Select(x => Id(x!, "id")).DefaultIfEmpty(0).Max() + 1;
+        int Owner(JsonObject motor)
+        {
+            var seen = new HashSet<int>();
+            for (int p = Id(motor, "pvuid"); objects.TryGetValue(p, out var parent); p = Id(parent, "pvuid"))
+            {
+                if (!seen.Add(p)) throw new Exception("Cyclic part hierarchy.");
+                if (GuidOf(parent) == RingGuid) return p;
+            }
+            return -1;
+        }
+        var motors = objects.Values.Where(o => GuidOf(o) == MotorGuid && o["motor"] is JsonValue)
+            .GroupBy(Owner).ToDictionary(g => g.Key, g => g.Select(o => Id(o, "motor")).ToArray());
+        int Motor(JsonObject ring) => blocks.First(x => Id(x!, "id") == Id(ring, "ringBlueprintVuid"))!["blueprint"]?["motorVuid"]?.GetValue<int>() ?? -1;
+        int repaired = 0, unresolved = 0;
+        foreach (var ring in objects.Values.Where(o => GuidOf(o) == RingGuid))
+        {
+            int id = Id(ring, "vuid");
+            if (ring["transform"]?["mirrorVuid"]?.GetValue<int>() is not int twinId || twinId <= id || !objects.TryGetValue(twinId, out var twin)
+                || GuidOf(twin) != RingGuid || twin["transform"]?["mirrorVuid"]?.GetValue<int>() != id) continue;
+            var left = motors.GetValueOrDefault(id) ?? Array.Empty<int>();
+            var right = motors.GetValueOrDefault(twinId) ?? Array.Empty<int>();
+            if (left.Length != 1 || right.Length != 1 || left[0] == right[0]) { unresolved++; continue; }
+            int oldLeft = Motor(ring), oldRight = Motor(twin);
+            // Only redirect a reference to this pair's drives. An intentional external connection is untouched.
+            if (oldLeft != left[0] && oldLeft == right[0])
+            { RemapRingMotor(ring, blocks, new Dictionary<int, int> { [oldLeft] = left[0] }, ref nextBlock); repaired++; }
+            if (oldRight != right[0] && oldRight == left[0])
+            { RemapRingMotor(twin, blocks, new Dictionary<int, int> { [oldRight] = right[0] }, ref nextBlock); repaired++; }
+        }
+        return (repaired == 0 ? json : b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), repaired, unresolved);
+    }
+
     /// Fills a mirrored turret's twin: the game's Mirror copies only the ring, so every part on ring `ringId` (turret body,
     /// guns, seats, decals, ...) gets a mirrored copy on the twin ring, linked to it as a mirror pair, as Mirror places
     /// parts (a body pair shares its shape, so later edits go to both). If the ring is saved once, marked mirrored (the
@@ -143,16 +198,27 @@ public static class Conversion
         foreach (int v in parts)
         {
             var o = objects[v];
-            if (TwinOf(o) is int t && onTwin.Contains(t)) { map[v] = t; continue; } // already mirrored onto the twin
+            if (TwinOf(o) is int t && onTwin.Contains(t))
+            {
+                map[v] = t; // already mirrored onto the twin: references still need its component numbers
+                foreach (var key in ComponentKeys(o)) if (objects[t][key] is JsonValue component) map[Id(o, key)] = component.GetValue<int>();
+                continue;
+            }
             copy.Add(v);
             map[v] = next++;
             foreach (var key in ComponentKeys(o)) map[Id(o, key)] = next++;
         }
-        if (copy.Count == 0) throw new Exception("Everything on this turret is already on its twin.");
+        if (copy.Count == 0)
+        {
+            var repair = RepairMirroredTurretDrives(json);
+            if (repair.Repaired > 0) return (repair.Json, repair.Repaired, "drive connections repaired");
+            throw new Exception("Everything on this turret is already on its twin.");
+        }
 
         var blocks = b["blueprints"]!.AsArray();
         int nextBlock = blocks.Select(x => x!["id"]?.GetValue<int>() ?? 0).DefaultIfEmpty(0).Max() + 1;
         var list = b["objects"]!.AsArray();
+        RemapRingMotor(objects[twinRing], blocks, map, ref nextBlock);
         foreach (int v in copy)
         {
             var o = objects[v];
@@ -160,6 +226,7 @@ public static class Conversion
             d["vuid"] = map[v];
             d["pvuid"] = map.TryGetValue(Id(o, "pvuid"), out int p) ? p : Id(o, "pvuid");
             foreach (var key in ComponentKeys(o)) d[key] = map[Id(o, key)];
+            RemapRingMotor(d, blocks, map, ref nextBlock);
             if (o["structureID"] is JsonValue s && map.TryGetValue(s.GetValue<int>(), out int body)) d["structureID"] = body;
             // Mirrored across the vehicle's centre: seen from its (mirrored) parent, x the other way and the turn mirrored.
             var t = d["transform"]!.AsObject();

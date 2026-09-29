@@ -130,7 +130,7 @@ internal static class Drawing
 
     /// The edges a view shows, drawn into `ink`: creases and open edges, plus the outline of curved surfaces (an edge
     /// between a face turned to the view and one turned away), where nothing nearer covers them.
-    internal static void Lines(IReadOnlyList<Shape> shapes, View v, (float[] Z, int[] Face) depth, bool[] ink)
+    internal static void Lines(IReadOnlyList<Shape> shapes, View v, (float[] Z, int[] Face) depth, bool[] ink, int dashPixels = 0)
     {
         int first = 0;
         foreach (var s in shapes)
@@ -140,7 +140,7 @@ internal static class Drawing
             foreach (var (a, b, f1, f2, crease) in s.E)
             {
                 bool outline = f2 >= 0 && MathF.Sign(Vector3.Dot(s.N[f1], v.Look)) != MathF.Sign(Vector3.Dot(s.N[f2], v.Look));
-                if (crease || outline) Line(depth, ink, v.Width, v.Height, s, first, p[a], p[b], a, b, f1, f2);
+                if (crease || outline) Line(depth, ink, v.Width, v.Height, s, first, p[a], p[b], a, b, f1, f2, dashPixels);
             }
             first += s.N.Length;
         }
@@ -157,11 +157,12 @@ internal static class Drawing
         return touches && (Vector3.Dot(s.N[f], s.N[f1]) > CreaseCos || f2 >= 0 && Vector3.Dot(s.N[f], s.N[f2]) > CreaseCos);
     }
 
-    static void Line((float[] Z, int[] Face) depth, bool[] ink, int w, int h, Shape s, int first, Vector3 pa, Vector3 pb, int a, int b, int f1, int f2)
+    static void Line((float[] Z, int[] Face) depth, bool[] ink, int w, int h, Shape s, int first, Vector3 pa, Vector3 pb, int a, int b, int f1, int f2, int dashPixels = 0)
     {
         int steps = Math.Max(1, (int)MathF.Ceiling(MathF.Max(MathF.Abs(pb.X - pa.X), MathF.Abs(pb.Y - pa.Y)) * 2));
         for (int i = 0; i <= steps; i++)
         {
+            if (dashPixels > 0 && (int)(i / (float)steps * Vector2.Distance(new(pa.X, pa.Y), new(pb.X, pb.Y)) / dashPixels) % 2 != 0) continue;
             var q = Vector3.Lerp(pa, pb, i / (float)steps);
             int x = (int)q.X, y = (int)q.Y;
             if (x < 0 || y < 0 || x >= w || y >= h) continue;
@@ -357,10 +358,11 @@ internal static class Drawing
     {
         if (string.IsNullOrWhiteSpace(text)) return (0, 0, Array.Empty<byte>());
         IntPtr dc = CreateCompatibleDC(IntPtr.Zero), font = IntPtr.Zero, bitmap = IntPtr.Zero;
+        IntPtr oldFont = IntPtr.Zero, oldBitmap = IntPtr.Zero;
         try
         {
             font = CreateFontW(-pixelHeight, 0, 0, 0, bold ? 700 : 400, 0, 0, 0, 1, 0, 0, 4, 0, "Segoe UI"); // 4: anti-aliased, not ClearType
-            SelectObject(dc, font);
+            oldFont = SelectObject(dc, font);
             const uint Wrap = 0x10, NoPrefix = 0x800, Tabs = 0x40, Measure = 0x400;
             var box = new Rect { Right = maxWidth };
             DrawTextW(dc, text, -1, ref box, Wrap | NoPrefix | Tabs | Measure);
@@ -368,7 +370,7 @@ internal static class Drawing
             var info = new BitmapInfo { Size = 40, Width = w, Height = -h, Planes = 1, BitCount = 32 }; // -h: rows from the top
             bitmap = CreateDIBSection(dc, ref info, 0, out var bits, IntPtr.Zero, 0);
             if (bitmap == IntPtr.Zero) throw new InvalidOperationException("Windows couldn't make a picture for the text");
-            SelectObject(dc, bitmap);
+            oldBitmap = SelectObject(dc, bitmap);
             SetTextColor(dc, 0xFFFFFF);
             SetBkMode(dc, 1); // transparent: white letters on the picture's black
             var area = new Rect { Right = w, Bottom = h };
@@ -381,9 +383,11 @@ internal static class Drawing
         }
         finally
         {
+            if (oldBitmap != IntPtr.Zero) SelectObject(dc, oldBitmap);
             if (bitmap != IntPtr.Zero) DeleteObject(bitmap);
+            if (oldFont != IntPtr.Zero) SelectObject(dc, oldFont);
             if (font != IntPtr.Zero) DeleteObject(font);
-            DeleteDC(dc);
+            if (dc != IntPtr.Zero) DeleteDC(dc);
         }
     }
 

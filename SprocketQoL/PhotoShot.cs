@@ -60,7 +60,8 @@ internal static class PhotoShot
             if (step == 0 && frames >= SettleFrames)
             {
                 shotDone = false; shotError = null;
-                DesignEditor.Instance!.StartCoroutine(Shoot().WrapToIl2Cpp());
+                if (DesignEditor.Instance is { } editor) editor.StartCoroutine(Shoot().WrapToIl2Cpp());
+                else throw new InvalidOperationException("no editor to run photo coroutine");
                 step = 1; frames = 0;
             }
             else if (step == 1 && (shotDone || frames > 120))
@@ -68,7 +69,8 @@ internal static class PhotoShot
                 Restore();
                 if (shotDone && shotError == null)
                 {
-                    Plugin.ModLog.LogInfo($"QOL_PHOTO saved {file} ({new FileInfo(file).Length / 1024} KB)");
+                    long kb = File.Exists(file) ? new FileInfo(file).Length / 1024 : 0;
+                    Plugin.ModLog.LogInfo($"QOL_PHOTO saved {file} ({kb} KB)");
                     DesignEditor.Instance?.Say("Photo saved: " + file, 6);
                 }
                 else
