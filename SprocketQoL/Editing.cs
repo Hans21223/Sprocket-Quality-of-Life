@@ -365,7 +365,7 @@ public sealed class DesignEditor : MonoBehaviour
                 nextLookup = Time.unscaledTime + 0.5f;
                 bool wasInEditor = core != null;
                 core = UnityEngine.Object.FindObjectOfType<VehicleDesignerCore>();
-                if (wasInEditor && core == null) { MeshTools.LeftEditor(); ExplodedView.LeftEditor(); } // editor-only views end with it
+                if (wasInEditor && core == null) { MeshTools.LeftEditor(); ExplodedView.LeftEditor(); GearSpeeds.LeftEditor(); } // editor-only views end with it
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
         });
@@ -377,6 +377,7 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Exploded view", ExplodedView.Keys);
             Ui.Guard("Own paint", PartPaint.Tick);
             Ui.Guard("Hotkeys", Hotkeys.Keys);
+            Ui.Guard("Gear speeds", GearSpeeds.Update);
         }
         Ui.Guard("Photo", PhotoShot.Update);
         if (ready) Ui.Guard("Drawing sheet", DrawingSheet.Update);

@@ -13,6 +13,9 @@ using Sprocket.Vehicles.Tracks;
 using Sprocket.Vehicles.Transmissions;
 using Sprocket.Vehicles.Transmissions.Editor;
 
+using UnityEngine;
+using UnityEngine.InputSystem;
+
 namespace SprocketQoL;
 
 /// Powertrain: a "Speed & acceleration" section in the Transmission and Engine panels with every gear's top speed
@@ -23,13 +26,62 @@ public static class GearSpeeds
 {
     const string Title = "Speed & acceleration";
     static string? shown, logged; // last state / inputs written to the log, so each is logged once per change
+    static CombustionEngineComponentEditor? pendingEngineRedraw;
+    static TransmissionEditor? pendingGearsRedraw;
 
     // After a change the panel isn't redrawn by itself: ask, so the numbers follow.
+    // If the user is dragging a slider, defer redraw until the mouse button is released,
+    // otherwise destroying the slider mid-drag aborts the drag and locks the slider.
     [HarmonyPostfix, HarmonyPatch(typeof(TransmissionEditor), nameof(TransmissionEditor.OnComponentRebuilt))]
-    static void GearsChanged(TransmissionEditor __instance) => Ui.Guard(Title, __instance.RequestRedraw);
+    static void GearsChanged(TransmissionEditor __instance) => Ui.Guard(Title, () =>
+    {
+        if (IsDragging()) pendingGearsRedraw = __instance;
+        else __instance.RequestRedraw();
+    });
 
     [HarmonyPostfix, HarmonyPatch(typeof(CombustionEngineComponentEditor), nameof(CombustionEngineComponentEditor.OnComponentRebuilt))]
-    static void EngineChanged(CombustionEngineComponentEditor __instance) => Ui.Guard(Title, __instance.RequestRedraw);
+    static void EngineChanged(CombustionEngineComponentEditor __instance) => Ui.Guard(Title, () =>
+    {
+        if (IsDragging()) pendingEngineRedraw = __instance;
+        else __instance.RequestRedraw();
+    });
+
+    internal static void Update()
+    {
+        if (pendingEngineRedraw != null && !IsDragging())
+        {
+            var e = pendingEngineRedraw;
+            pendingEngineRedraw = null;
+            try { e.RequestRedraw(); } catch { }
+        }
+        if (pendingGearsRedraw != null && !IsDragging())
+        {
+            var g = pendingGearsRedraw;
+            pendingGearsRedraw = null;
+            try { g.RequestRedraw(); } catch { }
+        }
+    }
+
+    internal static void LeftEditor()
+    {
+        pendingEngineRedraw = null;
+        pendingGearsRedraw = null;
+    }
+
+    static bool IsDragging()
+    {
+        try
+        {
+            if (Mouse.current is { } m && m.leftButton.isPressed) return true;
+        }
+        catch { }
+        try
+        {
+            if (Input.GetMouseButton(0)) return true;
+        }
+        catch { }
+        return false;
+    }
 
     [HarmonyPostfix, HarmonyPatch(typeof(TransmissionEditor), nameof(TransmissionEditor.OnGUI))]
     static void InTransmission(TransmissionEditor __instance, IGUILayout layout) =>
