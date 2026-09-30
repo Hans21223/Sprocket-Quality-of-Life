@@ -6,6 +6,9 @@ param(
     [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\Sprocket",
     [string]$Dotnet = "dotnet"
 )
+if (-not (Test-Path (Join-Path $GameDir "BepInEx\interop")) -and (Test-Path "D:\Projects\SprocketInteropPatch\TestGame\BepInEx\interop")) {
+    $GameDir = "D:\Projects\SprocketInteropPatch\TestGame"
+}
 $proj = Get-ChildItem (Join-Path (Split-Path $PSScriptRoot) $Project) -Filter *.csproj | Select-Object -First 1
 if (-not $proj) { throw "No .csproj in folder '$Project'" }
 & $Dotnet build $proj.FullName -c Release -nologo -v q "-p:GameDir=$GameDir"
@@ -19,3 +22,19 @@ while (Get-CimInstance Win32_Process -Filter "Name='Sprocket.exe'" | Where-Objec
 }
 Copy-Item $dll (Join-Path $GameDir "BepInEx\plugins") -Force
 "Installed $name.dll into $GameDir\BepInEx\plugins"
+
+$pdb = [System.IO.Path]::ChangeExtension($dll, ".pdb")
+$targets = @(
+    "D:\Projects\SprocketInteropPatch\TestGame\BepInEx\plugins",
+    "C:\Program Files (x86)\Steam\steamapps\common\Sprocket\ModManager\mods\Sprocket (test copy)\Quality of Life\BepInEx\plugins",
+    "C:\Program Files (x86)\Steam\steamapps\common\Sprocket\ModManager\mods\Sprocket (test copy)\BepInEx\plugins",
+    "C:\Program Files (x86)\Steam\steamapps\common\Sprocket\ModManager\mods\Sprocket\Quality of Life\BepInEx\plugins"
+)
+foreach ($t in $targets) {
+    if (Test-Path (Split-Path $t)) {
+        if (-not (Test-Path $t)) { New-Item -ItemType Directory -Path $t -Force | Out-Null }
+        Copy-Item $dll $t -Force
+        if (Test-Path $pdb) { Copy-Item $pdb $t -Force }
+        "Installed $name.dll into $t"
+    }
+}

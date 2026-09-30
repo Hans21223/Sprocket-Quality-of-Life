@@ -484,7 +484,12 @@ internal static class DrawingSheet
                     }
                 var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "Sprocket", "Photos");
                 Directory.CreateDirectory(dir);
-                var name = Path.Combine(dir, $"Sprocket drawing {DateTime.Now:yyyy-MM-dd HH-mm-ss}");
+                string vName = !string.IsNullOrWhiteSpace(block.VehicleName) 
+                    ? block.VehicleName 
+                    : ResolveVehicleName(DesignEditor.Instance?.AllComponents(), null);
+                string safeName = string.Join("_", (vName ?? "").Split(Path.GetInvalidFileNameChars())).Trim();
+                if (string.IsNullOrWhiteSpace(safeName)) safeName = "Sprocket drawing";
+                var name = Path.Combine(dir, safeName);
                 Drawing.SavePng(name + ".png", w, h, lines);
                 Drawing.SavePng(name + " (colour).png", w, h, painted);
                 Drawing.SavePng(name + " (see-through).png", w, h, seeThrough);
@@ -501,7 +506,104 @@ internal static class DrawingSheet
         sealed class TitleBlockLayout
         {
             public int Height;
+            public string VehicleName = "";
             public readonly List<(int X, int YOffset, (int W, int H, byte[] Ink) Words)> Items = new();
+        }
+
+        static string CleanName(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "";
+            raw = raw.Trim();
+            if (raw.EndsWith("(Clone)", StringComparison.OrdinalIgnoreCase))
+                raw = raw[..^7].Trim();
+            if (raw.Equals("Vehicle", StringComparison.OrdinalIgnoreCase) || raw.Equals("Root", StringComparison.OrdinalIgnoreCase))
+                return "";
+            return raw;
+        }
+
+        static string ResolveVehicleName(IEnumerable<Sprocket.Vehicles.VehicleComponent>? components, System.Text.Json.Nodes.JsonNode? header)
+        {
+            try
+            {
+                if (components != null)
+                {
+                    foreach (var c in components)
+                    {
+                        if (c?.Vehicle?.DesignInfo is { } info && !string.IsNullOrWhiteSpace(info.Name))
+                            return info.Name.Trim();
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (DesignEditor.Instance?.Core?.Target?.TryCast<Sprocket.Vehicles.Vehicle>() is { } v && v.DesignInfo is { } info && !string.IsNullOrWhiteSpace(info.Name))
+                    return info.Name.Trim();
+            }
+            catch { }
+
+            try
+            {
+                if (DesignEditor.Instance?.AllParts() is { } parts)
+                {
+                    foreach (var p in parts)
+                    {
+                        var v = p.GetComponentInParent<Sprocket.Vehicles.Vehicle>();
+                        if (v?.DesignInfo is { } info && !string.IsNullOrWhiteSpace(info.Name))
+                            return info.Name.Trim();
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (DesignEditor.Instance?.Core?.Target?.TryCast<Component>() is { } targetComp && !string.IsNullOrWhiteSpace(targetComp.gameObject.name))
+                {
+                    string cleaned = CleanName(targetComp.gameObject.name);
+                    if (!string.IsNullOrWhiteSpace(cleaned)) return cleaned;
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (DesignEditor.Instance?.AllParts() is { } parts)
+                {
+                    foreach (var p in parts)
+                    {
+                        string rootName = CleanName(p.transform.root.name);
+                        if (!string.IsNullOrWhiteSpace(rootName)) return rootName;
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (components != null)
+                {
+                    foreach (var c in components)
+                    {
+                        if (c?.Vehicle?.TryCast<Component>() is { } vComp && !string.IsNullOrWhiteSpace(vComp.gameObject.name))
+                        {
+                            string cleaned = CleanName(vComp.gameObject.name);
+                            if (!string.IsNullOrWhiteSpace(cleaned)) return cleaned;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                string? hName = header?["name"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(hName)) return hName.Trim();
+            }
+            catch { }
+
+            return "";
         }
 
         /// The title block in three columns across `totalWidth` pixels:
@@ -514,12 +616,20 @@ internal static class DrawingSheet
             var layout = new TitleBlockLayout();
             try
             {
+                var allComponents = DesignEditor.Instance?.AllComponents().ToList() ?? new();
                 string name = "", description = "";
-                if (DesignEditor.Instance is { } editor && System.Text.Json.Nodes.JsonNode.Parse(editor.Snapshot())?["header"] is { } header)
+                System.Text.Json.Nodes.JsonNode? header = null;
+                try
                 {
-                    name = header["name"]?.GetValue<string>() ?? "";
-                    description = header["desc"]?.GetValue<string>() ?? "";
+                    if (DesignEditor.Instance is { } editor)
+                        header = System.Text.Json.Nodes.JsonNode.Parse(editor.Snapshot())?["header"];
                 }
+                catch { }
+
+                name = ResolveVehicleName(allComponents, header);
+                layout.VehicleName = name;
+                description = header?["desc"]?.GetValue<string>() ?? "";
+
                 var guns = new List<string>();
                 var seen = new HashSet<IntPtr>();
                 foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
@@ -531,7 +641,7 @@ internal static class DrawingSheet
                         }
                 var armament = string.Join("\n", guns.GroupBy(g => g).Select(g => (g.Count() > 1 ? $"{g.Count()} × " : "") + g.Key));
 
-                var allComponents = DesignEditor.Instance?.AllComponents().ToList() ?? new();
+                if (allComponents.Count == 0) allComponents = DesignEditor.Instance?.AllComponents().ToList() ?? new();
                 var engines = allComponents.Select(c => c.TryCast<Sprocket.Vehicles.Engines.CombustionEngine>()).Where(e => e?.Blueprint != null).OfType<Sprocket.Vehicles.Engines.CombustionEngine>().ToList();
                 if (engines.Count == 0 && DesignEditor.Instance != null)
                     engines = DesignEditor.Instance.AllParts().SelectMany(p => p.GetComponentsInChildren<Sprocket.Vehicles.Engines.CombustionEngine>()).Where(e => e?.Blueprint != null).ToList();

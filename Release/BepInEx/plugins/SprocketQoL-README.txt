@@ -1,7 +1,34 @@
 Quality of Life - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
-Local build 1.8.0.7: engine/transmission slider drag fix & Boolean cut rectangle box.
+Version 1.8.1:
+- Turret inspector foldout cleanup: QoL sections close layout scopes before the next native editor draws,
+  ensuring turret basket controls remain visible and functional.
+- Smooth Edge & edge splitting: curved bevel profiles, multi-edge splitting, and straight quad cuts.
+- Face splitting: split selected faces into straight strips with direction selection and Select between splits.
+- Blueprint and Part clipboard: copy and paste parts and structures.
+- Slider fixes & Boolean cut rectangle box: smooth engine/transmission sliders and clean rectangular cut boxes.
+
+Earlier build 1.8.0.10: face-only splitting and Select between splits.
+In Faces mode, select the face(s), set Split sections and direction A/B, then Split selected faces.
+Cuts stop at the selected face. Neighbours stay undivided with matching border points to keep the mesh joined.
+Select between splits selects all faces created inside the last split, excluding neighbours.
+Mirror still applies; turn it off to affect only one side. Undo a previous split before replacing it.
+
+Earlier build 1.8.0.9: Split selected edges now makes straight cuts.
+Cuts continue through opposite edges of adjoining quads. Multiple directions form a clean quad grid;
+triangles receive an even triangular grid instead of a fan. Shared points and edge settings are retained.
+Undo any split made by the old tool before applying the corrected split.
+
+Earlier build 1.8.0.8: Smooth Edge and multi-edge splitting.
+In a hand-made structure's Mesh tools, select edges, then:
+- Smooth Edge: set Smooth width (mm) and Smooth segments (2-16, default 4) for a curved bevel.
+  New round strips start with clean flags; surrounding edges keep their own settings. Bevel (V) is unchanged.
+- Split selected edges: set Split sections (2-16, default 2) to split every selected face edge evenly.
+  Shared faces use the same new points, and split sides retain their original edge settings.
+Both tools follow Mirror and undo in one Ctrl+Z. Invalid geometry is rejected before editing.
+
+Earlier build 1.8.0.7: engine/transmission slider drag fix & Boolean cut rectangle box.
 Sliders in the Engine and Transmission panels update smoothly while dragging without locking up.
 Boolean cuts include a Rectangle box option to enclose cuts in a clean rectangular box, pairing
 triangles into quads and eliminating starburst fan lines across the armor plate.

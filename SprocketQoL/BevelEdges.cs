@@ -6,7 +6,7 @@ namespace SprocketQoL;
 public static class BevelEdges
 {
     public static Dictionary<(int, int), (int, int)> Sources(IReadOnlyList<Vector3> positions,
-        IReadOnlyList<int[]> faces, MeshPlans.Rebuild plan)
+        IReadOnlyList<int[]> faces, MeshPlans.Rebuild plan, ISet<(int,int)>? roundedEdges = null)
     {
         var original = faces.SelectMany(Sides).ToHashSet();
         var result = new Dictionary<(int, int), (int, int)>();
@@ -29,7 +29,7 @@ public static class BevelEdges
             if (from.Length == 2)
             {
                 var source = FaceMerge.Key(from[0], from[1]);
-                if (original.Contains(source)) result[edge] = source;
+                if (original.Contains(source) && roundedEdges?.Contains(source) != true) result[edge] = source;
             }
             else if (from.Length == 1)
             {

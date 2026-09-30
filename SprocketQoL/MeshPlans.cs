@@ -139,26 +139,63 @@ public static class MeshPlans
         return result;
     }
 
-    /// The direction the points spread least along: the covariance's smallest eigenvector, by power iteration on trace·I − C.
+    /// The direction the points spread least along: the covariance's smallest eigenvector,
+    /// computed via Jacobi eigenvalue decomposition of the 3x3 covariance matrix.
     static Vector3 LeastSpread(IReadOnlyList<Vector3> pos, ICollection<int> points, Vector3 c)
     {
         double xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
-        foreach (int v in points)
+        foreach (int pt in points)
         {
-            var d = pos[v] - c;
+            var d = pos[pt] - c;
             xx += d.X * d.X; xy += d.X * d.Y; xz += d.X * d.Z; yy += d.Y * d.Y; yz += d.Y * d.Z; zz += d.Z * d.Z;
         }
-        double t = xx + yy + zz;
-        double[,] m = { { t - xx, -xy, -xz }, { -xy, t - yy, -yz }, { -xz, -yz, t - zz } };
-        double[] x = { 0.3, 0.5, 0.8 }; // any start not along an axis
-        for (int i = 0; i < 100; i++)
+
+        // 3x3 symmetric covariance matrix A and eigenvector matrix V
+        double[,] a = { { xx, xy, xz }, { xy, yy, yz }, { xz, yz, zz } };
+        double[,] v = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+
+        for (int iter = 0; iter < 50; iter++)
         {
-            double[] y = { m[0, 0] * x[0] + m[0, 1] * x[1] + m[0, 2] * x[2], m[1, 0] * x[0] + m[1, 1] * x[1] + m[1, 2] * x[2], m[2, 0] * x[0] + m[2, 1] * x[1] + m[2, 2] * x[2] };
-            double len = Math.Sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]);
-            if (len < 1e-18) break;
-            x = new[] { y[0] / len, y[1] / len, y[2] / len };
+            int p = 0, q = 1;
+            double max = Math.Abs(a[0, 1]);
+            if (Math.Abs(a[0, 2]) > max) { max = Math.Abs(a[0, 2]); p = 0; q = 2; }
+            if (Math.Abs(a[1, 2]) > max) { max = Math.Abs(a[1, 2]); p = 1; q = 2; }
+
+            if (max < 1e-15) break;
+
+            double app = a[p, p], aqq = a[q, q], apq = a[p, q];
+            double phi = 0.5 * Math.Atan2(2.0 * apq, aqq - app);
+            double cos = Math.Cos(phi), sin = Math.Sin(phi);
+
+            for (int k = 0; k < 3; k++)
+            {
+                if (k != p && k != q)
+                {
+                    double akp = a[k, p], akq = a[k, q];
+                    a[k, p] = a[p, k] = cos * akp - sin * akq;
+                    a[k, q] = a[q, k] = sin * akp + cos * akq;
+                }
+            }
+            a[p, p] = cos * cos * app - 2.0 * sin * cos * apq + sin * sin * aqq;
+            a[q, q] = sin * sin * app + 2.0 * sin * cos * apq + cos * cos * aqq;
+            a[p, q] = a[q, p] = 0.0;
+
+            for (int k = 0; k < 3; k++)
+            {
+                double vkp = v[k, p], vkq = v[k, q];
+                v[k, p] = cos * vkp - sin * vkq;
+                v[k, q] = sin * vkp + cos * vkq;
+            }
         }
-        return Vector3.Normalize(new Vector3((float)x[0], (float)x[1], (float)x[2]));
+
+        // Smallest eigenvalue index
+        int minIdx = 0;
+        double minVal = a[0, 0];
+        if (a[1, 1] < minVal) { minVal = a[1, 1]; minIdx = 1; }
+        if (a[2, 2] < minVal) { minVal = a[2, 2]; minIdx = 2; }
+
+        var n = new Vector3((float)v[0, minIdx], (float)v[1, minIdx], (float)v[2, minIdx]);
+        return n.LengthSquared() > 1e-12f ? Vector3.Normalize(n) : Vector3.UnitY;
     }
 
     // ---------- Loop cut ----------
@@ -297,8 +334,10 @@ public static class MeshPlans
     /// The selected edges become chamfer strips `width` wide on each side. Where bevelled edges meet, each fan of faces
     /// between them gets its own copy of the point, slid along its own edge; where three or more meet, a cap face closes
     /// the corner. A bevelled edge ending at a point with no other bevelled edge cuts the faces there in (like Blender).
-    public static Rebuild Bevel(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<(int A, int B)> edges, float width)
+    public static Rebuild Bevel(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<(int A, int B)> edges, float width, int segments = 1)
     {
+        if (!float.IsFinite(width) || width <= 0) return Rebuild.Fail("width must be positive");
+        if (segments < 1 || segments > 16) return Rebuild.Fail("use 1 to 16 segments");
         var edgeFaces = EdgeFaces(faces);
         var sel = edges.Select(e => Key(e.A, e.B)).Where(e => edgeFaces.TryGetValue(e, out var fs) && fs.Count == 2).ToHashSet();
         if (sel.Count == 0) return Rebuild.Fail("select edges with a face on each side");
@@ -387,6 +426,27 @@ public static class MeshPlans
         var shapes = remove.Select(f => (Corners: Rebuilt(f), Source: f)).ToList();
         // A strip along each bevelled edge between its two faces' new corners (a point where the bevel ends in a cut).
         var capSides = new Dictionary<int, List<(int From, int To)>>();
+        var curves = new Dictionary<(int, int), int[]>();
+        Vector3 Position(int id) => id < pos.Count ? pos[id] : points[id - pos.Count].P;
+        int[] Curve(int from, int to, int u)
+        {
+            var key = Key(from, to);
+            if (!curves.TryGetValue(key, out var path))
+            {
+                var p = Position(key.Item1); var q = Position(key.Item2); var control = pos[u];
+                var d1 = p - control; var d2 = q - control;
+                // Rational quadratic fillet: tangent to both sides, circular for equal offsets.
+                float weight = MathF.Sqrt(Math.Clamp((1 - Vector3.Dot(Vector3.Normalize(d1), Vector3.Normalize(d2))) / 2, 0.0001f, 1));
+                path = new int[segments + 1]; path[0] = key.Item1; path[^1] = key.Item2;
+                for (int s = 1; s < segments; s++)
+                {
+                    float t = s / (float)segments, a = (1-t)*(1-t), b = 2*weight*t*(1-t), c = t*t;
+                    path[s] = Add((a*p + b*control + c*q) / (a+b+c), u);
+                }
+                curves[key] = path;
+            }
+            return from == key.Item1 ? path : path.Reverse().ToArray();
+        }
         int Origin(int id) => id < pos.Count ? id : points[id - pos.Count].Blend[0].V;
         foreach (var e in sel)
         {
@@ -395,6 +455,33 @@ public static class MeshPlans
             int f2 = fs[0] == f1 ? fs[1] : fs[0];
             int a = e.Item1, b = e.Item2; // f1 runs a -> b, f2 runs b -> a
             int[] At(int f, int v) => corner.TryGetValue((f, v), out var r) ? r : new[] { v };
+            if (segments > 1)
+            {
+                var aa = At(f1,a); var ab = At(f2,a); var ba = At(f1,b); var bb = At(f2,b);
+                if (new[] { aa, ab, ba, bb }.Any(c => c.Length != 1)) return Rebuild.Fail("this junction cannot be rounded");
+                var ap = Curve(aa[0], ab[0], a); var bp = Curve(ba[0], bb[0], b);
+                for (int s = 0; s < segments; s++)
+                    shapes.Add((new[] { bp[s], ap[s], ap[s+1], bp[s+1] }, s * 2 < segments ? f1 : f2));
+                foreach (var (u, path, reverse) in new[] { (a, ap, true), (b, bp, false) })
+                {
+                    for (int s = 0; s < segments; s++)
+                    {
+                        int p = reverse ? path[s+1] : path[s], q = reverse ? path[s] : path[s+1];
+                        if (endsAt.Contains(u))
+                        {
+                            var n = Vector3.Cross(Position(q)-Position(p), pos[u]-Position(p));
+                            int source = pointFaces[u].OrderByDescending(f => Vector3.Dot(n, Vector3.Normalize(Newell(pos, faces[f])))).First();
+                            shapes.Add((new[] { p, q, u }, source));
+                        }
+                        else
+                        {
+                            if (!capSides.TryGetValue(u, out var sides)) capSides[u] = sides = new();
+                            sides.Add((p,q));
+                        }
+                    }
+                }
+                continue;
+            }
             // f1 runs a -> b: the strip runs b -> a along f1's side and a -> b along f2's side.
             var strip = new List<int>();
             strip.AddRange(At(f1, b).Reverse());
@@ -417,13 +504,43 @@ public static class MeshPlans
             }
         }
         if (shapes.Count == remove.Count) return Rebuild.Fail("a single bevelled edge needs a corner or the plate's edge at one end");
+        // End faces share the same arc vertices as the rounded strip, so no T-junctions are left behind.
+        if (segments > 1)
+            for (int i = 0; i < remove.Count; i++)
+            {
+                var (c, source) = shapes[i];
+                var expanded = new List<int>();
+                for (int k = 0; k < c.Length; k++)
+                {
+                    int a = c[k], b = c[(k+1)%c.Length]; expanded.Add(a);
+                    if (curves.TryGetValue(Key(a,b), out var path))
+                        expanded.AddRange((a == path[0] ? path : path.Reverse()).Skip(1).Take(path.Length-2));
+                }
+                shapes[i] = (expanded.ToArray(), source);
+            }
         // Where three or more bevelled edges meet, a cap closes the corner.
         foreach (var (u, sidesAtU) in capSides.Where(c => c.Value.Count >= 3))
         {
             var chain = sidesAtU.GroupBy(s => s.From).ToDictionary(g => g.Key, g => g.First().To);
             var loop = new List<int> { sidesAtU[0].From };
             while (loop.Count <= sidesAtU.Count && chain.TryGetValue(loop[^1], out int to) && to != loop[0]) loop.Add(to);
-            if (loop.Count == sidesAtU.Count) shapes.Add((loop.ToArray(), pointFaces[u][0]));
+            if (loop.Count == sidesAtU.Count)
+            {
+                if (segments == 1) shapes.Add((loop.ToArray(), pointFaces[u][0]));
+                else
+                {
+                    // A curved multi-edge junction is not planar. A centre fan avoids the sliver
+                    // ears made by projecting its near-tangent boundary onto one flat plate.
+                    int centre = Add(loop.Aggregate(Vector3.Zero, (sum,v) => sum + Position(v)) / loop.Count, u);
+                    for (int k = 0; k < loop.Count; k++)
+                    {
+                        int p = loop[k], q = loop[(k+1)%loop.Count];
+                        var n = Vector3.Cross(Position(q)-Position(p), Position(centre)-Position(p));
+                        int source = pointFaces[u].OrderByDescending(f => Vector3.Dot(n, Vector3.Normalize(Newell(pos, faces[f])))).First();
+                        shapes.Add((new[] { p,q,centre },source));
+                    }
+                }
+            }
         }
         // Faces that grew past four corners are filled with triangles and quads from their own points.
         var all = pos.Concat(points.Select(p => p.P)).ToList();
@@ -739,13 +856,13 @@ public static class MeshPlans
     /// Circle (LoopTools' Circle): the points spread evenly round a true circle on their best-fit plane, round their
     /// middle, as far out as they are on average (or `radius`, if above 0). They keep their order round the middle, and
     /// the circle is turned to move them least. Empty if there are fewer than three, or they lie along a line.
-    public static Dictionary<int, Vector3> Circle(IReadOnlyList<Vector3> pos, ICollection<int> points, float radius = 0)
+    public static Dictionary<int, Vector3> Circle(IReadOnlyList<Vector3> pos, ICollection<int> points, float radius = 0, Vector3? normal = null)
     {
         var result = new Dictionary<int, Vector3>();
         var list = points.Distinct().ToList();
         if (list.Count < 3) return result;
         var c = Middle(pos, list);
-        var n = LeastSpread(pos, list, c);
+        var n = normal is { } given && given.LengthSquared() > 1e-12f ? Vector3.Normalize(given) : LeastSpread(pos, list, c);
         Vector3 Flat(Vector3 d) => d - n * Vector3.Dot(d, n);
         int far = list.OrderByDescending(v => Flat(pos[v] - c).LengthSquared()).First();
         if (Flat(pos[far] - c).LengthSquared() < 1e-12f) return result;

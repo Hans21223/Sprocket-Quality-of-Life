@@ -139,6 +139,26 @@ static class ToolTests
         Check(sized.Values.All(p => Math.Abs(Vector3.Distance(p, c) - 2) < 1e-3f), "circle with a set radius: that radius");
         Check(MeshPlans.Circle(new List<Vector3> { new(0, 0, 0), new(1, 0, 0), new(2, 0, 0), new(3, 0, 0) }, new[] { 0, 1, 2, 3 }).Count == 0, "circle: points along a line are left alone");
         Check(MeshPlans.Circle(pos, new[] { 0, 1 }).Count == 0, "circle: two points are left alone");
+
+        // Elongated (10:1 aspect ratio) loop on a tilted plate (where power iteration previously tilted 3° into the plate)
+        var tiltedTurn = Matrix4x4.CreateFromYawPitchRoll(0.7f, -0.5f, 0.3f) * Matrix4x4.CreateTranslation(2, -1, 4);
+        var expectedNormal = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitZ, tiltedTurn));
+        var platePoints = Enumerable.Range(0, 12).Select(k =>
+        {
+            float a = k * MathF.Tau / 12;
+            return Vector3.Transform(new Vector3(2.5f * MathF.Cos(a), 0.25f * MathF.Sin(a), 0), tiltedTurn);
+        }).ToList();
+        var plateCircle = MeshPlans.Circle(platePoints, Enumerable.Range(0, 12).ToList());
+        Check(plateCircle.Count == 12, "circle elongated: all 12 points placed");
+        var plateC = plateCircle.Values.Aggregate(Vector3.Zero, (s, p) => s + p) / 12;
+        var plateN = Vector3.Normalize(Nw(plateCircle.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList(), Enumerable.Range(0, 12).ToList()));
+        float normalDot = Math.Abs(Vector3.Dot(plateN, expectedNormal));
+        Check(normalDot > 0.9999f, $"circle elongated: normal matches plate normal exactly (dot={normalDot:0.00000})");
+        Check(plateCircle.Values.All(p => Math.Abs(Vector3.Dot(p - plateC, expectedNormal)) < 1e-4f), "circle elongated: all points flush with the plate plane");
+
+        // Explicit normal supplied
+        var explicitCircle = MeshPlans.Circle(platePoints, Enumerable.Range(0, 12).ToList(), normal: expectedNormal);
+        Check(explicitCircle.Values.All(p => Math.Abs(Vector3.Dot(p - plateC, expectedNormal)) < 1e-5f), "circle explicit normal: 100% flush with provided plate normal");
     }
 
     static void FixMirror()

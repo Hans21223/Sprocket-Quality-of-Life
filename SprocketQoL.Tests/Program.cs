@@ -1,13 +1,16 @@
 using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
+if (args.Contains("--smooth-split-only")) { SmoothSplitTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
 if (args.Contains("--gizmo-only")) { GizmoPickingTests.Run(); return; }
 if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
 if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
+if (args.Contains("--clipboard-only")) { SprocketQoL.Tests.ClipboardTests.Run(); return; }
 TurretDriveTests.Run();
 GizmoPickingTests.Run();
 BevelEdgeTests.Run();
+SmoothSplitTests.Run();
 int checks=0, conversions=0;
 void Check(bool ok,string message) { checks++; if(!ok)throw new Exception(message); }
 void Run(string json,int id)
@@ -35,6 +38,7 @@ void Run(string json,int id)
 ToolTests.Run(); // Bridge, Circle, Fix mirror, mirrored merge: small shapes, no blueprints needed
 string root=Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)+@"\My Games\Sprocket\Factions\PMC\Blueprints\Vehicles";
 var files=Directory.GetFiles(root,"*.blueprint").OrderBy(f=>new FileInfo(f).Length).Take(12).ToList();
+SprocketQoL.Tests.ClipboardTests.Run(files);
 foreach(var f in files)
 {
     string json=File.ReadAllText(f);

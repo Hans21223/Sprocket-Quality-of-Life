@@ -22,7 +22,7 @@ public static class DrawingSettings
     static string? cachedLimits;
     static GunAnnotationPreferences gunLimits = new(null);
 
-    static void Draw(IGUILayout layout, Cannon? gun = null) => Ui.Guard("Drawing sheet settings", () =>
+    static void Draw(IGUILayout layout, Cannon? gun = null) => Ui.Inspector("Drawing sheet settings", layout, () =>
     {
         var ui = layout.TryCast<IGUIElementDrawer>();
         if (ui == null) return;

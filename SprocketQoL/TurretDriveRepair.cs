@@ -9,11 +9,11 @@ namespace SprocketQoL;
 public static class TurretDriveRepair
 {
     [HarmonyPostfix, HarmonyPatch(typeof(TurretRingEditor), nameof(TurretRingEditor.OnGUI))]
-    static void Ring(TurretRingEditor __instance, IGUILayout layout) => Ui.Guard("Turret drive repair", () =>
+    static void Ring(TurretRingEditor __instance, IGUILayout layout) => Ui.Inspector("Turret drive repair", layout, () =>
         Draw(layout, (int)__instance.Component.VehicleObject.VUID));
 
     [HarmonyPostfix, HarmonyPatch(typeof(TraverseMotorEditor), nameof(TraverseMotorEditor.OnGUI))]
-    static void Motor(TraverseMotorEditor __instance, IGUILayout layout) => Ui.Guard("Turret drive repair", () =>
+    static void Motor(TraverseMotorEditor __instance, IGUILayout layout) => Ui.Inspector("Turret drive repair", layout, () =>
         Draw(layout, (int)__instance.Component.VehicleObject.VUID));
 
     static void Draw(IGUILayout layout, int focus)

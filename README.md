@@ -127,6 +127,18 @@ alongside it through the loader's MLLoader. In the vehicle editor:
     Recreated surrounding sides inherit their own sharp/connection settings; new chamfer edges do not copy
     unrelated or temporary edge flags. Existing edges are reused without changing their settings.
   - **Select linked flat faces (U):** grows the selection over faces lying flat with it (angle in the panel).
+  - **Smooth Edge:** in Edges mode, rounds selected edges using **Smooth width (mm)** and **Smooth segments**
+    (2–16, default 4). Uses a curved profile rather than dividing a flat chamfer; neighbouring faces share its
+    new vertices and multi-edge corners are closed. New round strips start without sharp/connection flags
+    inherited from the removed edges. Bevel (V) still makes its original single chamfer.
+  - **Split selected faces:** in Faces mode, select the face(s) to split. **Split sections** (2–16, default 2)
+    makes equal straight strips; **Split direction: A/B** chooses the pair of sides on a quad. Cuts stop at
+    selected-face boundaries. Neighbours remain single faces with matching border points, without extra lines
+    across them. Triangles receive an even triangular grid. Mirror applies; disable it to affect one side only.
+    **Select between splits** selects all faces made inside the last split on this structure, excluding neighbours.
+    A changed or undone split must be redone or split again before selection. Shared border points, edge settings
+    and interpolated corner thickness are preserved. Both tools are in **Mesh tools**, use normal undo,
+    and reject invalid geometry before changing the mesh.
   - **Proportional editing (O):** moving, scaling or rotating points pulls the points around them too, less the
     further away, up to the radius in the panel. Cancelling, Ctrl+Z and redo take the followers along.
   - **0.5 mm grid:** snapping (hold Ctrl while moving) uses 0.5 mm instead of the game's smallest, 1 mm.

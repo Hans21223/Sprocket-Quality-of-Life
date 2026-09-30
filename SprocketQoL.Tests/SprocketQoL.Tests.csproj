@@ -14,6 +14,8 @@
     <Compile Include="..\SprocketQoL\Fill.cs" Link="Fill.cs" />
     <Compile Include="..\SprocketQoL\FaceMerge.cs" Link="FaceMerge.cs" />
     <Compile Include="..\SprocketQoL\MeshPlans.cs" Link="MeshPlans.cs" />
+    <Compile Include="..\SprocketQoL\EdgeSubdivision.cs" Link="EdgeSubdivision.cs" />
+    <Compile Include="..\SprocketQoL\SplitFaceSelection.cs" Link="SplitFaceSelection.cs" />
     <Compile Include="..\SprocketQoL\Drawing.cs" Link="Drawing.cs" />
     <Compile Include="..\SprocketQoL\DrawingOptions.cs" Link="DrawingOptions.cs" />
     <Compile Include="..\SprocketQoL\GunAnnotationPreferences.cs" Link="GunAnnotationPreferences.cs" />
@@ -21,5 +23,6 @@
     <Compile Include="..\SprocketQoL\Acceleration.cs" Link="Acceleration.cs" />
     <Compile Include="..\SprocketQoL\GizmoPicking.cs" Link="GizmoPicking.cs" />
     <Compile Include="..\SprocketQoL\BevelEdges.cs" Link="BevelEdges.cs" />
+    <Compile Include="..\SprocketQoL\BlueprintClipboard.cs" Link="BlueprintClipboard.cs" />
   </ItemGroup>
 </Project>

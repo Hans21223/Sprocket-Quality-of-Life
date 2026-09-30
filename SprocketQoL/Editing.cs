@@ -36,6 +36,9 @@ public sealed class DesignEditor : MonoBehaviour
     private float nextLookup, statusUntil;
     internal int LastEditedPart { get; private set; } = -1;
     internal bool CanRestore => recoveryJson != null && !busy;
+    internal bool IsReady => ready;
+    internal bool IsBusy => busy;
+    internal VehicleDesignerCore? Core => core;
     public DesignEditor(IntPtr pointer) : base(pointer) { Instance = this; }
 
     internal void Say(string text, float seconds = 6) { status = text; statusUntil = Time.unscaledTime + seconds; }

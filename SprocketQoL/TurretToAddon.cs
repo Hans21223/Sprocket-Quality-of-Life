@@ -12,7 +12,7 @@ namespace SprocketQoL;
 public static class InspectorSection
 {
     [HarmonyPostfix, HarmonyPatch(typeof(TurretRingEditor), nameof(TurretRingEditor.OnGUI))]
-    static void Ring(TurretRingEditor __instance, IGUILayout layout) => Ui.Guard("Turret to Add-on", () =>
+    static void Ring(TurretRingEditor __instance, IGUILayout layout) => Ui.Inspector("Turret to Add-on", layout, () =>
         Draw(layout, (int)__instance.Component.VehicleObject.VUID));
 
     [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]

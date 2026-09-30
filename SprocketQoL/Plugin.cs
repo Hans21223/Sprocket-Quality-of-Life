@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.0")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.1")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -64,6 +64,14 @@ public sealed class Plugin : BasePlugin
 
 internal static class Ui
 {
+    /// Several native component editors share one inspector layout (e.g. ring and basket).
+    /// A QoL postfix must close its final foldout before the next native editor draws.
+    internal static void Inspector(string feature, IGUILayout layout, Action draw) => Guard(feature, () =>
+    {
+        try { draw(); }
+        finally { layout.EndAllDropdowns(); }
+    });
+
     /// An exception thrown back into the game's inspector drawing could take the game down; log it instead.
     internal static void Guard(string feature, Action draw)
     {

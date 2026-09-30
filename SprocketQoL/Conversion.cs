@@ -99,7 +99,7 @@ public static class Conversion
     }
 
     /// A part's own numbers (its components: "cannon", "turretRing", ...), keyed by name; not links to other parts or settings.
-    static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && char.IsLetter(kv.Key[0])
+    internal static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && char.IsLetter(kv.Key[0])
         && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList();
 
     // Ring settings can be shared between mirror twins, but the motor is a component reference, not a setting.

@@ -120,11 +120,11 @@ public static class MeshTools
 
     /// Takes out the plan's faces and puts in its new ones, with the game's own mesh calls. Old corners keep their face's
     /// thickness and thickening; new points blend from the corners they come from. Edges and points nothing uses go.
-    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true, bool preserveBevelEdges = false)
+    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true, bool preserveBevelEdges = false, ISet<(int,int)>? roundedEdges = null, Action<List<(Face Face,int Source)>>? afterApply = null)
     {
         if (plan.Why != null) return (false, plan.Why);
         if (MeshPlans.Check(view.Pos, view.Corners, plan, gaps) is string broken) return (false, "not done: " + broken);
-        var edgeSources = preserveBevelEdges ? BevelEdges.Sources(view.Pos, view.Corners, plan) : null;
+        var edgeSources = preserveBevelEdges ? BevelEdges.Sources(view.Pos, view.Corners, plan, roundedEdges) : null;
         // Keep the authored state before creating any topology. The prototype's temporary
         // tessellation/check flags must not spread into the new chamfer or its neighbouring sides.
         const ElementFlags edgeSettings = ElementFlags.Selected | ElementFlags.Sharp | ElementFlags.AlternatePlateConnection;
@@ -218,6 +218,7 @@ public static class MeshTools
         }
         var (kept, lost) = rivets.Place(made.Select(m => m.Face), reach: 0.05f);
         FinishDelete(mesh);
+        afterApply?.Invoke(made);
         var problems = made.Select(m => HoleQuality.Problem(m.Face)).Where(p => p != null).Distinct().ToList();
         return (true, $"{did}: {removed.Count} faces became {made.Count}, {plan.Points.Count} new points" +
                       (rivets.Count == 0 ? "" : $", rivets {kept} kept" + (lost > 0 ? $" {lost} lost" : "")) +
@@ -301,6 +302,11 @@ public static class MeshTools
     static MeshPlans.FlattenMode flattenMode;
     static readonly string[] FlattenNames = { "Flatten: best-fit plane", "Flatten: level (one height)", "Flatten: sideways (one x)", "Flatten: lengthways (one z)" };
     static float insetMm = 50, bevelMm = 30, flatAngle = 5, radiusMm = 500;
+    static float smoothMm = 30;
+    static int smoothSegments = 4, splitSections = 2;
+    static bool splitOtherDirection;
+    static IntPtr lastSplitMesh;
+    static List<Num[]> lastSplitFaces = new();
     static bool proportional, halfGrid;
 
     static void Flatten(PlateStructureEditor e)
@@ -367,6 +373,63 @@ public static class MeshTools
         });
     }
 
+    static void SmoothEdge(PlateStructureEditor e)
+    {
+        if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Smooth Edge: switch to Edges and select edges"); return; }
+        bool mirror = e.meshEditor.Symmetry;
+        float width = smoothMm / 1000; int segments = smoothSegments;
+        Run(e, "Smooth Edge", mesh =>
+        {
+            var v = new View(mesh);
+            var edges = WithTwins(v, v.SelectedEdges, mirror).Select(e => FaceMerge.Key(e.Item1,e.Item2)).ToHashSet();
+            return Apply(mesh, v, MeshPlans.Bevel(v.Pos, v.Corners, edges, width, segments), "smooth edge", preserveBevelEdges: true, roundedEdges: edges);
+        });
+    }
+
+    static void SplitEdges(PlateStructureEditor e)
+    {
+        if (e.meshEditor.SelectType != MeshEditType.Face) { e.operations.NotifyError("Split Face: switch to Faces and select the face to split"); return; }
+        bool mirror = e.meshEditor.Symmetry; int sections = splitSections, side = splitOtherDirection ? 1 : 0;
+        Run(e, "Split Face", mesh =>
+        {
+            var v = new View(mesh);
+            var scope = WithTwins(v, new HashSet<int>(v.SelectedFaces), mirror);
+            if (scope.Count == 0) return (false, "select a face first");
+            var edges = scope.Select(f => (v.Corners[f][side], v.Corners[f][(side+1)%v.Corners[f].Length])).ToList();
+            return Apply(mesh, v, EdgeSubdivision.Split(v.Pos, v.Corners, edges, sections, scope), "split face", preserveBevelEdges: true,
+                afterApply: made =>
+                {
+                    lastSplitMesh = mesh.Pointer;
+                    lastSplitFaces = made.Where(m => scope.Contains(m.Source)).Select(m => HoleQuality.Corners(m.Face)).ToList();
+                });
+        });
+    }
+
+    static void SelectBetweenSplits(PlateStructureEditor e)
+    {
+        Run(e, "Select between splits", mesh =>
+        {
+            if (lastSplitMesh != mesh.Pointer || lastSplitFaces.Count == 0) return (false, "split a face on this structure first");
+            var found = new List<Face>();
+            foreach (var face in mesh.faces)
+                if (SplitFaceSelection.Matches(HoleQuality.Corners(face), lastSplitFaces)) found.Add(face);
+            if (found.Count != lastSplitFaces.Count) return (false, "the last split was changed or undone; split again or redo it first");
+            foreach (var face in mesh.faces) face.DisableFlag(ElementFlags.Selected);
+            foreach (var edge in mesh.edges) edge.DisableFlag(ElementFlags.Selected);
+            foreach (var vertex in mesh.vertices) vertex.DisableFlag(ElementFlags.Selected);
+            e.meshEditor.SelectType = MeshEditType.Face;
+            foreach (var face in found)
+            {
+                face.EnableFlag(ElementFlags.Selected);
+                var l = face.firstLoop;
+                for (int k=0;k<face.vertexCount;k++,l=l.next)
+                { l.vertex.EnableFlag(ElementFlags.Selected); l.edge.EnableFlag(ElementFlags.Selected); }
+            }
+            mesh.MarkDirty(MeshDirtyFlags.All);
+            return (true, $"selected all {found.Count} faces between the last split lines");
+        });
+    }
+
     static void SelectFlat(PlateStructureEditor e)
     {
         bool mirror = e.meshEditor.Symmetry;
@@ -420,22 +483,117 @@ public static class MeshTools
         {
             var v = new View(mesh);
             var points = new HashSet<int>(v.SelectedPoints);
+            foreach (int f in v.SelectedFaces) points.UnionWith(v.Corners[f]);
             if (points.Count < 3) return (false, "select three or more points round a loop (Alt+click an edge selects a loop)");
-            var moved = MeshPlans.Circle(v.Pos, points);
-            if (moved.Count == 0) return (false, "these points lie along a line: select points round a loop");
+
+            // Helper to get plate/face normal for a given set of points:
+            Num? NormalOf(ICollection<int> pts)
+            {
+                var matchingFaces = v.SelectedFaces.Where(f => v.Corners[f].Count(pts.Contains) >= 3).ToList();
+                if (matchingFaces.Count == 0 && v.SelectedFaces.Count > 0)
+                    matchingFaces = v.SelectedFaces.Where(f => v.Corners[f].Any(pts.Contains)).ToList();
+                if (matchingFaces.Count > 0)
+                {
+                    var sum = matchingFaces.Aggregate(Num.Zero, (s, f) => s + HoleRing.Normal(v.Corners[f].Select(p => v.Pos[p]).ToList()));
+                    if (sum.LengthSquared() > 1e-12f) return Num.Normalize(sum);
+                }
+                var plateFace = v.Corners
+                    .Where(c => c.Count(pts.Contains) >= 3)
+                    .Select(c => HoleRing.Normal(c.Select(p => v.Pos[p]).ToList()))
+                    .FirstOrDefault(n => n.LengthSquared() > 1e-12f);
+                if (plateFace.LengthSquared() > 1e-12f)
+                    return Num.Normalize(plateFace);
+                return null;
+            }
+
+            var moved = new Dictionary<int, Num>();
             if (mirror)
             {
                 var twins = MeshPlans.Twins(v.Pos, points, Tolerance);
-                foreach (var (p, twin) in twins)
+                var posSide = points.Where(p => v.Pos[p].X > Tolerance).ToList();
+                var negSide = points.Where(p => v.Pos[p].X < -Tolerance).ToList();
+
+                // Check if any selected point or edge connecting selected points crosses or lies on the centerline
+                bool edgesCrossCenter = v.Corners.Any(c =>
                 {
-                    if (twin == p) { moved[p] = new Num(0, moved[p].Y, moved[p].Z); continue; } // on the middle: stays on it
-                    if (!points.Contains(twin)) { moved[twin] = Image(moved[p]); continue; } // one side selected: the other follows
-                    if (p < twin) continue;
-                    // Both sides selected (a loop round the middle): each pair set exactly mirrored, as Mirror wants.
-                    var meet = (moved[p] + Image(moved[twin])) / 2;
-                    moved[p] = meet;
-                    moved[twin] = Image(meet);
+                    for (int k = 0; k < c.Length; k++)
+                    {
+                        int p1 = c[k], p2 = c[(k + 1) % c.Length];
+                        if (points.Contains(p1) && points.Contains(p2))
+                        {
+                            if ((v.Pos[p1].X > Tolerance && v.Pos[p2].X < -Tolerance) ||
+                                (v.Pos[p1].X < -Tolerance && v.Pos[p2].X > Tolerance))
+                                return true;
+                        }
+                    }
+                    return false;
+                }) || v.SelectedEdges.Any(ed =>
+                    (v.Pos[ed.A].X > Tolerance && v.Pos[ed.B].X < -Tolerance) ||
+                    (v.Pos[ed.A].X < -Tolerance && v.Pos[ed.B].X > Tolerance));
+
+                bool crossesCenter = points.Any(p => Math.Abs(v.Pos[p].X) <= Tolerance) || edgesCrossCenter;
+
+                if (!crossesCenter && posSide.Count >= 3)
+                {
+                    // Positive side (or both sides selected): solve positive side, mirror to twins
+                    var movedPos = MeshPlans.Circle(v.Pos, posSide, normal: NormalOf(posSide));
+                    if (movedPos.Count == 0) return (false, "these points lie along a line: select points round a loop");
+                    foreach (var (p, at) in movedPos)
+                    {
+                        moved[p] = at;
+                        if (twins.TryGetValue(p, out int twin)) moved[twin] = Image(at);
+                    }
                 }
+                else if (!crossesCenter && negSide.Count >= 3)
+                {
+                    // Only negative side selected: solve negative side, mirror to twins
+                    var movedNeg = MeshPlans.Circle(v.Pos, negSide, normal: NormalOf(negSide));
+                    if (movedNeg.Count == 0) return (false, "these points lie along a line: select points round a loop");
+                    foreach (var (p, at) in movedNeg)
+                    {
+                        moved[p] = at;
+                        if (twins.TryGetValue(p, out int twin)) moved[twin] = Image(at);
+                    }
+                }
+                else
+                {
+                    // A single loop crossing the vehicle's centerline (e.g. turret ring on the roof, hatch on glacis):
+                    // Normal must be symmetric (nX = 0) so the circle doesn't tilt sideways across the hull.
+                    var faceNorm = NormalOf(points);
+                    Num? symNormal = faceNorm is { } n && (n.Y != 0 || n.Z != 0) ? Num.Normalize(new Num(0, n.Y, n.Z)) : null;
+                    var movedMid = MeshPlans.Circle(v.Pos, points, normal: symNormal);
+                    if (movedMid.Count == 0) return (false, "these points lie along a line: select points round a loop");
+                    foreach (var (p, at) in movedMid) moved[p] = at;
+                    var midCenter = points.Aggregate(Num.Zero, (s, p) => s + v.Pos[p]) / points.Count;
+                    midCenter.X = 0;
+                    float midRadius = points.Average(p => Num.Distance(moved[p], midCenter));
+                    foreach (var (p, twin) in twins)
+                    {
+                        if (twin == p) { moved[p] = new Num(0, moved[p].Y, moved[p].Z); continue; }
+                        if (!points.Contains(twin)) { moved[twin] = Image(moved[p]); continue; }
+                        if (p < twin) continue;
+                        var meet = (moved[p] + Image(moved[twin])) / 2;
+                        var dir = meet - midCenter;
+                        dir.X = (moved[p].X - moved[twin].X) / 2;
+                        if (dir.LengthSquared() > 1e-12f)
+                        {
+                            var proj = midCenter + midRadius * Num.Normalize(dir);
+                            moved[p] = proj;
+                            moved[twin] = Image(proj);
+                        }
+                        else
+                        {
+                            moved[p] = meet;
+                            moved[twin] = Image(meet);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                var movedOnce = MeshPlans.Circle(v.Pos, points, normal: NormalOf(points));
+                if (movedOnce.Count == 0) return (false, "these points lie along a line: select points round a loop");
+                foreach (var (p, at) in movedOnce) moved[p] = at;
             }
             if (MeshPlans.Folds(v.Pos, v.Corners, moved) is string folds) return (false, "not done: " + folds);
             foreach (var (p, at) in moved) v.Verts[p].position = new Vector3(at.X, at.Y, at.Z);
@@ -1386,6 +1544,16 @@ public static class MeshTools
         ui.Button("Inset (I)", Ui.Callback(() => Inset(__instance)), ref tip);
         ui.Slider("Bevel width (mm)", bevelMm, 1, 500, Ui.FloatCallback(v => bevelMm = MathF.Round(v)));
         ui.Button("Bevel (V): select edges", Ui.Callback(() => Bevel(__instance)), ref tip);
+        var smoothTip = new UITooltip("Smooth Edge", "Rounds selected edges into several curved strips. Width is the distance cut back on each side; segments control the number of curved faces. Mirror applies; Ctrl+Z undoes the whole operation.");
+        ui.Slider("Smooth width (mm)", smoothMm, 1, 500, Ui.FloatCallback(v => smoothMm = MathF.Round(v)));
+        ui.Slider("Smooth segments", smoothSegments, 2, 16, Ui.FloatCallback(v => smoothSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
+        ui.Button("Smooth Edge", Ui.Callback(() => SmoothEdge(__instance)), ref smoothTip);
+        var splitTip = new UITooltip("Split Face", "In Faces mode, select the face to split. Straight cuts stay inside selected faces; neighbouring faces only gain matching boundary points. Direction A/B picks the other pair of sides on quads. Mirror applies; turn it off to affect only one side. Ctrl+Z undoes the whole operation.");
+        ui.Slider("Split sections", splitSections, 2, 16, Ui.FloatCallback(v => splitSections = Math.Clamp((int)MathF.Round(v), 2, 16)));
+        ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), ref splitTip);
+        ui.Button("Split selected faces", Ui.Callback(() => SplitEdges(__instance)), ref splitTip);
+        var betweenTip = new UITooltip("Select between splits", "Select all faces created inside the most recent split on this structure. Neighbouring faces are excluded. If the split was undone or edited, redo it or split again first.");
+        ui.Button("Select between splits", Ui.Callback(() => SelectBetweenSplits(__instance)), ref betweenTip);
         ui.Slider("Flat within (°)", flatAngle, 0.5f, 30, Ui.FloatCallback(v => flatAngle = MathF.Round(v * 2) / 2));
         ui.Button("Select linked flat (U)", Ui.Callback(() => SelectFlat(__instance)), ref tip);
         ui.ToggleField("Proportional (O)", proportional, Ui.BoolCallback(v => proportional = v),
