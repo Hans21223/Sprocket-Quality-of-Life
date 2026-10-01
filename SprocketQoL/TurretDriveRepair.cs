@@ -19,13 +19,12 @@ public static class TurretDriveRepair
     static void Draw(IGUILayout layout, int focus)
     {
         var editor = DesignEditor.Instance;
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (editor == null || ui == null) return;
         Ui.Section(layout, "Mirrored turret drives");
-        ui.InfoField("Fix mirror twins that share one drive.\nEach turret reconnects to its own motor.", 2);
-        var tip = new UITooltip("Fix mirrored turret drives", "Checks the vehicle's mirrored turret pairs and reconnects each to its own attached motor. " +
-            "Pairs with missing or ambiguous motors are left alone. Loads an unsaved result and backs up the design; Restore undoes the repair.");
-        ui.Button("Fix mirrored turret drives", Ui.Callback(() => editor.RequestEdit("Repairing mirrored turret drives",
+        ui.InfoField("Reconnects mirrored turrets to their own motors. Checks every mirrored pair in the vehicle. Loads an unsaved copy; Restore undoes the repair.", 3);
+        var tip = new UITooltip("Repair drive connections", "Fixes mirrored turrets sharing a motor or connected to the wrong partner's motor. Requires each turret to have its own attached motor; uncertain pairs stay unchanged. Backs up the original design and loads an unsaved result.");
+        ui.Button("Repair mirrored drives", Ui.Callback(() => editor.RequestEdit("Repairing mirrored turret drives",
             "Mirrored turret drives repaired. Restore undoes it.", json =>
             {
                 var result = Conversion.RepairMirroredTurretDrives(json);
@@ -36,8 +35,8 @@ public static class TurretDriveRepair
             })), ref tip);
         if (editor.CanRestore && editor.LastEditedPart == focus)
         {
-            var restore = new UITooltip("Restore", "Reloads the design as it was before the last drive repair.");
-            ui.Button("Restore design before last edit", Ui.Callback(editor.RequestRestore), ref restore);
+            var restore = new UITooltip("Restore previous design", "Reloads the saved snapshot from before the last Quality of Life edit. Changes made since that snapshot are discarded.");
+            ui.Button("Restore previous design", Ui.Callback(editor.RequestRestore), ref restore);
         }
     }
 }

@@ -28,6 +28,8 @@ public static class GearSpeeds
     static string? shown, logged; // last state / inputs written to the log, so each is logged once per change
     static CombustionEngineComponentEditor? pendingEngineRedraw;
     static TransmissionEditor? pendingGearsRedraw;
+    static PredictionKey? predictionKey;
+    static string? predictionText;
 
     // After a change the panel isn't redrawn by itself: ask, so the numbers follow.
     // If the user is dragging a slider, defer redraw until the mouse button is released,
@@ -66,6 +68,8 @@ public static class GearSpeeds
     {
         pendingEngineRedraw = null;
         pendingGearsRedraw = null;
+        predictionKey = null;
+        predictionText = null;
     }
 
     static bool IsDragging()
@@ -85,22 +89,22 @@ public static class GearSpeeds
 
     [HarmonyPostfix, HarmonyPatch(typeof(TransmissionEditor), nameof(TransmissionEditor.OnGUI))]
     static void InTransmission(TransmissionEditor __instance, IGUILayout layout) =>
-        Ui.Guard(Title, () => Draw(layout, __instance.Component, null, __instance.Component.Vehicle?.Mass ?? 0));
+        Ui.Inspector(Title, layout, () => Draw(layout, __instance.Component, null, __instance.Component.Vehicle?.Mass ?? 0));
 
     [HarmonyPostfix, HarmonyPatch(typeof(CombustionEngineComponentEditor), nameof(CombustionEngineComponentEditor.OnGUI))]
     static void InEngine(CombustionEngineComponentEditor __instance, IGUILayout layout) =>
-        Ui.Guard(Title, () => Draw(layout, null, __instance.blueprint, __instance.Component.Vehicle?.Mass ?? 0));
+        Ui.Inspector(Title, layout, () => Draw(layout, null, __instance.blueprint, __instance.Component.Vehicle?.Mass ?? 0));
 
     static void Draw(IGUILayout layout, TransmissionBlock? gearbox, EngineBlueprint? engine, float mass)
     {
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (ui == null) return;
         var text = Describe(gearbox, engine, mass);
         var summary = string.Join(" | ", text.Split('\n').Where(l => !l.StartsWith("Gear")));
         if (summary != shown) { shown = summary; Plugin.ModLog.LogInfo($"{Title}: {shown}"); }
         Ui.Section(layout, Title);
-        // A line each, and one more for each long line (it wraps in a narrow panel, and would run over what's below).
-        ui.InfoField(text, text.Split('\n').Sum(l => l.Length > 40 ? 2 : 1));
+        // The shared drawer accounts for the current inspector width.
+        ui.InfoField(text, text.Split('\n').Length);
     }
 
     /// Everything the drive needs, read straight off the parts.
@@ -111,6 +115,12 @@ public static class GearSpeeds
     /// resistance, sprocket drag, belt bending and friction depend on the track's technology and belt, which the design
     /// editor doesn't hold. Until then, the game's defaults for standard tracks.
     sealed record TrackPhysics(float Rolling, float RollingPerSpeed2, float Viscous, float Bending, float Friction, bool Measured);
+    // Exact values, rather than the rounded display/log text. A small slider change
+    // must invalidate the prediction, but repeated inspector rebuilds need not
+    // rerun thousands of solver steps or read the native torque curve 101 times.
+    sealed record PredictionKey(float MaxRpm, float Idle, float Upshift, float Torque, float Friction, bool CustomLimit,
+        float RevLimit, string Forward, string Reverse, float FinalDrive, float Radius, float Mass, float Limit,
+        float Disengage, float Engage, float EngineInertia, float SprocketInertia, float Drag, int Tracks, TrackPhysics Physics);
     static TrackPhysics tracksSeen = new(0.03f, 0.001f, 0, 0, 0.8f, false);
 
     [HarmonyPostfix, HarmonyPatch(typeof(TrackAssembly), nameof(TrackAssembly.EnableBehaviour))]
@@ -155,6 +165,14 @@ public static class GearSpeeds
         var d = new Drive(engine, ratios, finalDrive, radius, mass, Try(() => track.TopSpeed), revLimit, disengage, engage, Try(() => engine.Inertia),
             tracks.Sum(t => Try(() => t!.ComputeSprocketInertia())), Try(() => VehiclePhysics.DefaultLinearDrag), Math.Max(1, tracks.Count));
         var p = tracksSeen;
+        bool custom = Try(() => engine.RevLimitOverride ? 1 : 0) > 0;
+        float friction = Try(() => engine.FrictionCoefficient);
+        static string RatioKey(float[] values) => string.Join("/", values.Select(v => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+        var key = new PredictionKey(engine.MaxRPM, engine.IdleRPM, engine.Upshift, engine.MaxTorque, friction, custom,
+            revLimit, RatioKey(ratios), RatioKey(reverse), d.FinalDrive, d.Radius, d.Mass, d.Limit, d.Disengage, d.Engage,
+            d.EngineInertia, d.SprocketInertia, d.Drag, d.Tracks, p);
+        if (key == predictionKey && predictionText != null) return predictionText;
+        string Remember(string value) { predictionKey = key; return predictionText = value; }
         string inputs = $"{engine.MaxRPM} rpm (idle {engine.IdleRPM}, upshift {engine.Upshift}, rev limit {revLimit}), {engine.MaxTorque:0} torque, " +
                         $"gears {string.Join("/", ratios.Select(r => r.ToString("0.##")))}, final drive {finalDrive:0.##}, sprocket radius {radius:0.###}, " +
                         $"mass {mass:0} kg, track limit {d.Limit * 3.6f:0.#} km/h, shift {disengage:0.##} + {engage:0.##} s, engine inertia {d.EngineInertia:0.###}, " +
@@ -165,23 +183,21 @@ public static class GearSpeeds
         float Speed(float ratio) => PowertrainInfo.CalculateSpeed(revLimit, ratio * finalDrive, radius) * 3.6f; // m/s -> km/h
         var text = new StringBuilder();
         for (int i = 0; i < ratios.Length; i++)
-            text.Append(Speed(ratios[i]) > limit ? $"Gear {i + 1}:  {limit:0} km/h (track limit; gearing {Speed(ratios[i]):0})\n" : $"Gear {i + 1}:  {Speed(ratios[i]):0} km/h\n");
+            text.Append(Speed(ratios[i]) > limit ? $"Gear {i + 1}: {limit:0} km/h (track limit; gearing allows {Speed(ratios[i]):0} km/h)\n" : $"Gear {i + 1}: {Speed(ratios[i]):0} km/h\n");
         if (reverse.Length > 0) text.Append($"Reverse:  {Math.Min(Speed(reverse.Min()), limit):0} km/h\n");
-        bool custom = Try(() => engine.RevLimitOverride ? 1 : 0) > 0;
-        text.Append(custom ? $"At your rev limit, {revLimit:0} rpm\n"
-                  : revLimit < engine.MaxRPM ? $"At the rev limit, {revLimit:0} rpm (upshift {engine.Upshift} + 50)\n" : $"At max revs, {revLimit:0} rpm\n");
+        text.Append($"Speed estimates at {revLimit:0} rpm {(custom ? "(custom rev limit)" : revLimit < engine.MaxRPM ? "(automatic rev limit)" : "(maximum revs)")}\n");
         var torque = EngineTorque(engine, revLimit);
-        if (torque == null) return text.ToString().TrimEnd('\n');
+        if (torque == null) return Remember(text.ToString().TrimEnd('\n'));
         // The most power the engine gives below its rev limit (not the engine's rated figure at max revs).
         var (power, powerRpm) = Enumerable.Range(0, 201).Select(k => torque.Idle + (revLimit - torque.Idle) * k / 200f)
             .Select(rpm => (Kw: torque.At(rpm) * rpm * MathF.PI / 30 / 1000, Rpm: rpm)).MaxBy(x => x.Kw);
-        text.Append($"Max power {power:0} kW ({power * 1.341f:0} hp) at {powerRpm:0} rpm, up to the rev limit\n");
-        if (mass <= 0) return text.ToString().TrimEnd('\n');
+        text.Append($"Usable peak power: {power:0} kW / {power * 1.341f:0} hp at {powerRpm:0} rpm\n");
+        if (mass <= 0) return Remember(text.ToString().TrimEnd('\n'));
         var (seconds, reached, shifts) = Accelerate(d, p, torque);
-        text.Append($"0 to {reached * 3.6f:0} km/h in about {seconds:0} s ({shifts} shifts)\n");
-        text.Append(p.Measured ? "Flat ground, full throttle, automatic gears; track losses from the last drive."
-                               : "Flat ground, full throttle, automatic gears; standard track losses (test drive once for this tank's own).");
-        return text.ToString();
+        text.Append($"Estimated 0-{reached * 3.6f:0} km/h: {seconds:0} s ({shifts} gear changes)\n");
+        text.Append(p.Measured ? "Level ground, full throttle, automatic gears. Uses track losses measured during the last drive."
+                               : "Level ground, full throttle, automatic gears. Uses standard track losses; a test drive updates them for this vehicle.");
+        return Remember(text.ToString());
     }
 
     static float Try(Func<float> read) { try { return read(); } catch { return 0; } }

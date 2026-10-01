@@ -1,6 +1,12 @@
 using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
+if (args.Contains("--paint-only")) { PartPaintPersistenceTests.Run(); return; }
+if (args.Contains("--ui-only")) { UiPresentationTests.Run(); return; }
+if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); return; }
+if (args.Contains("--core-only")) { CoreAuditTests.Run(); GizmoPickingTests.Run(); return; }
+if (args.Contains("--acceleration-only")) { AccelerationTests.Run(); return; }
+if (args.Contains("--fillet-only")) { FilletTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--smooth-split-only")) { SmoothSplitTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
 if (args.Contains("--gizmo-only")) { GizmoPickingTests.Run(); return; }
@@ -8,9 +14,13 @@ if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
 if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
 if (args.Contains("--clipboard-only")) { SprocketQoL.Tests.ClipboardTests.Run(); return; }
 TurretDriveTests.Run();
+PartPaintPersistenceTests.Run();
 GizmoPickingTests.Run();
 BevelEdgeTests.Run();
 SmoothSplitTests.Run();
+FilletTests.Run();
+CoreAuditTests.Run();
+UiPresentationTests.Run();
 int checks=0, conversions=0;
 void Check(bool ok,string message) { checks++; if(!ok)throw new Exception(message); }
 void Run(string json,int id)

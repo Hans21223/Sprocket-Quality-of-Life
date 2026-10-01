@@ -51,6 +51,22 @@ static class TurretDriveTests
         var already = Conversion.RepairMirroredTurretDrives(fresh.ToJsonString());
         Check(already.Repaired == 0 && already.Json == fresh.ToJsonString(), "healthy pair is byte-for-byte unchanged");
 
+        // Observed native empty-twin form: both rings are marked mirrored, while the twin
+        // initially aliases the source body and drive. Completion must create two owned parts.
+        {
+            var b = Fixture(); var os = Conversion.Objects(b);
+            os[100]["flags"] = 6; b["objects"]!.AsArray().Remove(os[40]);
+            string original = b.ToJsonString();
+            var initial = Conversion.RepairMirroredTurretDrives(original);
+            Check(initial.Repaired == 0 && initial.Unresolved == 1 && initial.Json == original, "empty twin is not repaired by sharing its source drive");
+            var result = Conversion.MirrorTurret(original, 10);
+            var after = Conversion.Parse(result.Json); Validate(after);
+            var all = Conversion.Objects(after); int body = all[100]["structureID"]!.GetValue<int>();
+            Check(result.Mirrored == 2 && all.Count == b["objects"]!.AsArray().Count + 2, "empty twin adds its body and motor only");
+            Check(body != 20 && Conversion.Id(all[body], "pvuid") == 100, "native empty twin acquires its own body");
+            Check(b.ToJsonString() == original, "empty twin completion does not mutate input");
+        }
+
         foreach (string kind in new[] { "shared-block", "left-to-right", "right-to-left", "crossed" })
         {
             var b = Mirrored(); var os = Conversion.Objects(b);
@@ -74,27 +90,63 @@ static class TurretDriveTests
             Check(again.Repaired == 0 && again.Json == repaired.Json, "repeated repair is a no-op");
         }
 
-        // A partially filled twin already has a body and motor. The new seat must reference that motor too.
+        // Filling a partially mirrored assembly must also repair either ring's existing cross-connection.
+        // Both drives already exist; merely remapping the new seat/twin ring can leave the source on the twin's motor.
+        foreach (string kind in new[] { "shared-block", "left-to-right", "right-to-left", "crossed" })
         {
             var b = Mirrored(); var os = Conversion.Objects(b); int seatTwin = os[40]["transform"]!["mirrorVuid"]!.GetValue<int>();
             b["objects"]!.AsArray().Remove(os[seatTwin]); os[40]["transform"]!["mirrorVuid"] = -1;
-            os[100]["ringBlueprintVuid"] = os[10]["ringBlueprintVuid"]!.GetValue<int>();
+            int left = Motor(b, 10), right = Motor(b, 100);
+            if (kind == "shared-block") os[100]["ringBlueprintVuid"] = os[10]["ringBlueprintVuid"]!.GetValue<int>();
+            if (kind is "left-to-right" or "crossed") Block(b, os[10])["motorVuid"] = right;
+            if (kind is "right-to-left" or "crossed") Block(b, os[100])["motorVuid"] = left;
+            string original = b.ToJsonString();
             var result = Conversion.MirrorTurret(b.ToJsonString(), 10);
             var after = Conversion.Parse(result.Json); Validate(after);
+            Check(result.Mirrored == 1, kind + " partial mirror copies only the missing seat");
+            Check(b.ToJsonString() == original, kind + " partial mirror does not mutate input");
+            Check(Motor(after, 10) == left && Motor(after, 100) == right, kind + " partial mirror keeps both drives local");
             var all = Conversion.Objects(after); int addedSeat = all[40]["transform"]!["mirrorVuid"]!.GetValue<int>();
             var seatBlock = after["blueprints"]!.AsArray().Single(x => x!["id"]!.GetValue<int>() == all[addedSeat]["seatBlueprintVuid"]!.GetValue<int>())!;
             Check(seatBlock["blueprint"]!["operatedBehaviours"]![1]!.GetValue<int>() == Motor(after, 100), "partial mirror seat uses existing copied motor");
+            foreach (var (id, part) in os.Where(pair => pair.Key != seatTwin))
+            {
+                Check(part["pvuid"]!.GetValue<int>() == all[id]["pvuid"]!.GetValue<int>(), kind + " partial mirror retains existing hierarchy");
+                if (id != 40) Check(part["transform"]!.ToJsonString() == all[id]["transform"]!.ToJsonString(), kind + " partial mirror retains existing transforms");
+            }
+            var again = Conversion.RepairMirroredTurretDrives(result.Json);
+            Check(again.Repaired == 0 && again.Json == result.Json, kind + " partial mirror repair is complete");
+        }
+        {
+            var b = Mirrored(); var os = Conversion.Objects(b);
+            int seatTwin = os[40]["transform"]!["mirrorVuid"]!.GetValue<int>();
+            b["objects"]!.AsArray().Remove(os[seatTwin]); os[40]["transform"]!["mirrorVuid"] = -1;
+            Block(b, os[100])["motorVuid"] = 999;
+            var after = Conversion.Parse(Conversion.MirrorTurret(b.ToJsonString(), 10).Json);
+            Check(Motor(after, 10) == 31 && Motor(after, 100) == 999, "partial mirror preserves an intentional external drive reference");
         }
 
         // A nested turret carries its own drive. Both ring blueprint references must be remapped independently.
+        foreach (bool modernBodyReference in new[] { false, true })
         {
             var b = Fixture(); var objects = b["objects"]!.AsArray();
             var ring = Part(50, 20, Conversion.RingGuid); ring["turretRing"] = 51; ring["structureID"] = 60; ring["ringBlueprintVuid"] = 3;
+            if (modernBodyReference) { ring.Remove("structureID"); ring["compartmentBodyID"] = new JsonObject { ["structureVuid"] = 60 }; }
             var body = Part(60, 50, Conversion.CompartmentGuid); var drive = Part(70, 60, Conversion.MotorGuid); drive["motor"] = 71;
             objects.Add(ring); objects.Add(body); objects.Add(drive);
             b["blueprints"]!.AsArray().Add(new JsonObject { ["id"] = 3, ["type"] = "turretRing", ["blueprint"] = new JsonObject { ["motorVuid"] = 71 } });
             var after = Conversion.Parse(Conversion.MirrorTurret(b.ToJsonString(), 10).Json); Validate(after);
             Check(Motor(after, 10) == 31 && Motor(after, 50) == 71, "nested source drives unchanged");
+            var all = Conversion.Objects(after);
+            int nestedTwin = all[50]["transform"]!["mirrorVuid"]!.GetValue<int>();
+            int bodyReference = modernBodyReference ? all[nestedTwin]["compartmentBodyID"]!["structureVuid"]!.GetValue<int>()
+                : all[nestedTwin]["structureID"]!.GetValue<int>();
+            Check(Conversion.Id(all[bodyReference], "pvuid") == nestedTwin, "nested copied ring references its own copied body");
+        }
+        {
+            var b = Fixture(); var all = Conversion.Objects(b); all[100]["transform"]!["mirrorVuid"] = -1;
+            bool rejected = false; try { Conversion.MirrorTurret(b.ToJsonString(), 10); } catch { rejected = true; }
+            Check(rejected, "non-reciprocal mirror link fails without redirecting parts");
         }
         foreach (string kind in new[] { "missing", "ambiguous", "unlinked", "external" })
         {

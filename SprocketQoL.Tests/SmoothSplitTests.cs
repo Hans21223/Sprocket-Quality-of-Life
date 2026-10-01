@@ -118,6 +118,8 @@ static class SmoothSplitTests
         Valid(reflected,faces.Select(f=>f.Reverse().ToArray()).ToList(),MeshPlans.Bevel(reflected,faces.Select(f=>f.Reverse().ToArray()).ToList(),new[]{(2,3)},.1f,4),true);
         Check(EdgeSubdivision.Split(p,faces,Array.Empty<(int,int)>(),4).Why!=null,"empty selection rejected");
         Check(EdgeSubdivision.Split(p,faces,new[]{(0,7)},4).Why!=null,"non-edge rejected");
+        Check(EdgeSubdivision.Split(p,faces,new[]{(2,3)},4,new HashSet<int>{0}).Why!=null,"a scoped split cannot modify a face outside the selection");
+        Check(EdgeSubdivision.Split(new[]{new Vector3(float.NaN,0,0)},new[]{new[]{0,0,0}},new[]{(0,0)},4).Why!=null,"split rejects invalid geometry atomically");
         Check(MeshPlans.Bevel(p,faces,new[]{(2,3)},float.NaN,4).Why!=null,"invalid width rejected");
         Check(MeshPlans.Bevel(p,faces,new[]{(2,3)},.1f,17).Why!=null,"unbounded segment count rejected");
         Console.WriteLine($"SMOOTH_SPLIT_TESTS_OK: {checks} checks");

@@ -34,7 +34,52 @@ static class ToolTests
         Circle();
         FixMirror();
         MergePoints();
+        Validation();
         Console.WriteLine($"TOOL_TESTS_OK: {checks} checks (bridge, circle, fix mirror, mirrored merge)");
+    }
+
+    static void Validation()
+    {
+        var points = new List<Vector3> { Vector3.Zero, Vector3.UnitX, Vector3.UnitY };
+        var faces = new List<int[]> { new[] { 0, 1, 2 } };
+        var nan = new MeshPlans.Rebuild(new() { 0 }, new() { new(new[] { 3, 1, 2 }, 0) },
+            new() { new(new Vector3(float.NaN, 0, 0), new[] { (0, 1f) }) }, null);
+        Check(MeshPlans.Check(points, faces, nan) != null, "mesh safety rejects non-finite added points");
+        var duplicate = new MeshPlans.Rebuild(new(), new() { new(new[] { 0, 1, 2 }, 0) }, new(), null);
+        Check(MeshPlans.Check(points, faces, duplicate) != null, "mesh safety rejects duplicate faces facing the same way");
+        var cube = Enumerable.Range(0, 8).Select(i => new Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1)).ToList();
+        var shell = new List<int[]> { new[] { 0,1,5,4 }, new[] { 2,3,7,6 }, new[] { 0,2,6,4 }, new[] { 1,3,7,5 }, new[] { 0,1,3,2 }, new[] { 4,5,7,6 } };
+        var crack = new MeshPlans.Rebuild(new() { 0 }, new(), new(), null);
+        Check(MeshPlans.Check(cube, shell, crack) != null, "mesh safety rejects a missing face at the origin");
+        Check(MeshPlans.Check(cube.Select(p => p + new Vector3(100000, 0, 0)).ToList(), shell, crack) != null,
+            "mesh safety rejects the same crack far from the origin");
+        var missingSource = duplicate with { Add = new() { new(new[] { 0,1,2 }, 8) } };
+        Check(MeshPlans.Check(points,faces,missingSource)!=null,"missing source face is rejected without an index error");
+        Check(MeshPlans.Folds(points,faces,new Dictionary<int,Vector3> { [0] = new(float.PositiveInfinity,0,0) })!=null,"movement rejects non-finite points");
+        Check(MeshPlans.Inset(points,faces,new[]{0},float.NaN).Why!=null,"inset rejects a non-finite width");
+        Check(MeshPlans.Bevel(cube,shell,new[]{(2,3),(0,7)},.1f).Why!=null,"bevel rejects an invalid mixed selection atomically");
+        Check(MeshPlans.MergePoints(points,faces,new[]{-1},0).Why!=null,"merge rejects stale point selections");
+        foreach(var outer in new[]{new List<int>(),new(){0},new(){0,1},new(){0,1,9}})
+            Check(Fill.Region(points.ToList(),outer,new(),Vector3.UnitZ,null).Count==0,"fill rejects empty or invalid boundaries safely");
+        Check(Fill.Region(points.ToList(),new(){0,1,2},new(),Vector3.Zero,null).Count==0,"fill rejects a missing plane normal");
+        var outside=points.Concat(new[]{new Vector3(2,2,0),new(3,2,0),new(2,3,0)}).ToList();
+        Check(Fill.Region(outside,new(){0,1,2},new(){new(){3,4,5}},Vector3.UnitZ,null).Count==0,"fill never erases or bridges a hole outside its plate");
+        var groups=FaceMerge.Plan(points,faces,new HashSet<int>{9},new HashSet<(int,int)>(),FaceMerge.SidePoints.Keep);
+        Check(groups.Count==1&&groups[0].Why!=null,"merge faces rejects a stale selection safely");
+
+        // Many separate selected patches: each merge stays local while outline lookup scales by shared vertices.
+        var meshPoints=new List<Vector3>(); var patches=new List<int[]>();
+        const int count=600;
+        for(int i=0;i<count;i++)
+        {
+            int k=meshPoints.Count; float x=i*3;
+            meshPoints.AddRange(new[]{new Vector3(x,0,0),new(x+.5f,0,0),new(x+1,0,0),new(x,1,0),new(x+.5f,1,0),new(x+1,1,0)});
+            patches.Add(new[]{k,k+1,k+4,k+3}); patches.Add(new[]{k+1,k+2,k+5,k+4});
+        }
+        var clock=System.Diagnostics.Stopwatch.StartNew();
+        var merged=FaceMerge.Plan(meshPoints,patches,Enumerable.Range(0,patches.Count).ToHashSet(),new HashSet<(int,int)>(),FaceMerge.SidePoints.Keep);
+        Check(merged.Count==count&&merged.All(g=>g.Why==null&&g.NewFaces.Count==1&&g.NewFaces[0].Length==4&&g.Removed.Count==2),"large face selection merges every patch independently and removes only its straight boundary points");
+        Console.WriteLine($"  FACE_MERGE_BENCHMARK: {count} patches / {patches.Count} faces in {clock.ElapsedMilliseconds} ms");
     }
 
     static void Bridge()

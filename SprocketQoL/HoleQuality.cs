@@ -39,15 +39,16 @@ public static class HoleQuality
     [HarmonyPostfix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.FillEdgeLoop))]
     static void KeepRivets(Il2CppReferenceArray<Face> __result) => Ui.Guard("Create Hole", () =>
     {
-        if (holeRivets is not { Count: > 0 } keeper || __result == null) return;
+        var keeper = holeRivets;
         holeRivets = null;
+        if (keeper is not { Count: > 0 } || __result == null) return;
         var (kept, lost) = keeper.Place(__result, reach: 0.002f);
         Plugin.ModLog.LogInfo($"Create Hole: rivets {kept} kept, {lost} in the hole removed");
     });
 
     static Num? faceSide; // which way the face being holed really faces, to check the filled-in faces against
     static int holeFill; // index into FillNames: Fill.Mode's (fewest points first), then the game's own fan
-    static readonly string[] FillNames = Fill.ModeNames.Select(n => "Hole fill: " + n).Append("Hole fill: game's fan").ToArray();
+    static readonly string[] FillNames = Fill.ModeNames.Select(n => "Faces: " + n).Append("Faces: original triangle fan").ToArray();
     static bool GameFill => holeFill == FillNames.Length - 1;
 
     /// Runs after the game has made the ring and before it fills the face around it: makes the ring a true circle,
@@ -57,6 +58,7 @@ public static class HoleQuality
     static bool TrueCircle(EditMesh mesh, Il2CppReferenceArray<Vertex> outer, Il2CppReferenceArray<Vertex> inner, UnityEngine.Vector3 centre, ref Il2CppReferenceArray<Face> __result)
     {
         Il2CppReferenceArray<Face>? mine = null;
+        faceSide = null;
         Ui.Guard("Create Hole", () =>
         {
             var corners = outer.Select(v => ToNum(v.position)).ToArray();
@@ -98,14 +100,20 @@ public static class HoleQuality
             v.position = at;
             verts.Add(v);
         }
-        var edgePrototype = Edge.GetConnectingEdge(outer[0], outer[1]);
         var created = new List<Face>();
         foreach (var f in faces)
         {
             var vs = f.Select(i => verts[i]).ToArray();
             var es = new Edge[vs.Length];
             for (int k = 0; k < vs.Length; k++)
-                es[k] = Edge.GetConnectingEdge(vs[k], vs[(k + 1) % vs.Length]) ?? mesh.CreateEdge(vs[k], vs[(k + 1) % vs.Length], edgePrototype);
+            {
+                if (Edge.GetConnectingEdge(vs[k], vs[(k + 1) % vs.Length]) is { } existing) es[k] = existing;
+                else
+                {
+                    es[k] = mesh.CreateEdge(vs[k], vs[(k + 1) % vs.Length], null);
+                    es[k].flags = ElementFlags.None;
+                }
+            }
             created.Add(mesh.CreateFace(new Il2CppReferenceArray<Vertex>(vs), new Il2CppReferenceArray<Edge>(es), prototype,
                 new Il2CppStructArray<ushort>(vs.Select(_ => thickness).ToArray())));
         }
@@ -181,11 +189,13 @@ public static class HoleQuality
     /// The game's own consistency checks for a face and its corners, plus "every corner's edge joins it to the next".
     internal static string? Problem(Face face)
     {
-        if ((int)Face.Validate(face) != 0) return "face: " + Face.Validate(face);
+        var faceProblem = Face.Validate(face);
+        if ((int)faceProblem != 0) return "face: " + faceProblem;
         var l = face.firstLoop;
         for (int i = 0; i < face.vertexCount; i++, l = l.next)
         {
-            if ((int)Loop.Validate(l) != 0) return "corner: " + Loop.Validate(l);
+            var loopProblem = Loop.Validate(l);
+            if ((int)loopProblem != 0) return "corner: " + loopProblem;
             if (!Loop.ValidateRadialCycle(l)) return "corner not linked to its edge";
             if (!l.edge.ContainsVertices(l.vertex, l.next.vertex)) return "corner edge doesn't join it to the next corner";
         }
@@ -232,19 +242,17 @@ public static class HoleQuality
     internal static Num ToNum(UnityEngine.Vector3 v) => new(v.x, v.y, v.z);
 
     [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Guard("Hole quality", () =>
+    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Hole quality", layout, () =>
     {
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // Create Hole is a freeform tool
         Ui.Section(layout, "Hole quality");
-        ui.Slider("Hole segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));
+        ui.InfoField("Faces mode: these settings apply to Create Hole. Ctrl+Z undoes each hole.", 2);
+        ui.Slider("Circle segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));
         // Applied in HoleRing.Fit, never through the game's CreateHoleOp.HoleRadiusScale: see there.
-        ui.Slider("Hole size (%)", sizePercent, 10, 300, Ui.FloatCallback(v => sizePercent = (int)Math.Round(v)));
-        var tip = new UITooltip("Hole fill", "Fewest points: only the hole's ring and the face's corners, no new points (triangles paired into quads). " +
-                                "Light: one ring of points between the hole and the corners, for even faces. " +
-                                "Smooth: a ring of quads hugging the hole, then rings stepping out (more points, even slices). Game's: the game's own fan of triangles.");
+        ui.Slider("Relative size (%)", sizePercent, 10, 300, Ui.FloatCallback(v => sizePercent = (int)Math.Round(v)));
+        var tip = new UITooltip("Surrounding faces", "Click to cycle the faces around the hole. Fewest points uses the circle and existing corners. Light rings adds one ring of points. Smooth rings adds several rings for even faces. Original triangle fan uses the game's layout. The circle stays inside the selected face.");
         // The panel only redraws when asked, so ask, or the button would keep showing the old choice.
         ui.Button(FillNames[holeFill], Ui.Callback(() => { holeFill = (holeFill + 1) % FillNames.Length; __instance.RequestRedraw(); }), ref tip);
-        ui.InfoField("Used by the Create Hole button in Faces edit mode. Holes stay round and inside the face.", 2);
     });
 }

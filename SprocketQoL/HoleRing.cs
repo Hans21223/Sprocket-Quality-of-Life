@@ -16,16 +16,23 @@ public static class HoleRing
         int n = outer.Length, m = inner.Length;
         Vector3 Corner(int i) => outer[(i % n + n) % n];
 
+        if (n < 3 || m < 3 || outer.Any(p => !Finite(p)) || inner.Any(p => !Finite(p)))
+        {
+            note = "invalid face or ring, left as the game made it";
+            return inner;
+        }
+
         // Face plane: through the corners' average, facing the way the corners turn.
         var normal = Normal(outer);
-        var mid = outer.Aggregate(Vector3.Zero, (s, p) => s + p) / n;
-        if (n < 3 || m < 3 || normal.LengthSquared() < 1e-12f) { note = "face too small, left as the game made it"; return inner; }
+        var origin = outer[0];
+        var mid = origin + outer.Aggregate(Vector3.Zero, (s, p) => s + (p - origin)) / n;
+        if (normal.LengthSquared() < 1e-12f) { note = "face too small, left as the game made it"; return inner; }
         normal = Vector3.Normalize(normal);
         Vector3 Flat(Vector3 p) => p - Vector3.Dot(p - mid, normal) * normal;
 
         // Keep the game's hole position when it's inside the face, otherwise use the face's middle. If neither is
         // (a bent or hollowed face), a circle can't be placed safely: leave the game's ring.
-        var c = Flat(centre);
+        var c = Finite(centre) ? Flat(centre) : mid;
         if (!Inside(c)) c = mid;
         if (!Inside(c)) { note = "no safe spot for a round hole in this face, left as the game made it"; return inner; }
         float room = Enumerable.Range(0, n).Min(i => DistanceToSegment(c, Flat(Corner(i)), Flat(Corner(i + 1))));
@@ -66,14 +73,17 @@ public static class HoleRing
     /// Newell's normal: the side a polygon faces given its corner order (also right for slightly bent faces).
     public static Vector3 Normal(IReadOnlyList<Vector3> corners)
     {
+        if (corners.Count < 3) return Vector3.Zero;
+        // Work relative to one corner: absolute-coordinate products lose the normal of
+        // small faces far from the origin. The signed fan sum equals Newell's normal.
+        var origin = corners[0];
         var normal = Vector3.Zero;
-        for (int i = 0; i < corners.Count; i++)
-        {
-            Vector3 a = corners[i], b = corners[(i + 1) % corners.Count];
-            normal += new Vector3((a.Y - b.Y) * (a.Z + b.Z), (a.Z - b.Z) * (a.X + b.X), (a.X - b.X) * (a.Y + b.Y));
-        }
+        for (int i = 1; i + 1 < corners.Count; i++)
+            normal += Vector3.Cross(corners[i] - origin, corners[i + 1] - origin);
         return normal;
     }
+
+    static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
 
     static float DistanceToSegment(Vector3 p, Vector3 a, Vector3 b)
     {

@@ -29,6 +29,11 @@ static class DrawingMountTests
         Check(DrawingMounts.SelectGun(463,guns,parts,Included)==null, "disabled inner gun cannot borrow outer gun");
         parts[500]=new(463,false,false);
         Check(DrawingMounts.SelectGun(463,guns.Append((500,7)),parts,Included)==500, "enabled coax on same mount remains eligible");
+        parts[499]=new(463,false,false);
+        var sameCaliber=new[]{(Id:500,Caliber:20),(Id:499,Caliber:20)};
+        Check(DrawingMounts.SelectGun(463,sameCaliber,parts,_=>true)==499 && DrawingMounts.SelectGun(463,sameCaliber.Reverse(),parts,_=>true)==499,
+            "equal-caliber shared guns choose a stable VUID independent of native component order");
+        Check(DrawingMounts.SelectGun(-1,guns,parts,_=>true)==null, "unowned guns never become annotations for an invalid mount");
         parts[501]=new(426,false,false);
         Check(DrawingMounts.Owner(501,parts)==-1, "direct turret gun does not borrow outer trunnions");
         parts[502]=new(503,false,false); parts[503]=new(502,false,false);

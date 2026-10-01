@@ -46,13 +46,15 @@ internal static class DrawingSheet
     };
 
     static bool busy;
+    internal static bool Capturing => busy;
 
     internal static void Update()
     {
         if (busy || PhotoShot.Capturing || Keyboard.current is not { } keys || !keys.f9Key.wasPressedThisFrame || MeshTools.Typing()) return;
-        if (DesignEditor.Instance is not { } editor) return;
+        if (DesignEditor.Instance is not { } editor || !editor.IsReady || editor.IsBusy || editor.Core?.Editor?.OperationInProgress == true) return;
         busy = true;
-        editor.StartCoroutine(Run().WrapToIl2Cpp());
+        try { editor.StartCoroutine(Run().WrapToIl2Cpp()); }
+        catch { busy = false; NoHover.On = false; throw; }
     }
 
     static System.Collections.IEnumerator Run()
@@ -112,6 +114,7 @@ internal static class DrawingSheet
         readonly bool turretTraverse = Plugin.DrawingTurretTraverse?.Value ?? false;
         readonly GunAnnotationPreferences gunLimits = new(Plugin.DrawingHiddenGunLimits?.Value);
         readonly List<DrawingOptions.Ghost> motion = new();
+        readonly Dictionary<int, (Drawing.Shape[] Shapes, N.Vector3 Tip)> barrels = new();
         Bounds box;
         Bounds frame;
         float scale;                                   // pixels per metre, the same in every view
@@ -122,6 +125,7 @@ internal static class DrawingSheet
         readonly bool[][] insideSolid = new bool[Views.Length][];
         readonly List<Renderer> armour = new();              // switched off for the see-through views
         Camera? cam;
+        GameObject? cameraObject;
         RenderTexture? target;
         int layers;
         int bottom = Margin;                          // where the drawing starts, over the title block
@@ -206,7 +210,8 @@ internal static class DrawingSheet
                 views[i] = new Drawing.View(V(frame.center), V(right), V(up), V(Views[i].Look), scale, w, h);
             }
             var used = new HashSet<int>();
-            foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>()))
+            var sceneRenderers = UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>());
+            foreach (var o in sceneRenderers)
                 if (o.TryCast<Renderer>() is { } r)
                 {
                     used.Add(r.gameObject.layer);
@@ -219,7 +224,7 @@ internal static class DrawingSheet
                 {
                     used.Add(dp.gameObject.layer);
                     // Hide non-vehicle projectors so they don't bleed into the drawing.
-                    if (dp.enabled && !projectors.Any(p => p.Pointer == dp.Pointer))
+                    if (dp.enabled && !decalSeen.Contains(dp.Pointer))
                     {
                         dp.enabled = false;
                         hiddenEnvironmentProjectors.Add(dp);
@@ -233,7 +238,7 @@ internal static class DrawingSheet
                 if (!used.Contains(l) && string.IsNullOrEmpty(LayerMask.LayerToName(l))) ownLayer = l;
             if (ownLayer >= 0)
             {
-                foreach (var o in UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>()))
+                foreach (var o in sceneRenderers)
                     if (o.TryCast<Renderer>() is { } r && vehicle.Contains(r.Pointer) && !movedLayers.ContainsKey(r.gameObject.Pointer))
                     {
                         movedLayers[r.gameObject.Pointer] = (r.gameObject, r.gameObject.layer);
@@ -272,7 +277,7 @@ internal static class DrawingSheet
             lightingCaptured = true;
             MeshTools.Fog(off: true);
             if (!fullbrightWas) MeshTools.ToggleFullbright();
-            var go = new GameObject("Quality of Life drawing camera");
+            var go = cameraObject = new GameObject("Quality of Life drawing camera");
             cam = go.AddComponent<Camera>();
             cam.CopyFrom(main);
             if (main.GetComponent<HDAdditionalCameraData>() is { } hd)
@@ -371,16 +376,16 @@ internal static class DrawingSheet
 
         internal bool Grab(int i, bool inside)
         {
+            Texture2D? picture = null;
+            var was = RenderTexture.active;
             try
             {
                 var v = views[i];
-                var was = RenderTexture.active;
                 RenderTexture.active = target;
-                var picture = new Texture2D(v.Width, v.Height, TextureFormat.RGBA32, 1, false);
+                picture = new Texture2D(v.Width, v.Height, TextureFormat.RGBA32, 1, false);
                 picture.ReadPixelsImpl(new Rect(0, 0, v.Width, v.Height), 0, 0, false);
                 RenderTexture.active = was;
                 var pixels = picture.GetPixels32();
-                UnityEngine.Object.Destroy(picture);
                 var rgb = new byte[v.Width * v.Height * 3];
                 var mask = new bool[v.Width * v.Height];
                 for (int p = 0; p < mask.Length; p++)
@@ -398,6 +403,11 @@ internal static class DrawingSheet
                 return true;
             }
             catch (Exception ex) { Fail($"couldn't take the {Views[i].Name} view", ex); return false; }
+            finally
+            {
+                Restore("active render target", () => RenderTexture.active = was);
+                Restore("readback texture", () => { if (picture != null) UnityEngine.Object.Destroy(picture); });
+            }
         }
 
         /// The lines of every view, all three sheets put together and saved.
@@ -850,22 +860,8 @@ internal static class DrawingSheet
                         continue;
                     }
                     var cannon = guns[gunId.Value];
-                    if (cannon?.Barrel == null) continue;
-                    var shapes = new List<Drawing.Shape>();
-                    var seen = new HashSet<IntPtr>();
-                    foreach (var t in cannon.Barrel.BarrelTransforms)
-                        if (t != null)
-                            foreach (var filter in t.GetComponentsInChildren<MeshFilter>())
-                                if (seen.Add(filter.Pointer) && filter.sharedMesh is { isReadable: true } mesh)
-                                    shapes.Add(Shape(mesh, filter.transform.localToWorldMatrix));
-                    var points = shapes.SelectMany(s => s.P).ToArray();
-                    if (points.Length == 0) { Plugin.ModLog.LogWarning("QOL_DRAWING gun limits: barrel mesh unavailable; skipped this mount"); continue; }
+                    if (!TryBarrel(cannon, out var shapes, out var tip)) { Plugin.ModLog.LogWarning("QOL_DRAWING gun limits: barrel mesh unavailable; skipped this mount"); continue; }
                     var pivot = V(trunnions.transform.position);
-                    var forward = V(cannon.transform.forward);
-                    float end = points.Max(p => N.Vector3.Dot(p, forward));
-                    var muzzle = points.Where(p => end - N.Vector3.Dot(p, forward) < 0.002f).ToArray();
-                    if (muzzle.Length == 0) { Plugin.ModLog.LogWarning($"QOL_DRAWING gun limits: no muzzle vertices matched; skipped this mount"); continue; }
-                    var tip = muzzle.Aggregate(N.Vector3.Zero, (sum, p) => sum + p) / muzzle.Length;
                     var bp = drive.BlueprintSlot.Blueprint;
                     Plugin.ModLog.LogInfo($"QOL_DRAWING mount {mountId}: gun {gunId.Value}, {cannon.Blueprint?.Caliber} mm, elevation {bp.Elevation.Min} to {bp.Elevation.Max}");
                     motion.AddRange(DrawingOptions.Motion(shapes, pivot, tip, V(trunnions.transform.right), V(trunnions.transform.up),
@@ -890,34 +886,49 @@ internal static class DrawingSheet
                     if (t.VehicleObject?.GUID == Conversion.RingGuid) return t.VehicleObject.Pointer;
                 return IntPtr.Zero;
             }
+            var gunsByRing = guns.ToLookup(Owner);
             foreach (var ring in components.Select(c => c.TryCast<Sprocket.Vehicles.Turrets.TurretRing>()).OfType<Sprocket.Vehicles.Turrets.TurretRing>())
             {
                 try
                 {
                     var slot = ring.motor?.TraverseBlueprintSlot;
                     if (slot?.HasBlueprint != true) continue;
-                    var cannon = guns.Where(g => Owner(g) == ring.VehicleObject.Pointer).OrderByDescending(c => c.Blueprint?.Caliber ?? 0).FirstOrDefault();
-                    if (cannon?.Barrel == null) continue;
-                    var shapes = new List<Drawing.Shape>();
-                    var seen = new HashSet<IntPtr>();
-                    foreach (var t in cannon.Barrel.BarrelTransforms)
-                        if (t != null)
-                            foreach (var filter in t.GetComponentsInChildren<MeshFilter>())
-                                if (seen.Add(filter.Pointer) && filter.sharedMesh is { isReadable: true } mesh)
-                                    shapes.Add(Shape(mesh, filter.transform.localToWorldMatrix));
-                    var points = shapes.SelectMany(s => s.P).ToArray();
-                    if (points.Length == 0) { Plugin.ModLog.LogWarning("QOL_DRAWING turret limits: unreadable barrel, skipped ring"); continue; }
-                    var forward = V(cannon.transform.forward);
-                    float end = points.Max(p => N.Vector3.Dot(p, forward));
-                    var muzzle = points.Where(p => end - N.Vector3.Dot(p, forward) < 0.002f).ToArray();
-                    if (muzzle.Length == 0) { Plugin.ModLog.LogWarning("QOL_DRAWING turret limits: unreadable muzzle, skipped ring"); continue; }
-                    var tip = muzzle.Aggregate(N.Vector3.Zero, (sum, p) => sum + p) / muzzle.Length;
+                    var cannon = gunsByRing[ring.VehicleObject.Pointer].OrderByDescending(c => c.Blueprint?.Caliber ?? 0)
+                        .ThenBy(c => c.VehicleObject.VUID).FirstOrDefault();
+                    if (cannon == null || !TryBarrel(cannon, out var shapes, out var tip)) { Plugin.ModLog.LogWarning("QOL_DRAWING turret limits: unreadable barrel, skipped ring"); continue; }
                     var bp = slot.Blueprint;
                     motion.AddRange(DrawingOptions.TurretMotion(shapes, V(ring.transform.position), tip, V(ring.transform.up), bp.MinAngle, bp.MaxAngle));
                     Plugin.ModLog.LogInfo($"QOL_DRAWING turret {ring.VehicleObject.VUID}: limits {bp.MinAngle} to {bp.MaxAngle} degrees");
                 }
                 catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_DRAWING turret limits: {ex.Message}; skipped ring"); }
             }
+        }
+
+        // Gun and turret annotations use the same read-only barrel snapshot. Read and weld
+        // each native mesh once per export rather than doing it again for every overlay.
+        bool TryBarrel(Sprocket.Vehicles.Cannons.Cannon cannon, out Drawing.Shape[] shapes, out N.Vector3 tip)
+        {
+            int id = (int)cannon.VehicleObject.VUID;
+            if (barrels.TryGetValue(id, out var cached)) { shapes = cached.Shapes; tip = cached.Tip; return true; }
+            shapes = Array.Empty<Drawing.Shape>(); tip = default;
+            if (cannon.Barrel == null) return false;
+            var collected = new List<Drawing.Shape>();
+            var seen = new HashSet<IntPtr>();
+            foreach (var t in cannon.Barrel.BarrelTransforms)
+                if (t != null)
+                    foreach (var filter in t.GetComponentsInChildren<MeshFilter>())
+                        if (seen.Add(filter.Pointer) && filter.sharedMesh is { isReadable: true } mesh)
+                            collected.Add(Shape(mesh, filter.transform.localToWorldMatrix));
+            var points = collected.SelectMany(s => s.P).ToArray();
+            if (points.Length == 0) return false;
+            var forward = V(cannon.transform.forward);
+            float end = points.Max(p => N.Vector3.Dot(p, forward));
+            var muzzle = points.Where(p => end - N.Vector3.Dot(p, forward) < 0.002f).ToArray();
+            if (muzzle.Length == 0) return false;
+            tip = muzzle.Aggregate(N.Vector3.Zero, (sum,p) => sum+p) / muzzle.Length;
+            shapes = collected.ToArray();
+            barrels[id] = (shapes, tip);
+            return true;
         }
 
         /// Every mesh of the vehicle as a shape (world space). Some meshes the game keeps only on the graphics card:
@@ -999,9 +1010,11 @@ internal static class DrawingSheet
             hidden.Clear();
             foreach (var t in hiddenGround) Restore("terrain", () => { if (t != null) t.enabled = true; });
             hiddenGround.Clear();
-            Restore("drawing camera", () => { if (cam != null) { cam.targetTexture = null; UnityEngine.Object.Destroy(cam.gameObject); } });
-            Restore("render target", () => { if (target != null) { target.Release(); UnityEngine.Object.Destroy(target); } });
-            cam = null; target = null;
+            Restore("drawing camera target", () => { if (cam != null) cam.targetTexture = null; });
+            Restore("drawing camera", () => { if (cameraObject != null) UnityEngine.Object.Destroy(cameraObject); });
+            Restore("render target release", () => { if (target != null) target.Release(); });
+            Restore("render target", () => { if (target != null) UnityEngine.Object.Destroy(target); });
+            cam = null; cameraObject = null; target = null;
             if (lightingCaptured)
             {
                 Restore("fullbright", () => { if (!fullbrightWas && MeshTools.FullbrightOn) MeshTools.ToggleFullbright(); });

@@ -138,6 +138,13 @@ public static class ClipboardTests
         Check(pastedDecal != null && Conversion.Id(pastedDecal, "pvuid") == Conversion.Id(pastedChildAddon!, "vuid"), "pasted decal parented to pasted child addon");
         checks++;
 
+        var imaged = Conversion.Parse(synthetic); Conversion.Objects(imaged)[20]["flags"] = 4;
+        var imagedClip = BlueprintClipboard.Copy(imaged.ToJsonString(), new[] { 20 }).ClipboardJson;
+        var (imagedPasted, imagedRoot, _) = BlueprintClipboard.PasteInto(bareTank, imagedClip);
+        var imagedObject = Conversion.Objects(Conversion.Parse(imagedPasted))[imagedRoot];
+        Check((imagedObject["flags"]!.GetValue<int>() & 4) != 0 && imagedObject["transform"]!["mirrorVuid"]!.GetValue<int>() == -1,
+            "paste preserves the implicit mirror image of a part saved once"); checks++;
+
         // 6. Test Cut / RemoveFrom
         // Cutting Turret Body directly removes the whole turret assembly
         string cutFromBody = BlueprintClipboard.RemoveFrom(synthetic, new[] { 11 });
@@ -156,6 +163,90 @@ public static class ClipboardTests
         checks++;
         Check(cutAddonObjs.ContainsKey(10), "turret was preserved");
         checks++;
+
+        // Selecting a hatch/decal directly attached to a ring must not copy or cut
+        // the entire turret; only the turret body promotes to its assembly.
+        var (singleDecal, decalCount) = BlueprintClipboard.Copy(synthetic, new[] { 13 });
+        Check(decalCount == 1, "ring-mounted decal copies independently of the turret"); checks++;
+        var cutDecal = Conversion.Objects(Conversion.Parse(BlueprintClipboard.RemoveFrom(synthetic, new[] { 13 })));
+        Check(!cutDecal.ContainsKey(13) && cutDecal.ContainsKey(10) && cutDecal.ContainsKey(11) && cutDecal.ContainsKey(12),
+            "cutting a ring-mounted decal preserves its turret assembly"); checks++;
+        Check(BlueprintClipboard.RemoveFrom(synthetic, new[] { 0 }) == synthetic, "hull-only cut leaves its descendants unchanged"); checks++;
+        var hullAndAddon = Conversion.Objects(Conversion.Parse(BlueprintClipboard.RemoveFrom(synthetic, new[] { 0, 20 })));
+        Check(hullAndAddon.ContainsKey(10) && hullAndAddon.ContainsKey(12) && !hullAndAddon.ContainsKey(20),
+            "hull plus add-on selection only cuts the chosen add-on tree"); checks++;
+
+        // Vehicle-wide settings are not all referenced by object *BlueprintVuid.
+        var globals = Conversion.Parse(synthetic);
+        globals["blueprints"]!.AsArray().Add(new JsonObject { ["id"] = 600, ["type"] = "paintJob",
+            ["blueprint"] = new JsonObject { ["name"] = "Primary", ["r"] = 0.7f } });
+        globals["blueprints"]!.AsArray().Add(new JsonObject { ["id"] = 601, ["type"] = "paintJobRegister",
+            ["blueprint"] = new JsonObject { ["paintJobIDs"] = new JsonArray(600) } });
+        globals["meshes"]!.AsArray().Add(new JsonObject { ["vuid"] = 999, ["type"] = "unrelated mesh" });
+        string globalJson = globals.ToJsonString();
+        var globalCut = Conversion.Parse(BlueprintClipboard.RemoveFrom(globalJson, new[] { 10 }));
+        Check(globalCut["blueprints"]!.AsArray().Single(b => Conversion.Id(b!, "id") == 600)!.ToJsonString()
+            == globals["blueprints"]!.AsArray().Single(b => Conversion.Id(b!, "id") == 600)!.ToJsonString(),
+            "cut preserves vehicle paint exactly"); checks++;
+        Check(globalCut["blueprints"]!.AsArray().Any(b => Conversion.Id(b!, "id") == 601)
+            && globalCut["meshes"]!.AsArray().Any(m => Conversion.Id(m!, "vuid") == 999), "cut preserves unrelated global register and mesh"); checks++;
+
+        var linked = Conversion.Parse(synthetic);
+        linked["blueprints"]!.AsArray().Add(new JsonObject { ["id"] = 602, ["type"] = "crewSeat",
+            ["blueprint"] = new JsonObject { ["operatedBehaviours"] = new JsonArray(103, 105), ["unrelatedIndices"] = new JsonArray(103, 105) } });
+        var externalSeat = JsonNode.Parse(Conversion.Objects(linked)[22].ToJsonString())!.AsObject();
+        externalSeat["vuid"] = 30; externalSeat["pvuid"] = 0; externalSeat.Remove("decalBlueprintVuid"); externalSeat["seatBlueprintVuid"] = 602;
+        linked["objects"]!.AsArray().Add(externalSeat);
+        var linkedCut = Conversion.Parse(BlueprintClipboard.RemoveFrom(linked.ToJsonString(), new[] { 12 }));
+        var seatSettings = linkedCut["blueprints"]!.AsArray().Single(b => Conversion.Id(b!, "id") == 602)!["blueprint"]!;
+        Check(seatSettings["operatedBehaviours"]!.ToJsonString() == "[105]" && seatSettings["unrelatedIndices"]!.ToJsonString() == "[103,105]",
+            "cut clears dead gun controls while preserving unrelated integer arrays"); checks++;
+
+        // Cross-blueprint pastes must not bind to unrelated component IDs in the
+        // receiving tank when the referenced drive or gun was not copied.
+        var externalPaste = Conversion.Parse(BlueprintClipboard.PasteInto(bareTank, clipJson).Json);
+        var externalRingBlock = externalPaste["blueprints"]!.AsArray().Single(b => b!["type"]!.GetValue<string>() == "ringBlueprint")!["blueprint"]!;
+        var externalGunBlock = externalPaste["blueprints"]!.AsArray().Single(b => b!["type"]!.GetValue<string>() == "cannonBlueprint")!["blueprint"]!;
+        Check(externalRingBlock["motorVuid"]!.GetValue<int>() == -1 && externalGunBlock["barrelVuids"]!.AsArray().Count == 0,
+            "paste clears links to uncopied components"); checks++;
+
+        // Nested settings need the same remapping as the part's direct settings.
+        var nested = Conversion.Parse(synthetic);
+        nested["blueprints"]![0]!["blueprint"]!["mountConstraintsVuid"] = 603;
+        nested["blueprints"]!.AsArray().Add(new JsonObject { ["id"] = 603, ["type"] = "constraints", ["blueprint"] = new JsonObject { ["max"] = 30 } });
+        var nestedClip = BlueprintClipboard.Copy(nested.ToJsonString(), new[] { 10 }).ClipboardJson;
+        var nestedPaste = Conversion.Parse(BlueprintClipboard.PasteInto(bareTank, nestedClip).Json);
+        int nestedId = nestedPaste["blueprints"]!.AsArray().Single(b => b!["type"]!.GetValue<string>() == "ringBlueprint")!["blueprint"]!["mountConstraintsVuid"]!.GetValue<int>();
+        Check(nestedPaste["blueprints"]!.AsArray().Any(b => Conversion.Id(b!, "id") == nestedId && b!["type"]!.GetValue<string>() == "constraints"),
+            "nested constraint settings are copied and remapped"); checks++;
+
+        // A mantlet's scale sizes its own model, not its child parts. Use its
+        // attachment frame to keep a pasted part in the same world position.
+        var mantletTank = Conversion.Parse(bareTank);
+        var mantlet = JsonNode.Parse(Conversion.Objects(origB)[20].ToJsonString())!.AsObject();
+        mantlet["vuid"] = 40; mantlet["mantlet"] = 41; mantlet.Remove("plateStructure"); mantlet.Remove("structureBlueprintVuid");
+        mantlet["transform"]!["pos"] = new JsonArray(2, 0, 0); mantlet["transform"]!["rot"] = new JsonArray(0, 45, 0, 0);
+        mantlet["transform"]!["scale"] = new JsonArray(2, 3, 4);
+        mantletTank["objects"]!.AsArray().Add(mantlet);
+        var (attached, attachedRoot, _) = BlueprintClipboard.PasteInto(mantletTank.ToJsonString(), clipAddonTree, 40);
+        Check(Conversion.Near(Conversion.WorldMatrices(origObjects)[20], Conversion.WorldMatrices(Conversion.Objects(Conversion.Parse(attached)))[attachedRoot]),
+            "paste onto a scaled rotated mantlet preserves world transform"); checks++;
+
+        var transform = JsonNode.Parse(mantlet["transform"]!.ToJsonString())!.AsObject();
+        string transformBefore = transform.ToJsonString();
+        var shear = Matrix4x4.Identity; shear.M12 = 0.5f;
+        bool rejectedShear = false; try { Conversion.WriteTransform(transform, shear); } catch { rejectedShear = true; }
+        Check(rejectedShear && transform.ToJsonString() == transformBefore, "rejected shear leaves the transform exactly unchanged"); checks++;
+        mantlet["transform"]!["scale"] = new JsonArray(0, 0, 0); mantlet.Remove("mantlet");
+        bool rejectedZero = false; try { BlueprintClipboard.PasteInto(mantletTank.ToJsonString(), clipAddonTree, 40); } catch { rejectedZero = true; }
+        Check(rejectedZero, "zero-scale paste target is rejected without arbitrary identity fallback"); checks++;
+
+        var cyclic = Conversion.Parse(bareTank);
+        var cycleA = JsonNode.Parse(mantlet.ToJsonString())!.AsObject(); cycleA["vuid"] = 40; cycleA["pvuid"] = 50; cycleA["mantlet"] = 41;
+        var cycleB = JsonNode.Parse(mantlet.ToJsonString())!.AsObject(); cycleB["vuid"] = 50; cycleB["pvuid"] = 40; cycleB["mantlet"] = 51;
+        cyclic["objects"]!.AsArray().Add(cycleA); cyclic["objects"]!.AsArray().Add(cycleB);
+        bool rejectedCycle = false; try { Conversion.WorldMatrices(Conversion.Objects(cyclic)); } catch { rejectedCycle = true; }
+        Check(rejectedCycle, "mantlet hierarchy cycle fails cleanly instead of recursing forever"); checks++;
 
         // 7. Test real blueprints if available
         if (realBlueprintFiles != null && realBlueprintFiles.Count > 0)

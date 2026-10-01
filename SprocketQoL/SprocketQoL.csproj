@@ -2,5 +2,6 @@
   <Import Project="..\SprocketMod.props" />
   <PropertyGroup>
     <AssemblyName>SprocketQoL</AssemblyName>
+    <Version>1.8.2</Version>
   </PropertyGroup>
 </Project>

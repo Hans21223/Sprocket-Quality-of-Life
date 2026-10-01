@@ -95,13 +95,15 @@ public static class AddonEdits
         var b = Conversion.Parse(json);
         var blocks = b["blueprints"]!.AsArray();
         var meshes = b["meshes"]!.AsArray();
+        var blocksById = blocks.Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "id"));
+        var meshesById = meshes.Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "vuid"));
         var counts = new Dictionary<int, int>();
         foreach (var (vuid, o) in Conversion.Objects(b))
         {
             var id = o["structureBlueprintVuid"];
-            var block = id == null ? null : blocks.FirstOrDefault(x => x?["id"]?.GetValue<int>() == id.GetValue<int>());
+            var block = id == null ? null : blocksById.GetValueOrDefault(id.GetValue<int>());
             var mesh = block?["blueprint"]?["bodyMeshVuid"];
-            if (mesh != null && MeshOf(meshes, mesh.GetValue<int>())?["mesh"]?["faces"] is JsonArray faces) counts[vuid] = faces.Count;
+            if (mesh != null && meshesById.GetValueOrDefault(mesh.GetValue<int>())?["meshData"]?["mesh"]?["faces"] is JsonArray faces) counts[vuid] = faces.Count;
         }
         return counts;
     }

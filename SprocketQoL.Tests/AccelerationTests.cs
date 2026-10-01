@@ -44,6 +44,15 @@ static class AccelerationTests
         var (_, still, none) = Acceleration.Run(Drive(engine), v => 1e7f, float.MaxValue);
         Check(still == 0 && none == 0, "can't move: stops at once");
 
+        // A wide ratio gap drops the engine below idle, so the gearbox must stay
+        // in first. The old missing braces advanced the gear anyway and stalled.
+        var gapDrive = Drive(engine) with { Ratios = new[] { 6f, 0.2f } };
+        var (_, gapReached, gapShifts) = Acceleration.Run(gapDrive, Resist, float.MaxValue);
+        Check(gapShifts == 0 && gapReached > SpeedAt(upshift, 6), "unusable next gear does not shift below idle");
+        var weakDrive = Drive(Acceleration.RevLimited(r => r < 1400 ? 50 : 2000, 2250, 0.5f)) with { Ratios = new[] { 6f, 3f } };
+        var (_, weakReached, weakShifts) = Acceleration.Run(weakDrive, v => 5000, float.MaxValue);
+        Check(weakShifts == 0 && weakReached > SpeedAt(upshift, 6), "next gear that cannot overcome resistance is rejected");
+
         // A low first gear with real track losses: the game barely expects to lose speed while changing gear, so it
         // shifts up (guessing the real coasting loss, it stayed in first at 5 km/h for ever).
         {

@@ -69,6 +69,7 @@ internal static class Acceleration
                 // loss / final drive², so it barely expects any (with the real loss, low first gears never shifted).
                 float after = Math.Max(0, v - resist(v) / d.Mass * (d.DisengageTime + d.EngageTime) / (d.FinalDrive * d.FinalDrive));
                 if (Rpm(gear + 1, after) > 1.2f * d.IdleRpm && Push(gear + 1, after, 1) > resist(after))
+                {
                     for (float s = 0; s < d.DisengageTime;)
                     {
                         float dt = Step(gear, 1 - s / d.DisengageTime, d.DisengageTime - s);
@@ -84,6 +85,7 @@ internal static class Acceleration
                         s += dt;
                     }
                     continue;
+                }
             }
             if (Accel(gear, 1) <= 1e-3f) break;                                  // it can't go any faster
             Step(gear, 1, 0.02f);

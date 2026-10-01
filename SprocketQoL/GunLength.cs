@@ -13,17 +13,18 @@ namespace SprocketQoL;
 public static class GunLength
 {
     [HarmonyPostfix, HarmonyPatch(typeof(CannonEditor), nameof(CannonEditor.OnGUI))]
-    static void Draw(CannonEditor __instance, IGUILayout layout) => Ui.Guard("Gun length", () =>
+    static void Draw(CannonEditor __instance, IGUILayout layout) => Ui.Inspector("Gun length", layout, () =>
     {
         var gun = __instance.Component?.Blueprint;
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (gun == null || ui == null || gun.Caliber == 0) return;
         int barrel = gun.BarrelLength, round = gun.ShellLength, propellant = gun.PropellantLength;
         Ui.Section(layout, "Gun length");
-        ui.InfoField($"L/{Calibers(gun.BoreLength, gun.Caliber)}   ({gun.BoreLength} mm muzzle to breech face, {gun.Caliber} mm bore)\n" +
-                     $"Barrel {barrel} mm (L/{Calibers(barrel, gun.Caliber)}) + chamber {round} mm\n" +
-                     $"Round {round} mm: propellant {propellant} + shell {round - propellant} (3 calibers)\n" +
-                     "A muzzle brake isn't counted, as for real guns", 4);
+        ui.InfoField($"Total length: {gun.BoreLength:N0} mm (L/{Calibers(gun.BoreLength, gun.Caliber)})\n" +
+                     $"Barrel: {barrel:N0} mm | Chamber: {round:N0} mm\n" +
+                     $"Calibre: {gun.Caliber:N0} mm\n" +
+                     $"Round: {propellant:N0} mm propellant + {round - propellant:N0} mm shell\n" +
+                     "L/ is total length divided by calibre. The muzzle brake is excluded.", 5);
     });
 
     static string Calibers(int lengthMm, int caliberMm) => caliberMm > 0 ? (lengthMm / (float)caliberMm).ToString("0.##") : "0";

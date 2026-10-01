@@ -27,22 +27,35 @@ public static class MeshPlans
     /// false skips the last, for tools asked to leave points unjoined. Faces that were squashed already are left be.
     public static string? Check(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, Rebuild plan, bool gaps = true)
     {
+        if (plan.Why != null) return plan.Why;
+        if (pos.Any(p => !Finite(p)) || faces.Any(f => f.Length < 3 || f.Any(v => v < 0 || v >= pos.Count)))
+            return "the original mesh has invalid points or faces";
+        if (plan.Remove.Any(f => f < 0 || f >= faces.Count) || plan.Add.Any(f => f.Source < 0 || f.Source >= faces.Count))
+            return "the tool references a face that no longer exists";
+        if (plan.Points.Any(p => !Finite(p.P) || p.Blend.Length == 0 || p.Blend.Any(b => b.V < 0 || b.V >= pos.Count || !float.IsFinite(b.W) || b.W < 0) || !float.IsFinite(p.Blend.Sum(b => b.W)) || p.Blend.Sum(b => b.W) <= 0))
+            return "a new point or its thickness weights would be invalid";
         var at = pos.Concat(plan.Points.Select(p => p.P)).ToList();
         foreach (var nf in plan.Add)
         {
             var c = nf.Corners;
             if (c.Length < 3 || c.Distinct().Count() != c.Length || c.Any(i => i < 0 || i >= at.Count)) return "a new face would repeat a corner";
-            var n = HoleRing.Normal(c.Select(i => at[i]).ToList());
-            var s = HoleRing.Normal(faces[nf.Source].Select(i => pos[i]).ToList());
+            var n = Newell(at,c);
+            var s = Newell(pos,faces[nf.Source]);
+            if (!Finite(n) || !Finite(s) || !float.IsFinite(n.Length()) || !float.IsFinite(s.Length())) return "a face's area would be invalid";
             if (s.Length() < 1e-9f) continue; // made from a squashed face: nothing to compare with
             if (n.Length() < 1e-5f * s.Length()) return "a new face would be squashed to next to no area";
             if (Vector3.Dot(n, s) < -0.5f * n.Length() * s.Length()) return "a new face would be turned over";
         }
         var removed = plan.Remove.ToHashSet();
         var after = faces.Where((_, i) => !removed.Contains(i)).Concat(plan.Add.Select(a => a.Corners)).ToList();
-        float tolerance = 1e-5f + 1e-4f * plan.Remove.SelectMany(f => faces[f]).Select(i => pos[i]).DefaultIfEmpty().Max(p => p.Length());
-        if (Length(after, at, u => u > 2) > Length(faces, at, u => u > 2) + tolerance) return "faces would be laid over each other";
-        if (gaps && Length(after, at, u => u == 1) > Length(faces, at, u => u == 1) + tolerance) return "it would leave a crack (faces no longer joined)";
+        // Tolerance depends on the edited shape's size, not its distance from the origin.
+        var touched = plan.Remove.Concat(plan.Add.Select(f => f.Source)).Distinct().SelectMany(f => faces[f]).Distinct().Select(v => pos[v]).ToList();
+        float extent = touched.Count == 0 ? 0 : Vector3.Distance(touched.Aggregate(Vector3.Min), touched.Aggregate(Vector3.Max));
+        float tolerance = 1e-5f + 1e-4f * extent;
+        var beforeLengths = EdgeLengths(faces,at); var afterLengths = EdgeLengths(after,at);
+        if (afterLengths.Crowded > beforeLengths.Crowded + tolerance) return "faces would be laid over each other";
+        if (afterLengths.SameWay > beforeLengths.SameWay + tolerance) return "joined faces would face the same way along a shared edge";
+        if (gaps && afterLengths.Open > beforeLengths.Open + tolerance) return "it would leave a crack (faces no longer joined)";
         return null;
     }
 
@@ -52,8 +65,12 @@ public static class MeshPlans
         foreach (var f in faces)
         {
             if (!f.Any(moved.ContainsKey)) continue;
-            var was = HoleRing.Normal(f.Select(i => pos[i]).ToList());
-            var now = HoleRing.Normal(f.Select(i => moved.TryGetValue(i, out var p) ? p : pos[i]).ToList());
+            if (f.Any(v => v < 0 || v >= pos.Count || !Finite(moved.TryGetValue(v,out var p) ? p : pos[v]))) return "a moved point would be invalid";
+            var was = Newell(pos,f);
+            var origin = moved.TryGetValue(f[0],out var first) ? first : pos[f[0]];
+            var now = Vector3.Zero;
+            for (int k=1;k+1<f.Length;k++) now += Vector3.Cross((moved.TryGetValue(f[k],out var a) ? a : pos[f[k]])-origin,
+                (moved.TryGetValue(f[k+1],out var b) ? b : pos[f[k+1]])-origin);
             if (was.Length() < 1e-8f) continue; // squashed already: not this tool's doing
             if (now.Length() < 1e-8f) return "a face would be squashed to no area";
             if (Vector3.Dot(now, was) <= 0) return "a face would fold over";
@@ -98,16 +115,24 @@ public static class MeshPlans
 
     static IEnumerable<(int, int)> Sides(int[] f) => f.Select((v, k) => v < f[(k + 1) % f.Length] ? (v, f[(k + 1) % f.Length]) : (f[(k + 1) % f.Length], v));
 
-    static Dictionary<(int, int), int> Uses(IEnumerable<int[]> faces)
+    static (double Crowded,double Open,double SameWay) EdgeLengths(IEnumerable<int[]> faces,IReadOnlyList<Vector3> at)
     {
-        var uses = new Dictionary<(int, int), int>();
-        foreach (var f in faces) foreach (var e in Sides(f)) uses[e] = uses.GetValueOrDefault(e) + 1;
-        return uses;
+        var uses=new Dictionary<(int,int),(int Count,int Turn)>();
+        foreach(var f in faces) for(int k=0;k<f.Length;k++)
+        {
+            int a=f[k],b=f[(k+1)%f.Length]; var e=Key(a,b); var old=uses.GetValueOrDefault(e);
+            uses[e]=(old.Count+1,old.Turn+(a<b?1:-1));
+        }
+        double crowded=0,open=0,sameWay=0;
+        foreach(var (edge,use) in uses)
+        {
+            double length=Vector3.Distance(at[edge.Item1],at[edge.Item2]);
+            if(use.Count>2) crowded+=length;
+            if(use.Count==1) open+=length;
+            if(use.Count==2&&use.Turn!=0) sameWay+=length;
+        }
+        return(crowded,open,sameWay);
     }
-
-    /// Total length of the edges used by a number of faces `which` picks (1: open edges; more than 2: crowded ones).
-    static double Length(IEnumerable<int[]> faces, IReadOnlyList<Vector3> at, Func<int, bool> which) =>
-        Uses(faces).Where(u => which(u.Value)).Sum(u => (double)Vector3.Distance(at[u.Key.Item1], at[u.Key.Item2]));
 
     // ---------- Flatten ----------
 
@@ -277,6 +302,8 @@ public static class MeshPlans
     public static Rebuild Inset(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, ICollection<int> selected, float width)
     {
         if (selected.Count == 0) return Rebuild.Fail("select faces first");
+        if (!float.IsFinite(width) || width <= 0) return Rebuild.Fail("width must be positive");
+        if (selected.Any(f => f < 0 || f >= faces.Count)) return Rebuild.Fail("select faces on the current mesh");
         var uses = new Dictionary<(int, int), int>();
         foreach (int f in selected)
             for (int k = 0; k < faces[f].Length; k++) uses[Key(faces[f][k], faces[f][(k + 1) % faces[f].Length])] = uses.GetValueOrDefault(Key(faces[f][k], faces[f][(k + 1) % faces[f].Length])) + 1;
@@ -339,8 +366,11 @@ public static class MeshPlans
         if (!float.IsFinite(width) || width <= 0) return Rebuild.Fail("width must be positive");
         if (segments < 1 || segments > 16) return Rebuild.Fail("use 1 to 16 segments");
         var edgeFaces = EdgeFaces(faces);
-        var sel = edges.Select(e => Key(e.A, e.B)).Where(e => edgeFaces.TryGetValue(e, out var fs) && fs.Count == 2).ToHashSet();
+        var sel = edges.Select(e => Key(e.A, e.B)).ToHashSet();
         if (sel.Count == 0) return Rebuild.Fail("select edges with a face on each side");
+        if (sel.Any(e => !edgeFaces.TryGetValue(e,out var fs) || fs.Count != 2)) return Rebuild.Fail("each selected edge needs a face on each side");
+        if (sel.Any(e => e.Item1 < 0 || e.Item2 >= pos.Count || !Finite(pos[e.Item1]) || !Finite(pos[e.Item2]) || Vector3.DistanceSquared(pos[e.Item1],pos[e.Item2]) < 1e-16f))
+            return Rebuild.Fail("a selected edge is invalid or too short");
         var pointFaces = new Dictionary<int, List<int>>();
         for (int f = 0; f < faces.Count; f++)
             foreach (int v in faces[f])
@@ -363,7 +393,12 @@ public static class MeshPlans
         {
             var around = pointFaces[u];
             var parent = around.ToDictionary(f => f, f => f);
-            int Find(int x) => parent[x] == x ? x : parent[x] = Find(parent[x]);
+            int Find(int x)
+            {
+                int root=x; while(parent[root]!=root) root=parent[root];
+                while(parent[x]!=x) { int next=parent[x]; parent[x]=root; x=next; }
+                return root;
+            }
             foreach (int f in around)
                 foreach (int w in Beside(faces[f], u))
                     if (!sel.Contains(Key(u, w)))
@@ -966,6 +1001,7 @@ public static class MeshPlans
     {
         var merged = points.Append(keep).ToHashSet();
         if (merged.Count < 2) return Rebuild.Fail("select two or more points to merge");
+        if (merged.Any(v => v < 0 || v >= pos.Count)) return Rebuild.Fail("select points on the current mesh");
         var remove = new List<int>();
         var add = new List<NewFace>();
         for (int f = 0; f < faces.Count; f++)
@@ -1006,9 +1042,13 @@ public static class MeshPlans
     static Vector3 Newell(IReadOnlyList<Vector3> pos, IReadOnlyList<int> loop)
     {
         var n = Vector3.Zero;
-        for (int k = 0; k < loop.Count; k++) n += Vector3.Cross(pos[loop[k]], pos[loop[(k + 1) % loop.Count]]);
+        if (loop.Count < 3) return n;
+        var origin = pos[loop[0]];
+        for (int k = 1; k+1 < loop.Count; k++) n += Vector3.Cross(pos[loop[k]]-origin, pos[loop[k+1]]-origin);
         return n;
     }
+
+    static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
 
     static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
 }

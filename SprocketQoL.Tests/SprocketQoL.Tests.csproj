@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\SprocketQoL\UiPresentation.cs" Link="UiPresentation.cs" />
+    <Compile Include="..\SprocketQoL\PartPaintPersistence.cs" Link="PartPaintPersistence.cs" />
     <Compile Include="..\SprocketQoL\Conversion.cs" Link="Conversion.cs" />
     <Compile Include="..\SprocketQoL\AddonEdits.cs" Link="AddonEdits.cs" />
     <Compile Include="..\SprocketQoL\HoleRing.cs" Link="HoleRing.cs" />
@@ -15,6 +17,7 @@
     <Compile Include="..\SprocketQoL\FaceMerge.cs" Link="FaceMerge.cs" />
     <Compile Include="..\SprocketQoL\MeshPlans.cs" Link="MeshPlans.cs" />
     <Compile Include="..\SprocketQoL\EdgeSubdivision.cs" Link="EdgeSubdivision.cs" />
+    <Compile Include="..\SprocketQoL\EdgeFillet.cs" Link="EdgeFillet.cs" />
     <Compile Include="..\SprocketQoL\SplitFaceSelection.cs" Link="SplitFaceSelection.cs" />
     <Compile Include="..\SprocketQoL\Drawing.cs" Link="Drawing.cs" />
     <Compile Include="..\SprocketQoL\DrawingOptions.cs" Link="DrawingOptions.cs" />

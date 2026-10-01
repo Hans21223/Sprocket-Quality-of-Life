@@ -3,6 +3,15 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.8.2** adds constant-radius **Fillet**, preserves individual add-on paint when designs are
+reloaded, and fixes stale turret-motor callbacks and crossed mirrored drives. **COM** now controls the blue part
+mass diamonds, with a separate **Part mass markers** setting. Editor tools have clearer names, grouped foldouts,
+tooltips and help that fits the panel width.
+
+Mesh edits and clipboard operations validate geometry and preserve surrounding edge settings, paint and mirror
+images. Photo and drawing exports restore temporary state, prevent overlapping captures and write PNGs safely.
+Acceleration predictions, paint lookups and renderer scans avoid repeated work. See [the 1.8.2 change list](CHANGELOG.md).
+
 ## What you need
 
 1. **.NET 8 SDK**: free from Microsoft, <https://dotnet.microsoft.com/download>.
@@ -131,6 +140,11 @@ alongside it through the loader's MLLoader. In the vehicle editor:
     (2–16, default 4). Uses a curved profile rather than dividing a flat chamfer; neighbouring faces share its
     new vertices and multi-edge corners are closed. New round strips start without sharp/connection flags
     inherited from the removed edges. Bevel (V) still makes its original single chamfer.
+  - **Fillet:** in Edges mode, rounds selected edges with a circular curve tangent to both adjoining faces.
+    **Fillet radius (mm)** sets the actual curve radius and **Fillet segments** (2–16, default 4) sets its
+    number of strips. Uses Mirror and one undo operation, preserves surrounding edge settings and source-corner
+    thickness, and rejects a radius that cannot fit instead of shrinking it. Adjacent faces must be flat;
+    unsupported junctions are rejected. Smooth Edge keeps its separate cutback-width controls.
   - **Split selected faces:** in Faces mode, select the face(s) to split. **Split sections** (2–16, default 2)
     makes equal straight strips; **Split direction: A/B** chooses the pair of sides on a quad. Cuts stop at
     selected-face boundaries. Neighbours remain single faces with matching border points, without extra lines

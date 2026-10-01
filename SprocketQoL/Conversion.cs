@@ -99,8 +99,9 @@ public static class Conversion
     }
 
     /// A part's own numbers (its components: "cannon", "turretRing", ...), keyed by name; not links to other parts or settings.
-    internal static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && char.IsLetter(kv.Key[0])
-        && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList();
+    internal static bool BlueprintKey(string key) => key.EndsWith("BlueprintVuid") || key.EndsWith("ConstraintsVuid") || key == "powertrainSteeringControls";
+    internal static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && kv.Key.Length > 0 && char.IsLetter(kv.Key[0])
+        && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !BlueprintKey(kv.Key) && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList();
 
     // Ring settings can be shared between mirror twins, but the motor is a component reference, not a setting.
     // Clone before remapping so changing the twin never redirects the original ring as well.
@@ -170,8 +171,13 @@ public static class Conversion
         List<int> Below(int top)
         {
             var found = new List<int>();
+            var seen = new HashSet<int> { top };
             for (var queue = new Queue<int>(new[] { top }); queue.Count > 0;)
-                foreach (int c in children.GetValueOrDefault(queue.Dequeue()) ?? new()) { found.Add(c); queue.Enqueue(c); }
+                foreach (int c in children.GetValueOrDefault(queue.Dequeue()) ?? new())
+                {
+                    if (!seen.Add(c)) throw new Exception("Cyclic part hierarchy.");
+                    found.Add(c); queue.Enqueue(c);
+                }
             return found;
         }
         int Flags(JsonObject o) => o["flags"]?.GetValue<int>() ?? 0;
@@ -187,6 +193,8 @@ public static class Conversion
                 if (TwinOf(objects[v]) == null && (Flags(objects[v]) & 4) == 0) { objects[v]["flags"] = Flags(objects[v]) | 4; marked++; }
             return (b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), marked, "marked mirrored");
         }
+        if (GuidOf(objects[twinRing]) != RingGuid || TwinOf(objects[twinRing]) != ringId)
+            throw new Exception("This turret's mirror link is not a reciprocal turret pair; original unchanged.");
 
         // New numbers for each copy and its components; the ring's map to the twin ring's.
         int next = objects.Values.SelectMany(o => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && kv.Key is not ("pvuid" or "flags"))
@@ -228,6 +236,8 @@ public static class Conversion
             foreach (var key in ComponentKeys(o)) d[key] = map[Id(o, key)];
             RemapRingMotor(d, blocks, map, ref nextBlock);
             if (o["structureID"] is JsonValue s && map.TryGetValue(s.GetValue<int>(), out int body)) d["structureID"] = body;
+            if (o["compartmentBodyID"]?["structureVuid"] is JsonValue nestedBody && map.TryGetValue(nestedBody.GetValue<int>(), out int copiedBody))
+                d["compartmentBodyID"]!["structureVuid"] = copiedBody;
             // Mirrored across the vehicle's centre: seen from its (mirrored) parent, x the other way and the turn mirrored.
             var t = d["transform"]!.AsObject();
             var pos = t["pos"]!.AsArray();
@@ -277,7 +287,11 @@ public static class Conversion
         var all = Objects(b);
         foreach (int v in copy)
             if (!Near(Shape(all[v]) * flip, Shape(all[map[v]]))) throw new Exception($"The twin turret isn't a mirror image of this one (part {v}); nothing changed.");
-        return (b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), copy.Count, "copied onto the twin ring");
+        // An existing partial twin may already have both drives, with either ring still
+        // connected to the other one's motor. Complete their ownership repair as well as
+        // remapping the newly copied parts; intentional external connections stay untouched.
+        var drives = RepairMirroredTurretDrives(b.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        return (drives.Json, copy.Count, drives.Repaired == 0 ? "copied onto the twin ring" : "copied onto the twin ring; drive connections repaired");
     }
 
     public static Matrix4x4 Local(JsonNode transform, bool scaled = true)
@@ -287,7 +301,7 @@ public static class Conversion
         // Unity Euler order: Z, then X, then Y. System.Numerics uses row vectors.
         return Matrix4x4.CreateScale(scaled ? Vec("scale") : Vector3.One) * Matrix4x4.CreateRotationZ(r.Z) * Matrix4x4.CreateRotationX(r.X) * Matrix4x4.CreateRotationY(r.Y) * Matrix4x4.CreateTranslation(Vec("pos"));
     }
-    public static Dictionary<int, Matrix4x4> WorldMatrices(Dictionary<int, JsonObject> objects)
+    public static Dictionary<int, Matrix4x4> WorldMatrices(Dictionary<int, JsonObject> objects, bool attachmentFrames = false)
     {
         var cache = new Dictionary<int, Matrix4x4>();
         var frames = new Dictionary<int, Matrix4x4>();
@@ -307,11 +321,15 @@ public static class Conversion
         {
             if (frames.TryGetValue(id, out var ready)) return ready;
             var o = objects.TryGetValue(id, out var found) ? found : throw new Exception($"Missing parent part {id}.");
+            if (!o.ContainsKey("mantlet")) return frames[id] = Get(id);
+            if (!visiting.Add(id)) throw new Exception("Cyclic blueprint hierarchy.");
             int parent = Id(o, "pvuid");
-            return frames[id] = o.ContainsKey("mantlet") ? Local(o["transform"]!, scaled: false) * (parent < 0 ? Matrix4x4.Identity : Frame(parent)) : Get(id);
+            var frame = Local(o["transform"]!, scaled: false) * (parent < 0 ? Matrix4x4.Identity : Frame(parent));
+            visiting.Remove(id);
+            return frames[id] = frame;
         }
-        foreach (int id in objects.Keys) Get(id);
-        return cache;
+        foreach (int id in objects.Keys) { if (attachmentFrames) Frame(id); else Get(id); }
+        return attachmentFrames ? frames : cache;
     }
     internal static void WriteTransform(JsonObject transform, Matrix4x4 matrix)
     {
@@ -324,8 +342,13 @@ public static class Conversion
         var oldRot = transform["rot"]!.AsArray();
         var newRot = Array(x * 180/MathF.PI, y * 180/MathF.PI, z * 180/MathF.PI);
         for (int i=3;i<oldRot.Count;i++) newRot.Add(JsonNode.Parse(oldRot[i]!.ToJsonString()));
-        transform["pos"] = Array(p.X,p.Y,p.Z); transform["rot"] = newRot; transform["scale"] = Array(s.X,s.Y,s.Z);
-        if (!Near(matrix, Local(transform))) throw new Exception("Non-uniform scale would introduce shear; original unchanged.");
+        var candidate = new JsonObject { ["pos"] = Array(p.X,p.Y,p.Z), ["rot"] = newRot, ["scale"] = Array(s.X,s.Y,s.Z) };
+        if (!Near(matrix, Local(candidate))) throw new Exception("Non-uniform scale would introduce shear; original unchanged.");
+        // Validate first: callers may catch a rejected transform and keep the old one.
+        foreach (string key in new[] { "pos", "rot", "scale" })
+        {
+            var value = candidate[key]; candidate.Remove(key); transform[key] = value;
+        }
     }
     public static bool Near(Matrix4x4 a, Matrix4x4 b)
     {

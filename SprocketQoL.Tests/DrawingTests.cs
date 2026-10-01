@@ -33,6 +33,10 @@ static class DrawingTests
         var cube = Drawing.Weld(cp, ct);
         Check(cube.P.Length == 8 && cube.T.Length == 36, $"cube welds to 8 corners, 12 triangles (got {cube.P.Length}, {cube.T.Length / 3})");
         Check(cube.E.Count == 18 && cube.E.Count(e => e.Crease) == 12, $"cube: 18 edges, 12 of them creases (got {cube.E.Count}, {cube.E.Count(e => e.Crease)})");
+        var corrupt = Drawing.Weld(new[]{Vector3.Zero,Vector3.UnitX,Vector3.UnitY,new Vector3(float.NaN,0,0)},
+            new[]{0,1,2,-1,1,2,0,1,999,0,1,3,0,1});
+        Check(corrupt.T.SequenceEqual(new[]{0,1,2}) && corrupt.P.Length==3 && corrupt.N.Length==1,
+            "corrupt imported triangles and NaN vertices are omitted without losing valid geometry");
 
         // From above, 100 px a metre: the cube's square outline, nothing inside; a small box under it hidden.
         var (bp, bt) = Box(new Vector3(0.2f, -2, 0.2f), 0.2f);
@@ -142,6 +146,9 @@ static class DrawingTests
               $"words: one line of inked letters ({one.W} x {one.H})");
         var wrapped = Drawing.Words(string.Join(" ", Enumerable.Repeat("armour", 30)), 30, false, 300);
         Check(wrapped.W <= 300 && wrapped.H > 4 * 30, $"words: long text wraps within the width ({wrapped.W} x {wrapped.H})");
+        var unbroken = Drawing.Words(new string('W',100),30,false,80);
+        Check(unbroken.W <= 80 && unbroken.H > 60, "one long name wraps inside its column instead of overlapping or dropping characters");
+        Check(Drawing.Words("Turret", 12, false, 0).W == 1, "collapsed text space remains a valid bounded bitmap");
         Check(Drawing.Words("รถถังหนัก", 30, false, 1000).Ink.Max() > 200 && Drawing.Words("", 30, false, 100).W == 0, "words: Thai letters draw; empty text is nothing");
         var page = Enumerable.Repeat((byte)255, 400 * 100 * 3).ToArray();
         Drawing.Stamp(page, 400, 100, 10, 90, one, 0);
@@ -152,6 +159,9 @@ static class DrawingTests
         var rgb = Enumerable.Range(0, 3 * 2 * 3).Select(i => (byte)(i * 10)).ToArray();
         var file = Path.Combine(Path.GetTempPath(), "qol-drawing-test.png");
         Drawing.SavePng(file, 3, 2, rgb);
+        string nextPhoto=Drawing.UnusedPath(file);
+        Check(nextPhoto!=file && nextPhoto.EndsWith(" (2).png",StringComparison.Ordinal), "rapid photos keep a unique path instead of replacing the previous shot");
+        Check(Drawing.UnusedPath(nextPhoto)==nextPhoto,"unused photo names stay unchanged");
         var bytes = File.ReadAllBytes(file);
         Check(bytes.Take(8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }), "PNG signature");
         int ihdr = FindChunk(bytes, "IHDR", out int headerLength);
@@ -166,6 +176,20 @@ static class DrawingTests
         Check(rows[1] == rgb[9] && rows[11] == rgb[0], "PNG rows go from the top (the picture's bottom row last)");
         Check(rows.Skip(1).Take(9).SequenceEqual(rgb.Skip(9)) && rows.Skip(11).SequenceEqual(rgb.Take(9)),
               "opaque photo encoding preserves every RGB value, including black, without blending or premultiplication");
+        foreach (var (width,height,data) in new[] { (0,2,rgb),(-1,2,rgb),(3,2,new byte[1]),(int.MaxValue,int.MaxValue,rgb) })
+        {
+            bool rejected = false;
+            try { Drawing.SavePng(file,width,height,data); } catch (ArgumentException) { rejected = true; }
+            Check(rejected && File.ReadAllBytes(file).SequenceEqual(bytes), "invalid PNG input preserves the previous successful export");
+        }
+        bool blocked = false;
+        using (var locked = new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.Read))
+            try { Drawing.SavePng(file,3,2,rgb); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { blocked = true; }
+        Check(blocked && File.ReadAllBytes(file).SequenceEqual(bytes), "failed PNG replacement preserves the previous export");
+        Check(!Directory.GetFiles(Path.GetDirectoryName(file)!,Path.GetFileName(file)+".*.tmp").Any(), "failed save removes its temporary PNG");
+        var changed = (byte[])rgb.Clone(); changed[0] = 231;
+        Drawing.SavePng(file,3,2,changed);
+        Check(!File.ReadAllBytes(file).SequenceEqual(bytes), "completed PNG atomically replaces the previous export");
         File.Delete(file);
         Console.WriteLine("DRAWING_TESTS_OK: cube edges, hidden box, clip, steep walls, outline, clean part contours, suppressed seams/facets/noise, PNG");
     }

@@ -48,6 +48,10 @@ public static class FaceMerge
     /// `loose`: edges no face uses (their points stay).
     public static List<Group> Plan(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, ISet<int> selected, ISet<(int, int)> loose, SidePoints sides)
     {
+        if (selected.Count == 0) return new();
+        if (selected.Any(f => f < 0 || f >= faces.Count) || pos.Any(p => !float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z)) ||
+            faces.Any(f => f.Length < 3 || f.Distinct().Count() != f.Length || f.Any(v => v < 0 || v >= pos.Count)))
+            return new() { new Group(selected.ToList(),new(),new(),new(),new(),"the selection or mesh contains invalid points or faces") };
         var chosen = new HashSet<int>(selected);
         var lines = new HashSet<(int, int)>(); // edges of a line being taken out: faces across them may join
         var edgeFaces = new Dictionary<(int, int), List<int>>();
@@ -112,7 +116,12 @@ public static class FaceMerge
                                       Vector3.Dot(normals[u[0].Face], normals[u[1].Face]) >= SameWay &&
                                       (selected.Contains(u[0].Face) && selected.Contains(u[1].Face) || lines.Contains(key));
         var parent = chosen.ToDictionary(f => f, f => f);
-        int Find(int x) => parent[x] == x ? x : parent[x] = Find(parent[x]);
+        int Find(int x)
+        {
+            int root=x; while(parent[root]!=root) root=parent[root];
+            while(parent[x]!=x) { int next=parent[x]; parent[x]=root; x=next; }
+            return root;
+        }
         foreach (var key in uses.Keys.Where(Inner))
             parent[Find(uses[key][0].Face)] = Find(uses[key][1].Face);
         var patches = chosen.OrderBy(f => f).GroupBy(Find).Select(g => Outline(pos, faces, g.ToList(), Inner)).ToList();
@@ -192,7 +201,6 @@ public static class FaceMerge
     /// Takes out outline points that sit on a straight line in every patch outline they're on, and that nothing kept
     /// uses (or, `runPast`, even if something does: then the point stays for it), from all those outlines at once,
     /// so patches sharing a side stay joined.
-    // ponytail: finds a point's outlines by scanning them all, O(outline points²); index them if selections get huge.
     static void RemoveStraight(IReadOnlyList<Vector3> pos, List<Patch> live, HashSet<int> keep, bool runPast)
     {
         foreach (var p in live)
@@ -203,6 +211,12 @@ public static class FaceMerge
             p.Joined = new();
         }
         var loops = live.SelectMany(p => p.Loops.Select(l => (Patch: p, Loop: l))).ToList();
+        var outlinesAt = new Dictionary<int,List<(Patch Patch,List<int> Loop)>>();
+        foreach(var item in loops) foreach(int v in item.Loop)
+        {
+            if(!outlinesAt.TryGetValue(v,out var at)) outlinesAt[v]=at=new();
+            at.Add(item);
+        }
         for (bool changed = true; changed;)
         {
             changed = false;
@@ -210,7 +224,7 @@ public static class FaceMerge
                 for (int k = 0; k < loop.Count; k++)
                 {
                     int v = loop[k];
-                    var on = loops.Where(x => x.Loop.Contains(v)).ToList();
+                    var on = outlinesAt[v];
                     if (keep.Contains(v) && !runPast || on.Any(x => x.Loop.Count <= 3 || !Straight(pos, x.Loop, x.Loop.IndexOf(v)))) continue;
                     foreach (var (p, l) in on)
                     {
@@ -222,6 +236,7 @@ public static class FaceMerge
                         (keep.Contains(v) ? p.LeftOn : p.Removed).Add(v);
                         l.RemoveAt(at);
                     }
+                    outlinesAt.Remove(v);
                     k = -1; // this loop changed under us: look again from the start
                     changed = true;
                 }
@@ -240,7 +255,9 @@ public static class FaceMerge
     static Vector3 Newell(IReadOnlyList<Vector3> pos, IReadOnlyList<int> loop)
     {
         var n = Vector3.Zero;
-        for (int k = 0; k < loop.Count; k++) n += Vector3.Cross(pos[loop[k]], pos[loop[(k + 1) % loop.Count]]);
+        if(loop.Count<3) return n;
+        var origin=pos[loop[0]];
+        for (int k = 1; k+1 < loop.Count; k++) n += Vector3.Cross(pos[loop[k]]-origin, pos[loop[k+1]]-origin);
         return n;
     }
 

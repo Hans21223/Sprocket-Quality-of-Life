@@ -1,83 +1,32 @@
-Quality of Life - editor tools for Sprocket 0.2.55.5
+Quality of Life 1.8.2 - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
-Version 1.8.1:
-- Turret inspector foldout cleanup: QoL sections close layout scopes before the next native editor draws,
-  ensuring turret basket controls remain visible and functional.
-- Smooth Edge & edge splitting: curved bevel profiles, multi-edge splitting, and straight quad cuts.
-- Face splitting: split selected faces into straight strips with direction selection and Select between splits.
-- Blueprint and Part clipboard: copy and paste parts and structures.
-- Slider fixes & Boolean cut rectangle box: smooth engine/transmission sliders and clean rectangular cut boxes.
+NEW IN 1.8.2
+- Fillet: true constant-radius edge rounding, tangent to both adjoining faces; Mirror and one Ctrl+Z apply.
+- Individual add-on paint presets and assignments survive saved-design reloads, including returning to vehicle paint.
+- Removed turret rings release their motor callbacks; mirrored drive repair and nested copying retain separate links.
+- COM hides both vehicle and part mass markers. Part mass markers can also be controlled separately.
+- Clearer tool names, grouped foldouts, selection tooltips, width-aware help and a paged shortcut panel.
+- Mesh and clipboard validation preserve surrounding edge flags, corner thickness, paint and mirror images.
+- F8/F9 captures cannot overlap; temporary render state restores on failure and PNG replacement is validated.
+- Cached acceleration, paint and renderer work; gear predictions only shift when the next gear can pull.
+Generated/Standard mode uses the original game controls.
 
-Earlier build 1.8.0.10: face-only splitting and Select between splits.
-In Faces mode, select the face(s), set Split sections and direction A/B, then Split selected faces.
-Cuts stop at the selected face. Neighbours stay undivided with matching border points to keep the mesh joined.
-Select between splits selects all faces created inside the last split, excluding neighbours.
-Mirror still applies; turn it off to affect only one side. Undo a previous split before replacing it.
+FILLET
+In Edges mode, select edges with two flat adjoining faces on a hand-made structure.
+Set Fillet radius (mm) and Fillet segments (2-16, default 4), then click Fillet.
+A radius that cannot fit and unsupported junctions are rejected without changing the shape.
+Smooth Edge remains available with its separate cutback-width controls.
 
-Earlier build 1.8.0.9: Split selected edges now makes straight cuts.
-Cuts continue through opposite edges of adjoining quads. Multiple directions form a clean quad grid;
-triangles receive an even triangular grid instead of a fan. Shared points and edge settings are retained.
-Undo any split made by the old tool before applying the corrected split.
+SMOOTH EDGE AND SPLITTING
+Smooth Edge uses Smooth width (mm) and Smooth segments to create a curved bevel.
+Split selected edges makes straight cuts through adjoining quads.
+In Faces mode, Split selected faces makes straight strips only on selected faces; choose direction A/B.
+Select between splits selects the new faces inside the last split, excluding neighbours.
+These tools follow Mirror and use normal Undo.
 
-Earlier build 1.8.0.8: Smooth Edge and multi-edge splitting.
-In a hand-made structure's Mesh tools, select edges, then:
-- Smooth Edge: set Smooth width (mm) and Smooth segments (2-16, default 4) for a curved bevel.
-  New round strips start with clean flags; surrounding edges keep their own settings. Bevel (V) is unchanged.
-- Split selected edges: set Split sections (2-16, default 2) to split every selected face edge evenly.
-  Shared faces use the same new points, and split sides retain their original edge settings.
-Both tools follow Mirror and undo in one Ctrl+Z. Invalid geometry is rejected before editing.
-
-Earlier build 1.8.0.7: engine/transmission slider drag fix & Boolean cut rectangle box.
-Sliders in the Engine and Transmission panels update smoothly while dragging without locking up.
-Boolean cuts include a Rectangle box option to enclose cuts in a clean rectangular box, pairing
-triangles into quads and eliminating starburst fan lines across the armor plate.
-
-Local build 1.8.0.6: fixed nested gun-mount annotations.
-Each gun belongs to its closest trunnions. Disabling an outer gun no longer borrows a nested turret's
-larger barrel and draws the outer gun's angles on it. Existing per-gun selections are retained.
-
-Earlier build 1.8.0.5: per-gun movement annotations.
-Select a cannon, open Drawing sheet (F9), and turn off This gun's limits to hide only its movement-limit
-lines and angle labels. The gun, decals, weight and weapon specifications stay in the drawings.
-Applies to elevation, gun traverse and turret rotation on all F9 exports; their global toggles still apply.
-Shared mounts use their largest enabled gun. Disable every gun on a shared mount to hide all of its annotations.
-Choices are saved per design name and gun ID. Renaming starts a separate selection; same-name copies with
-the same gun IDs share choices. This setting does not edit the tank blueprint.
-
-Earlier build 1.8.0.4: optional square background grid for blue blueprints.
-Drawing sheet (F9): enable Blue blueprint and Blueprint grid; adjust Grid strength (%), default 20.
-Quarter-metre squares at drawing scale, with a stronger line every metre. Text and vehicle lines stay above it.
-The grid is off by default and does not affect white, colour or see-through exports.
-
-Local build 1.8.0.3: Drawing sheet (F9) has its own foldout on structure, turret-ring and cannon panels.
-Short labels keep the controls readable; hover for details. Existing drawing settings are retained.
-New Turret rotation toggle: uses the traverse motor's Min/Max angles around the turret ring.
-Asymmetric limits show the actual allowed arc; full rotation shows one 360-degree circle; locked turrets show none.
-Gun elevation and Gun traverse remain separate options for the gun's own laying drive.
-
-Earlier build 1.8.0.2: F9 drawing options (now in Drawing sheet):
-- Wireframe intensity (%): geometry lines from 0 to 100, without fading paint, dimensions or text.
-- Elevation / depression: dashed gun limits in the side view, over the intact vehicle.
-- Gun traverse: separate top-view left/right laying-drive limits, useful for casemates.
-  Movement uses the configured laying-drive limits and main barrel on each mount. Unreadable barrels are skipped.
-- Blue blueprint: an extra white-on-blue (blueprint).png alongside the normal sheets.
-- Vehicle weight in tonnes beside the name in the same bold header row.
-All options are remembered. Gun movement and blue style are off by default.
-
-Local build 1.8.0.1: mirrored turret rings connect to their own traverse motors, including nested turrets.
-Existing affected designs: select a turret ring or traverse motor, open Mirrored turret drives, and press
-Fix mirrored turret drives. Reconnects crossed/shared drives to their own attached turret; leaves ambiguous
-motors and unrelated external connections alone. Loads an unsaved result with a backup; Restore undoes it.
-Includes the upstream 1.8.0 updates and earlier local fixes below.
-
-Local build 1.7.9.9: bevel preserves settings on recreated surrounding edges and starts new
-chamfer edges with clean flags. Existing edges keep their settings. Includes the earlier fixes below.
-
-Local build 1.7.9.8: orthographic gizmo picking reaches beyond the game's fixed 100 m limit,
-so the displayed rotation rings remain clickable with the pulled-back camera.
-D selects rotation rings; R rotates directly (default bindings, shown in the hotkeys box).
-Includes the previous clean drawing outlines, decal restoration and opaque F8 photo fixes.
+Built and tested with focused offline regression suites. Native placement, Undo, paint appearance and UI rendering
+still need in-game testing. Previously lost paint cannot be restored from a save that no longer contains it.
 
 Adds new sections to the vehicle editor's own panels. Every section folds away (click its header) and stays
 folded.

@@ -27,6 +27,12 @@ public static class PartClipboard
 
         var editor = DesignEditor.Instance;
         if (editor == null || !editor.IsReady || editor.IsBusy) return;
+        if (PhotoShot.Capturing || DrawingSheet.Capturing)
+        {
+            if (keys.cKey.wasPressedThisFrame || keys.xKey.wasPressedThisFrame || keys.vKey.wasPressedThisFrame) editor.CaptureBlocked();
+            return;
+        }
+        if (editor.Core?.Editor?.OperationInProgress == true) return;
 
         EnsureInit();
 
@@ -48,7 +54,7 @@ public static class PartClipboard
     /// - If a Turret Body is selected, includes the Turret Ring so all attached decals, addons, and motor are included.
     /// - If a Turret Ring is selected, includes its Turret Body.
     /// - Recursively traverses live Unity VehicleTransform.Children to include any attached decals, addons, etc.
-    static List<int> CollectTargetAndAttached(DesignEditor editor)
+    static List<int> CollectTargetAndAttached(DesignEditor editor, bool cutting = false)
     {
         var selected = editor.SelectedParts();
         if (selected.Count == 0 && Hotkeys.Current?.Component?.VehicleObject is { } activeObj)
@@ -58,6 +64,10 @@ public static class PartClipboard
 
         var byId = new Dictionary<int, VehicleObject>();
         foreach (var o in editor.AllParts()) byId[(int)o.VUID] = o;
+        // Reject the hull before traversing it. Removing it after traversal would
+        // turn Ctrl+X on the hull into deletion of every attached part.
+        if (cutting) selected.RemoveAll(v => byId.TryGetValue(v, out var part)
+            && part.GUID == Conversion.CompartmentGuid && part.GetComponent<VehicleTransform>()?.Parent == null);
 
         var all = new HashSet<int>(selected);
 
@@ -67,7 +77,7 @@ public static class PartClipboard
         {
             if (!byId.TryGetValue(v, out var vo)) continue;
             var parentVo = vo.GetComponent<VehicleTransform>()?.Parent?.VehicleObject;
-            if (parentVo != null && parentVo.GUID == Conversion.RingGuid)
+            if (vo.GUID == Conversion.CompartmentGuid && parentVo != null && parentVo.GUID == Conversion.RingGuid)
                 extra.Add((int)parentVo.VUID);
         }
         foreach (int e in extra) all.Add(e);
@@ -101,7 +111,7 @@ public static class PartClipboard
 
         if (selected.Count == 0)
         {
-            editor.Say("No parts selected to copy.", 3);
+            editor.Say("Copy: select a part first. Its attached parts are copied too.", 4);
             return;
         }
 
@@ -115,7 +125,7 @@ public static class PartClipboard
                 return;
             }
             BlueprintClipboard.SetClipboardJson(clipJson);
-            editor.Say($"Copied {count} part{(count == 1 ? "" : "s")} to clipboard.", 3);
+            editor.Say($"Copied {count} part{(count == 1 ? "" : "s")}. Select a destination part, then Ctrl+V to paste.", 4);
             Plugin.ModLog.LogInfo($"Clipboard: copied {count} parts to clipboard");
         }
         catch (Exception ex)
@@ -127,11 +137,11 @@ public static class PartClipboard
 
     static void DoCut(DesignEditor editor)
     {
-        var selected = CollectTargetAndAttached(editor);
+        var selected = CollectTargetAndAttached(editor, cutting: true);
 
         if (selected.Count == 0)
         {
-            editor.Say("No parts selected to cut.", 3);
+            editor.Say("Cut: select a removable part first. The main hull cannot be cut.", 4);
             return;
         }
 
@@ -196,7 +206,7 @@ public static class PartClipboard
         string? clipJson = BlueprintClipboard.GetClipboardJson();
         if (string.IsNullOrEmpty(clipJson))
         {
-            editor.Say("Clipboard is empty.", 3);
+            editor.Say("Nothing to paste. Select parts and press Ctrl+C first.", 4);
             return;
         }
 

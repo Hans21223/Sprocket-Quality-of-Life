@@ -80,21 +80,19 @@ public static class BlueprintClipboard
 
         // Connect Turret Bodies <-> Turret Rings
         var rings = objects.Values.Where(o => Conversion.GuidOf(o) == Conversion.RingGuid).ToList();
+        var ringsByBody = rings.GroupBy(r => r["structureID"]?.GetValue<int>()
+            ?? r["compartmentBodyID"]?["structureVuid"]?.GetValue<int>() ?? -1)
+            .ToDictionary(g => g.Key, g => g.Select(r => Conversion.Id(r, "vuid")).ToArray());
         var extra = new List<int>();
         foreach (int v in all)
         {
             var o = objects[v];
             int p = Conversion.Id(o, "pvuid");
-            if (p >= 0 && objects.TryGetValue(p, out var parent) && Conversion.GuidOf(parent) == Conversion.RingGuid)
-                extra.Add(p);
-
-            foreach (var r in rings)
-            {
-                int bodyId = r["structureID"]?.GetValue<int>()
-                    ?? r["compartmentBodyID"]?["structureVuid"]?.GetValue<int>() ?? -1;
-                if (bodyId == v) extra.Add(Conversion.Id(r, "vuid"));
-                if (Conversion.Id(r, "vuid") == v && bodyId >= 0 && objects.ContainsKey(bodyId)) extra.Add(bodyId);
-            }
+            // A ring's guns, hatches and decals are independent parts. Only its referenced
+            // turret body promotes a selection to the full ring assembly.
+            if (ringsByBody.TryGetValue(v, out var owners)) extra.AddRange(owners.Where(r => r == p));
+            if (p >= 0 && objects.TryGetValue(p, out var parent) && Conversion.GuidOf(parent) == Conversion.RingGuid
+                && Conversion.GuidOf(o) == Conversion.CompartmentGuid) extra.Add(p);
         }
         foreach (int e in extra) all.Add(e);
 
@@ -140,13 +138,14 @@ public static class BlueprintClipboard
         }
 
         var blocks = b["blueprints"]?.AsArray() ?? new JsonArray();
+        var blocksById = blocks.Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "id"));
         var blueprintIds = new HashSet<int>();
         foreach (int v in allToCopy)
         {
             var o = objects[v];
             foreach (var kv in o)
             {
-                if ((kv.Key.EndsWith("BlueprintVuid") || kv.Key.EndsWith("ConstraintsVuid") || kv.Key == "structureBlueprintVuid")
+                if (Conversion.BlueprintKey(kv.Key)
                     && kv.Value is JsonValue val && val.TryGetValue<int>(out int id))
                 {
                     blueprintIds.Add(id);
@@ -158,12 +157,12 @@ public static class BlueprintClipboard
         while (queueB.Count > 0)
         {
             int bId = queueB.Dequeue();
-            var block = blocks.FirstOrDefault(x => Conversion.Id(x!, "id") == bId);
+            var block = blocksById.GetValueOrDefault(bId);
             if (block?["blueprint"] is JsonObject bpObj)
             {
                 foreach (var kv in bpObj)
                 {
-                    if (kv.Key.EndsWith("BlueprintVuid") && kv.Value is JsonValue val && val.TryGetValue<int>(out int subId))
+                    if (Conversion.BlueprintKey(kv.Key) && kv.Value is JsonValue val && val.TryGetValue<int>(out int subId))
                     {
                         if (blueprintIds.Add(subId)) queueB.Enqueue(subId);
                     }
@@ -175,7 +174,7 @@ public static class BlueprintClipboard
         var meshIds = new HashSet<int>();
         foreach (int bId in blueprintIds)
         {
-            var block = blocks.FirstOrDefault(x => Conversion.Id(x!, "id") == bId);
+            var block = blocksById.GetValueOrDefault(bId);
             if (block?["blueprint"]?["bodyMeshVuid"] is JsonValue mv && mv.TryGetValue<int>(out int meshId))
                 meshIds.Add(meshId);
         }
@@ -188,7 +187,7 @@ public static class BlueprintClipboard
             ["rootVuids"] = JsonNode.Parse($"[{string.Join(",", rootVuids)}]")!.AsArray(),
             ["rootTransforms"] = rootTransforms,
             ["objects"] = new JsonArray(allToCopy.Select(v => JsonNode.Parse(objects[v].ToJsonString())!).ToArray()),
-            ["blueprints"] = new JsonArray(blueprintIds.Select(id => blocks.FirstOrDefault(x => Conversion.Id(x!, "id") == id)).Where(x => x != null).Select(x => JsonNode.Parse(x!.ToJsonString())!).ToArray()),
+            ["blueprints"] = new JsonArray(blueprintIds.Select(id => blocksById.GetValueOrDefault(id)).Where(x => x != null).Select(x => JsonNode.Parse(x!.ToJsonString())!).ToArray()),
             ["meshes"] = new JsonArray(meshIds.Select(id => meshes.FirstOrDefault(x => x!["vuid"]?.GetValue<int>() == id)).Where(x => x != null).Select(x => JsonNode.Parse(x!.ToJsonString())!).ToArray()),
         };
 
@@ -214,9 +213,9 @@ public static class BlueprintClipboard
         int hullVuid = targetObjects.Values.FirstOrDefault(o => Conversion.Id(o, "pvuid") == -1) is { } h ? Conversion.Id(h, "vuid") : (targetObjects.ContainsKey(0) ? 0 : targetObjects.Keys.First());
         if (targetParentVuid < 0 || !targetObjects.ContainsKey(targetParentVuid)) targetParentVuid = hullVuid;
 
-        var targetWorld = Conversion.WorldMatrices(targetObjects);
+        var targetWorld = Conversion.WorldMatrices(targetObjects, attachmentFrames: true);
         Matrix4x4 parentWorld = targetWorld.TryGetValue(targetParentVuid, out var pw) ? pw : Matrix4x4.Identity;
-        Matrix4x4 invParentWorld = Matrix4x4.Invert(parentWorld, out var ipw) ? ipw : Matrix4x4.Identity;
+        if (!Matrix4x4.Invert(parentWorld, out var invParentWorld)) throw new Exception("The paste target has zero scale; choose another supporting part.");
 
         int maxVuid = targetObjects.Keys.DefaultIfEmpty(0).Max();
         int maxComp = targetObjects.Values.SelectMany(o => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && kv.Key is not ("pvuid" or "flags")).Select(kv => kv.Value!.GetValue<int>())).DefaultIfEmpty(0).Max();
@@ -267,21 +266,30 @@ public static class BlueprintClipboard
             blk["id"] = blueprintMap[oldId];
             if (blk["blueprint"] is JsonObject payload)
             {
+                foreach (var kv in payload.Where(kv => Conversion.BlueprintKey(kv.Key)).ToList())
+                    if (kv.Value is JsonValue br && br.TryGetValue<int>(out int oldBlock) && blueprintMap.TryGetValue(oldBlock, out int newBlock))
+                        payload[kv.Key] = newBlock;
                 if (payload["bodyMeshVuid"] is JsonValue bmv && bmv.TryGetValue<int>(out int oldMesh) && meshMap.TryGetValue(oldMesh, out int newMesh))
                     payload["bodyMeshVuid"] = newMesh;
-                if (payload["motorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int oldMotor) && vuidMap.TryGetValue(oldMotor, out int newMotor))
-                    payload["motorVuid"] = newMotor;
+                if (payload["motorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int oldMotor))
+                    payload["motorVuid"] = vuidMap.GetValueOrDefault(oldMotor, -1);
                 if (payload["barrelVuids"] is JsonArray barrels)
                 {
-                    for (int i = 0; i < barrels.Count; i++)
-                        if (barrels[i] is JsonValue bv && bv.TryGetValue<int>(out int oldBv) && vuidMap.TryGetValue(oldBv, out int newBv))
-                            barrels[i] = newBv;
+                    for (int i = barrels.Count - 1; i >= 0; i--)
+                        if (barrels[i] is JsonValue bv && bv.TryGetValue<int>(out int oldBv))
+                        {
+                            if (vuidMap.TryGetValue(oldBv, out int newBv)) barrels[i] = newBv;
+                            else barrels.RemoveAt(i);
+                        }
                 }
                 if (payload["operatedBehaviours"] is JsonArray opBeh)
                 {
-                    for (int i = 0; i < opBeh.Count; i++)
-                        if (opBeh[i] is JsonValue ob && ob.TryGetValue<int>(out int oldOb) && vuidMap.TryGetValue(oldOb, out int newOb))
-                            opBeh[i] = newOb;
+                    for (int i = opBeh.Count - 1; i >= 0; i--)
+                        if (opBeh[i] is JsonValue ob && ob.TryGetValue<int>(out int oldOb))
+                        {
+                            if (vuidMap.TryGetValue(oldOb, out int newOb)) opBeh[i] = newOb;
+                            else opBeh.RemoveAt(i);
+                        }
                 }
             }
             targetBlocks.Add(blk);
@@ -305,7 +313,7 @@ public static class BlueprintClipboard
                     o[key] = newComp;
             }
 
-            foreach (var kv in o.Where(kv => kv.Key.EndsWith("BlueprintVuid") || kv.Key.EndsWith("ConstraintsVuid") || kv.Key == "structureBlueprintVuid").ToList())
+            foreach (var kv in o.Where(kv => Conversion.BlueprintKey(kv.Key)).ToList())
             {
                 if (kv.Value is JsonValue val && val.TryGetValue<int>(out int oldB) && blueprintMap.TryGetValue(oldB, out int newB))
                     o[kv.Key] = newB;
@@ -330,18 +338,22 @@ public static class BlueprintClipboard
                     float[] vals = jArr.Select(x => x!.GetValue<float>()).ToArray();
                     var oldWorldMat = ArrayToMatrix(vals);
                     var newLocalMat = oldWorldMat * invParentWorld;
-                    try { Conversion.WriteTransform(o["transform"]!.AsObject(), newLocalMat); }
-                    catch { /* Keep original local transform if decomposition had shear */ }
+                    // Reject a distorted result; silently falling back to the old local
+                    // transform would move the part when attached to another parent.
+                    Conversion.WriteTransform(o["transform"]!.AsObject(), newLocalMat);
                 }
             }
 
-            if (o["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int oldM) && vuidMap.TryGetValue(oldM, out int newM))
+            if (o["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int oldM) && oldM >= 0)
             {
-                o["transform"]!["mirrorVuid"] = newM;
+                if (vuidMap.TryGetValue(oldM, out int newM)) o["transform"]!["mirrorVuid"] = newM;
+                else AddonEdits.Unlink(o);
             }
             else
             {
-                AddonEdits.Unlink(o);
+                // A mirrored part saved once has no explicit twin: the game shows
+                // its second image from flag 4. Keep that flag when copying it.
+                if (o["transform"] is JsonObject transform) transform["mirrorVuid"] = -1;
             }
 
             targetObjectsArray.Add(o);
@@ -358,7 +370,7 @@ public static class BlueprintClipboard
         var objects = Conversion.Objects(b);
         if (toRemoveVuids.Count == 0) return blueprintJson;
 
-        var dead = ExpandPartHierarchy(objects, toRemoveVuids);
+        var dead = ExpandPartHierarchy(objects, toRemoveVuids.Where(v => objects.TryGetValue(v, out var part) && Conversion.Id(part, "pvuid") >= 0));
 
         // Never remove the base hull
         dead.RemoveWhere(v => objects.TryGetValue(v, out var o) && Conversion.Id(o, "pvuid") == -1);
@@ -378,40 +390,54 @@ public static class BlueprintClipboard
                 AddonEdits.Unlink(o);
         }
 
-        // Clean up dead blueprints
+        // Delete only settings owned by the removed parts. Vehicle-wide paint jobs,
+        // registers and inline settings are not all linked through *BlueprintVuid.
+        // A whole-vehicle orphan sweep here would erase those unrelated settings.
+        IEnumerable<int> References(JsonObject o) => o.Where(kv => Conversion.BlueprintKey(kv.Key)
+            && kv.Value is JsonValue v && v.TryGetValue<int>(out _)).Select(kv => kv.Value!.GetValue<int>());
+        var deadBlueprintIds = dead.SelectMany(v => References(objects[v])).ToHashSet();
+        var deadComponents = dead.SelectMany(v => Conversion.ComponentKeys(objects[v]).Select(k => Conversion.Id(objects[v], k))).ToHashSet();
         var liveBlueprintIds = new HashSet<int>();
         foreach (var o in surviving.Values)
-        {
-            foreach (var kv in o)
-            {
-                if ((kv.Key.EndsWith("BlueprintVuid") || kv.Key.EndsWith("ConstraintsVuid") || kv.Key == "structureBlueprintVuid")
-                    && kv.Value is JsonValue val && val.TryGetValue<int>(out int id))
-                {
-                    liveBlueprintIds.Add(id);
-                }
-            }
-        }
+            liveBlueprintIds.UnionWith(References(o));
 
         var blocks = b["blueprints"]?.AsArray() ?? new JsonArray();
+        var blocksById = blocks.Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "id"));
+        liveBlueprintIds.UnionWith(blocksById.Keys.Where(id => !deadBlueprintIds.Contains(id)));
         var queueB = new Queue<int>(liveBlueprintIds);
         while (queueB.Count > 0)
         {
             int bId = queueB.Dequeue();
-            var block = blocks.FirstOrDefault(x => Conversion.Id(x!, "id") == bId);
+            var block = blocksById.GetValueOrDefault(bId);
             if (block?["blueprint"] is JsonObject bpObj)
             {
                 foreach (var kv in bpObj)
                 {
-                    if (kv.Key.EndsWith("BlueprintVuid") && kv.Value is JsonValue val && val.TryGetValue<int>(out int subId))
+                    if (Conversion.BlueprintKey(kv.Key) && kv.Value is JsonValue val && val.TryGetValue<int>(out int subId))
                         if (liveBlueprintIds.Add(subId)) queueB.Enqueue(subId);
                 }
+                if (bpObj["paintJobIDs"] is JsonArray paintIds)
+                    foreach (var paint in paintIds)
+                        if (paint is JsonValue value && value.TryGetValue<int>(out int id) && liveBlueprintIds.Add(id)) queueB.Enqueue(id);
             }
         }
 
+        var deadMeshIds = new HashSet<int>();
         for (int i = blocks.Count - 1; i >= 0; i--)
         {
             if (!liveBlueprintIds.Contains(Conversion.Id(blocks[i]!, "id")))
+            {
+                if (blocks[i]?["blueprint"]?["bodyMeshVuid"] is JsonValue mesh && mesh.TryGetValue<int>(out int meshId)) deadMeshIds.Add(meshId);
                 blocks.RemoveAt(i);
+            }
+            else if (blocks[i]?["blueprint"] is JsonObject payload)
+            {
+                if (payload["motorVuid"] is JsonValue motor && motor.TryGetValue<int>(out int motorId) && deadComponents.Contains(motorId)) payload["motorVuid"] = -1;
+                foreach (string name in new[] { "operatedBehaviours", "barrelVuids" })
+                    if (payload[name] is JsonArray ids)
+                        for (int j = ids.Count - 1; j >= 0; j--)
+                            if (ids[j] is JsonValue component && component.TryGetValue<int>(out int componentId) && deadComponents.Contains(componentId)) ids.RemoveAt(j);
+            }
         }
 
         // Clean up dead meshes
@@ -425,7 +451,7 @@ public static class BlueprintClipboard
         var meshes = b["meshes"]?.AsArray() ?? new JsonArray();
         for (int i = meshes.Count - 1; i >= 0; i--)
         {
-            if (meshes[i]?["vuid"] is JsonValue mv && mv.TryGetValue<int>(out int mId) && !liveMeshIds.Contains(mId))
+            if (meshes[i]?["vuid"] is JsonValue mv && mv.TryGetValue<int>(out int mId) && deadMeshIds.Contains(mId) && !liveMeshIds.Contains(mId))
                 meshes.RemoveAt(i);
         }
 

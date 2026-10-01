@@ -16,12 +16,18 @@ public static class ExplodedView
     // game has since put it back itself, e.g. after you moved that part). Parent space, so the order doesn't matter.
     static readonly List<(Transform T, Vector3 Before, Vector3 After)> moved = new();
     static bool on;
+    static float nextRefresh;
 
     internal static void Keys()
     {
+        if (PhotoShot.Capturing || DrawingSheet.Capturing || MeshTools.Typing()) return;
         var keys = Keyboard.current;
         if (keys == null) return;
-        if (on && moved.Any(m => Gone(m.T))) { moved.Clear(); Explode(); } // the design was reloaded: new parts
+        if (on && Time.unscaledTime >= nextRefresh)
+        {
+            nextRefresh = Time.unscaledTime + 0.5f;
+            if (moved.Any(m => Gone(m.T))) { Collapse(); Explode(); } // restore surviving parts before rebuilding the view
+        }
         if (keys.f2Key.wasPressedThisFrame)
         {
             on = !on;
@@ -58,18 +64,32 @@ public static class ExplodedView
             moved.Clear();
             var parts = DesignEditor.Instance?.AllParts().ToList() ?? new();
             var total = new Dictionary<IntPtr, Vector3>();
-            VehicleObject? ParentOf(VehicleObject p) => p.GetComponent<VehicleTransform>()?.Parent?.VehicleObject;
+            var parents = new Dictionary<IntPtr, VehicleObject?>();
+            VehicleObject? ParentOf(VehicleObject p)
+            {
+                if (parents.TryGetValue(p.Pointer, out var parent)) return parent;
+                return parents[p.Pointer] = p.GetComponent<VehicleTransform>()?.Parent?.VehicleObject;
+            }
+            var grounded = new Dictionary<IntPtr, bool>();
             // Running gear (tracks, road wheels, sprockets, idlers, suspension) and anything on it stays on the ground.
             bool Grounded(VehicleObject? p)
             {
+                if (p == null) return false;
+                if (grounded.TryGetValue(p.Pointer, out bool known)) return known;
+                var path = new List<IntPtr>();
+                bool result = false;
                 for (int guard = 0; p != null && guard < 64; guard++, p = ParentOf(p))
                 {
+                    if (grounded.TryGetValue(p.Pointer, out result)) break;
+                    path.Add(p.Pointer);
                     var components = p.Components;
                     int count = components?.Cast<Il2CppSystem.Collections.Generic.IReadOnlyCollection<VehicleComponent>>().Count ?? 0;
                     for (int i = 0; i < count; i++)
-                        if (components![i]?.GetIl2CppType().Namespace == "Sprocket.Vehicles.Tracks") return true;
+                        if (components![i]?.GetIl2CppType().Namespace == "Sprocket.Vehicles.Tracks") { result = true; break; }
+                    if (result) break;
                 }
-                return false;
+                foreach (var pointer in path) grounded[pointer] = result;
+                return result;
             }
             bool anyGrounded = parts.Any(Grounded);
             // How far a part moves in all: its parent's move plus its own step away from the parent. The body the
@@ -117,6 +137,6 @@ public static class ExplodedView
     [HarmonyPrefix, HarmonyPatch(typeof(VehicleBlueprintSerializer), nameof(VehicleBlueprintSerializer.ToBlueprint))]
     static void BeforeRead() { if (on) Collapse(); }
 
-    [HarmonyPostfix, HarmonyPatch(typeof(VehicleBlueprintSerializer), nameof(VehicleBlueprintSerializer.ToBlueprint))]
-    static void AfterRead() { if (on) Explode(); }
+    [HarmonyFinalizer, HarmonyPatch(typeof(VehicleBlueprintSerializer), nameof(VehicleBlueprintSerializer.ToBlueprint))]
+    static Exception? AfterRead(Exception? __exception) { if (on) Explode(); return __exception; }
 }

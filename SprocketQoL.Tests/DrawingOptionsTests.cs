@@ -65,6 +65,8 @@ static class DrawingOptionsTests
         Check(DrawingOptions.Blueprint(paper,41,41,10,1).Take(3).SequenceEqual(new byte[]{230,245,255}), "text and solid vehicle lines stay bright at grid intersections");
         bool badSize=false; try { DrawingOptions.Blueprint(paper,40,41,10); } catch(ArgumentException) { badSize=true; }
         Check(badSize,"grid rejects mismatched image dimensions");
+        bool incomplete=false; try { DrawingOptions.Blueprint(new byte[4]); } catch(ArgumentException) { incomplete=true; }
+        Check(incomplete,"blueprint rejects incomplete RGB pixels before indexing");
 
         var barrel = Box(new(-0.09f,0.81f,1), new(0.09f,0.99f,4));
         var pivot = new Vector3(0,0.9f,1); var muzzle = new Vector3(0,0.9f,4);
@@ -84,6 +86,12 @@ static class DrawingOptionsTests
         Check(ghosts.Single(g => g.Label.Contains("DEPRESSION")).Tip.Y < muzzle.Y, "negative elevation goes down");
         Check(ghosts.Single(g => g.Label.Contains("LEFT")).Tip.X < 0 && ghosts.Single(g => g.Label.Contains("RIGHT")).Tip.X > 0, "traverse has correct left and right signs");
         Check(barrel.P.SequenceEqual(before), "drawing motion does not pose or mutate original geometry");
+        Check(DrawingOptions.Motion(new[]{barrel},pivot,muzzle,new(float.NaN,0,0),Vector3.UnitY,-10,25,0,0,true,false).Count==0,
+            "invalid rotation axis cannot contaminate drawing bounds with NaN");
+        Check(DrawingOptions.Motion(new[]{barrel},pivot,muzzle,Vector3.UnitX,Vector3.UnitY,25,-10,30,-20,true,true).Count==0,
+            "reversed gun limits are omitted instead of drawing misleading ranges");
+        Check(DrawingOptions.TurretMotion(new[]{barrel},pivot,muzzle,new(0,float.NaN,0),-180,180).Count==0,
+            "invalid turret axis is omitted");
         var turn = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI / 2);
         var turned = DrawingOptions.Motion(Array.Empty<Drawing.Shape>(), Vector3.Zero, Vector3.Transform(Vector3.UnitZ,turn),
             Vector3.Transform(Vector3.UnitX,turn), Vector3.UnitY,0,25,0,0,true,false);
@@ -124,6 +132,14 @@ static class DrawingOptionsTests
             { var q=v.Project(p); Check(q.X>=0&&q.Y>=0&&q.X<v.Width&&q.Y<v.Height,"ghost geometry fits preview"); }
         }
         DrawingOptions.DrawMotion(ghosts,new[]{sheet},views,w,h,at);
+        var narrowView=new Drawing.View(Vector3.Zero,Vector3.UnitX,Vector3.UnitY,Vector3.UnitZ,1,20,20);
+        var narrowPage=Enumerable.Repeat((byte)255,40*40*3).ToArray();
+        var narrowMotion=new[]{new DrawingOptions.Ghost(0,Array.Empty<Drawing.Shape>(),Vector3.Zero,Vector3.UnitX,Array.Empty<Vector3>(),"15° ELEVATION")};
+        DrawingOptions.DrawMotion(narrowMotion,new[]{narrowPage},new[]{narrowView},40,40,new[]{(X:5,Y:5)});
+        Check(narrowPage.Any(c=>c<255),"motion labels in a narrow view draw without invalid clamp bounds");
+        var clippedPage=Enumerable.Repeat((byte)255,40*40*3).ToArray();
+        DrawingOptions.DrawMotion(new[]{new DrawingOptions.Ghost(0,new[]{barrel},pivot,muzzle,Array.Empty<Vector3>(),"LIMIT")},new[]{clippedPage},new[]{narrowView},40,40,new[]{(X:-8,Y:-8)});
+        Check(clippedPage.Any(c=>c<255),"ghosts partially outside the sheet are clipped before RGB indexing");
         var title=Drawing.Words("DRAWING OPTIONS TEST — INTACT CASEMATE",32,true,1200);
         Drawing.Stamp(sheet,w,h,180,1390,title,0);
         Drawing.Stamp(sheet,w,h,180,65,Drawing.Words("Test vehicle",32,true,700),0);

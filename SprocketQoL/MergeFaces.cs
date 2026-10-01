@@ -17,24 +17,19 @@ public static class MergeFaces
 {
     static int sides; // index into SideNames / SideModes
     static bool mirror; // the editor's Mirror was on when Merge was pressed
-    static readonly string[] SideNames = { "Points other faces use: take out their lines", "Points other faces use: run past them", "Points other faces use: keep as corners" };
+    static readonly string[] SideNames = { "Shared points: remove extra lines", "Shared points: allow gaps", "Shared points: keep corners" };
     static readonly FaceMerge.SidePoints[] SideModes = { FaceMerge.SidePoints.TakeOutLine, FaceMerge.SidePoints.RunPast, FaceMerge.SidePoints.Keep };
 
     [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Guard("Merge faces", () =>
+    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Merge faces", layout, () =>
     {
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // face editing is freeform only
         Ui.Section(layout, "Merge faces");
-        // Explicit line breaks: the panel shows exactly the lines it's told, and cuts off the rest.
-        ui.InfoField("Select faces in Faces edit mode, then merge.\nFlat faces become as few faces as they can.\nCtrl+Z undoes it.", 3);
-        var sideTip = new UITooltip("Points other faces use", "A point on a straight side that an unselected face also uses (a line running on into it). " +
-            "Take out their lines: the faces along each line are rebuilt without it too, up to a real corner or the plate's edge, so everything stays joined. " +
-            "Run past them: the merged face runs straight past, the other face keeps the point (like Delete + Fill); not joined there, so moving it opens a gap. " +
-            "Keep as corners: they stay corners of the merged faces.");
+        ui.InfoField("Faces mode: select adjacent faces to simplify their shared surface. Ctrl+Z undoes it.", 2);
+        var sideTip = new UITooltip("Shared boundary points", "Click to cycle how straight-side points shared with unselected faces are handled. Remove extra lines also rebuilds adjoining faces, keeping them connected. Allow gaps skips shared points and can leave seams when moved. Keep corners preserves every shared boundary point.");
         ui.Button(SideNames[sides], Ui.Callback(() => { sides = (sides + 1) % SideNames.Length; __instance.RequestRedraw(); }), ref sideTip);
-        var tip = new UITooltip("Merge selected faces", "Two triangles become a quad, a strip of quads one quad, a fan a few quads. " +
-                                "The selection splits at bends over 20°; a straight line of points shared across a bend goes from both sides.");
+        var tip = new UITooltip("Merge selected faces", "Select at least two faces sharing an edge. Combines coplanar faces into fewer faces; bends over 20 degrees stay separate. Mirror follows the editor's Mirror setting. Ctrl+Z undoes it.");
         ui.Button("Merge selected faces", Ui.Callback(() =>
         {
             mirror = __instance.meshEditor.Symmetry;
@@ -42,14 +37,14 @@ public static class MergeFaces
         }), ref tip);
 
         Ui.Section(layout, "Separate");
-        ui.InfoField("Select faces (or points) in edit mode, then\nmove them into a new add-on (Blender's P).\nCtrl+Z undoes it.", 3);
+        ui.InfoField("Move selected faces into new add-ons without changing their position. Ctrl+Z undoes it.", 2);
         var sepTip = new UITooltip("Separate selection", "The selected faces leave this part and become a new add-on in the same place, " +
             "with their thickness, armour and rivets. In Points or Edges mode, faces whose corners are all selected go. " +
             "With Mirror on, the mirrored faces go too; a mirrored part's twin (or image) gives up the same faces to a twin of the new add-on.");
-        ui.Button("Separate selected into a new add-on", Ui.Callback(() => Separate(__instance, pieces: false)), ref sepTip);
+        ui.Button("Selection to new add-on", Ui.Callback(() => Separate(__instance, pieces: false)), ref sepTip);
         var pieceTip = new UITooltip("Separate picked pieces", "For a shape already in pieces that don't touch: click one face on each piece " +
             "(Shift for more) and each whole piece becomes its own add-on in the same place. Pick every piece and the biggest stays here.");
-        ui.Button("Separate picked pieces (a face on each)", Ui.Callback(() => Separate(__instance, pieces: true)), ref pieceTip);
+        ui.Button("Disconnected pieces to add-ons", Ui.Callback(() => Separate(__instance, pieces: true)), ref pieceTip);
     });
 
     /// The selected faces into a new add-on, or (`pieces`) each loose piece with a selected face into its own.
@@ -156,9 +151,9 @@ public static class MergeFaces
                 // A side along the outline copies the old side it replaces (sharp or not); one across the patch is smooth.
                 bool outline = g.Joined.TryGetValue(FaceMerge.Key(a, b), out var was);
                 var like = (outline ? Edge.GetConnectingEdge(verts[was.From], verts[was.OldNext]) : null) ?? prototype.firstLoop.edge;
-                var e = mesh.CreateEdge(verts[a], verts[b], like);
-                if (outline && like.HasFlag(ElementFlags.Sharp)) e.EnableFlag(ElementFlags.Sharp);
-                else e.DisableFlag(ElementFlags.Sharp);
+                var e = mesh.CreateEdge(verts[a], verts[b], outline ? like : null);
+                const ElementFlags authored = ElementFlags.Selected | ElementFlags.Sharp | ElementFlags.AlternatePlateConnection;
+                e.flags = outline ? like.flags & authored : ElementFlags.None;
                 return e;
             }
         }

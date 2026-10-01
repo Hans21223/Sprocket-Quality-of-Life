@@ -31,11 +31,13 @@ public sealed class DesignEditor : MonoBehaviour
     private static readonly List<object> alive = new(); // delegates handed to the game's undo history must not be collected
     private string editName = "", doneMessage = "", status = "";
     private string? recoveryJson, recoveryDir;
+    private IntPtr recoveryTarget;
     private bool restoring, ready, busy;
     private int waits;
     private float nextLookup, statusUntil;
     internal int LastEditedPart { get; private set; } = -1;
-    internal bool CanRestore => recoveryJson != null && !busy;
+    private bool RecoveryBelongsHere => recoveryTarget != IntPtr.Zero && core?.Target?.Pointer == recoveryTarget;
+    internal bool CanRestore => recoveryJson != null && !busy && RecoveryBelongsHere;
     internal bool IsReady => ready;
     internal bool IsBusy => busy;
     internal VehicleDesignerCore? Core => core;
@@ -43,9 +45,16 @@ public sealed class DesignEditor : MonoBehaviour
 
     internal void Say(string text, float seconds = 6) { status = text; statusUntil = Time.unscaledTime + seconds; }
 
+    internal bool CaptureBlocked()
+    {
+        if (!PhotoShot.Capturing && !DrawingSheet.Capturing) return false;
+        Say("Finish the photo or drawing capture before editing the vehicle.", 4);
+        return true;
+    }
+
     internal void RequestEdit(string name, string done, Func<string, EditResult> change)
     {
-        if (busy) return;
+        if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
         editName = name; doneMessage = done; edit = change;
         busy = true; Say(name + "...", 30);
@@ -56,7 +65,7 @@ public sealed class DesignEditor : MonoBehaviour
     /// design when it can't be (a changed part shares its mesh, or applying in place fails).
     internal void RequestLiveEdit(string name, string done, Func<string, AddonEdits.EditPlan> change)
     {
-        if (busy) return;
+        if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
         editName = name; doneMessage = done; liveEdit = change;
         busy = true; Say(name + "...", 30);
@@ -71,7 +80,7 @@ public sealed class DesignEditor : MonoBehaviour
     /// hull or turret, which can't be duplicated into an add-on), the planned design is loaded instead.
     internal void RequestSeparate(string name, string done, Func<string, (string Json, List<List<(int Source, int Added)>> Groups, string Log)> plan)
     {
-        if (busy) return;
+        if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
         editName = name; doneMessage = done; separate = plan;
         busy = true; Say(editName + "...", 30);
@@ -90,8 +99,7 @@ public sealed class DesignEditor : MonoBehaviour
         catch (Exception ex) { why = ex.Message; Plugin.ModLog.LogWarning($"QOL_LIVE separate: {ex}"); }
         if (why == null) { busy = false; return; }
         Plugin.ModLog.LogInfo($"QOL_LIVE separate not in place ({why}); loading the planned design instead");
-        recoveryJson = original;
-        LastEditedPart = groups[0][0].Added;
+        SetRecovery(original, groups[0][0].Added);
         restoring = false;
         doneMessage += " Restore undoes it.";
         pending = core!.Load(serializer!.DeserializeJSON(planned), Il2CppSystem.Threading.CancellationToken.None);
@@ -225,7 +233,7 @@ public sealed class DesignEditor : MonoBehaviour
     /// the ring): once the placing is done, the body, guns and everything else get mirrored onto it. Once per turret.
     private void FillMirroredTurrets()
     {
-        if (core?.Editor == null || core.Editor.OperationInProgress) return;
+        if (core?.Editor == null || core.Editor.OperationInProgress || PhotoShot.Capturing || DrawingSheet.Capturing) return;
         foreach (var part in AllParts())
         {
             if (part.GUID != Conversion.RingGuid || part.GetComponent<VehicleTransform>() is not { } ring) continue;
@@ -248,7 +256,7 @@ public sealed class DesignEditor : MonoBehaviour
     private void JoinHotkey()
     {
         var keys = UnityEngine.InputSystem.Keyboard.current;
-        if (keys == null || !keys.ctrlKey.isPressed || !keys.jKey.wasPressedThisFrame) return;
+        if (keys == null || !keys.ctrlKey.isPressed || !keys.jKey.wasPressedThisFrame || MeshTools.Typing() || CaptureBlocked()) return;
         var picked = SelectedParts();
         var addons = SelectedParts(Conversion.AddonGuid);
         var bodies = SelectedParts(Conversion.CompartmentGuid);
@@ -261,7 +269,7 @@ public sealed class DesignEditor : MonoBehaviour
 
     internal void RequestRestore()
     {
-        if (busy || recoveryJson == null) return;
+        if (!CanRestore || CaptureBlocked()) return;
         busy = true; Say("Restoring the design from before the last edit...", 30);
         queued = Restore;
     }
@@ -363,14 +371,19 @@ public sealed class DesignEditor : MonoBehaviour
         // The per-frame features each on their own: one that fails (every frame) is logged once and stops no other.
         Ui.Guard("Editor lookup", () =>
         {
+            bool wasReady = ready;
             if (Time.unscaledTime >= nextLookup)
             {
                 nextLookup = Time.unscaledTime + 0.5f;
-                bool wasInEditor = core != null;
+                var previousCore = core?.Pointer ?? IntPtr.Zero;
                 core = UnityEngine.Object.FindObjectOfType<VehicleDesignerCore>();
-                if (wasInEditor && core == null) { MeshTools.LeftEditor(); ExplodedView.LeftEditor(); GearSpeeds.LeftEditor(); } // editor-only views end with it
+                if ((core?.Pointer ?? IntPtr.Zero) != previousCore) { filledRings.Clear(); liveShapesFailed = false; }
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
+            if (wasReady && !ready)
+            {
+                MeshTools.LeftEditor(); ExplodedView.LeftEditor(); GearSpeeds.LeftEditor(); PartPaint.LeftEditor();
+            }
         });
         if (ready && !busy) Ui.Guard("Ctrl+J", JoinHotkey);
         if (ready && !busy && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); }
@@ -392,11 +405,15 @@ public sealed class DesignEditor : MonoBehaviour
                 var task = pending; pending = null; busy = false;
                 if (task.IsFaulted || task.IsCanceled)
                 {
-                    Say("The game could not load the result. Your design from before is backed up; use Restore.", 10);
+                    Say(RecoveryBelongsHere ? "The game could not load the result. Your design from before is backed up; use Restore."
+                        : "The game could not load the result. Load original.blueprint from SprocketQoLBackups to recover your previous design.", 10);
                     Plugin.ModLog.LogError(task.Exception?.ToString() ?? "Vehicle load cancelled");
                 }
                 else
                 {
+                    // Our own reload creates a new Target. Another vehicle loaded
+                    // by the user must never inherit this Restore button by VUID.
+                    recoveryTarget = core?.Target?.Pointer ?? IntPtr.Zero;
                     Say(restoring ? "Design restored." : doneMessage, 8);
                     Plugin.ModLog.LogInfo(restoring ? "QOL_RESTORE_OK" : $"QOL_EDIT_OK: {editName}");
                     if (core?.Target != null && recoveryDir != null)
@@ -429,6 +446,7 @@ public sealed class DesignEditor : MonoBehaviour
     private bool EditorIdle(System.Action retry)
     {
         if (!ready || core == null) throw new Exception("Open a vehicle in the editor first.");
+        if (PhotoShot.Capturing || DrawingSheet.Capturing) { queued = retry; return false; }
         if (!core.DesignIOPossible || (core.Editor != null && core.Editor.OperationInProgress))
         {
             if (waits++ == 0) Plugin.ModLog.LogInfo($"WAIT editor busy: io={core.DesignIOPossible}, op={core.Editor?.OperationInProgress}");
@@ -448,6 +466,13 @@ public sealed class DesignEditor : MonoBehaviour
         File.WriteAllText(Path.Combine(recoveryDir, "edited.blueprint"), edited);
         File.WriteAllText(Path.Combine(recoveryDir, "README.txt"), $"{editName}. original.blueprint is the whole design before the edit, including unsaved changes; edited.blueprint is the result. Copy either into your faction's Blueprints\\Vehicles folder to load it. No saved blueprint was overwritten.");
         PruneBackups();
+    }
+
+    private void SetRecovery(string original, int focus)
+    {
+        recoveryJson = original;
+        recoveryTarget = core?.Target?.Pointer ?? IntPtr.Zero;
+        LastEditedPart = focus;
     }
 
     /// Only the newest backups are kept (setting "Backups kept"; 0 keeps all): each is a whole design or two, and they
@@ -474,8 +499,7 @@ public sealed class DesignEditor : MonoBehaviour
         var result = edit!(original);
         var nativeBlueprint = serializer!.DeserializeJSON(result.Json);
         Backup(original, result.Json);
-        recoveryJson = original;
-        LastEditedPart = result.FocusPart;
+        SetRecovery(original, result.FocusPart);
         restoring = false;
         Plugin.ModLog.LogInfo($"QOL_EDIT {editName}: {result.Log}; backup={recoveryDir}");
         pending = core!.Load(nativeBlueprint, Il2CppSystem.Threading.CancellationToken.None);
@@ -493,8 +517,7 @@ public sealed class DesignEditor : MonoBehaviour
             try { ApplyInPlace(plan, original); busy = false; return; }
             catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_LIVE couldn't apply in place, reloading the design instead: {ex}"); }
         }
-        recoveryJson = original;
-        LastEditedPart = plan.Focus;
+        SetRecovery(original, plan.Focus);
         restoring = false;
         pending = core!.Load(serializer!.DeserializeJSON(plan.DesignJson), Il2CppSystem.Threading.CancellationToken.None);
     }
@@ -656,7 +679,8 @@ public sealed class DesignEditor : MonoBehaviour
 
     private void Restore()
     {
-        if (recoveryJson == null || core == null || !core.DesignIOPossible) throw new Exception("No recovery is available, or the editor is busy.");
+        if (PhotoShot.Capturing || DrawingSheet.Capturing) { queued = Restore; return; }
+        if (recoveryJson == null || !RecoveryBelongsHere || core == null || !core.DesignIOPossible) throw new Exception("No recovery is available for this vehicle, or the editor is busy.");
         // Keep any work done after the edit before replacing it.
         File.WriteAllText(Path.Combine(recoveryDir!, "before-restore-" + DateTime.Now.ToString("HHmmssfff") + ".blueprint"), Snapshot());
         restoring = true;
@@ -680,13 +704,14 @@ public sealed class DesignEditor : MonoBehaviour
 public static class RestoreSection
 {
     [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Guard("Restore", () =>
+    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Restore", layout, () =>
     {
         var editor = DesignEditor.Instance;
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (editor == null || ui == null || !editor.CanRestore || editor.LastEditedPart != (int)__instance.Component.VehicleObject.VUID) return;
         Ui.Section(layout, "Undo last Quality of Life edit");
-        var tip = new UITooltip("Restore", "Reloads the design as it was before the last Quality of Life edit (turret conversion, round add-on or merge).");
-        ui.Button("Restore design before last edit", Ui.Callback(editor.RequestRestore), ref tip);
+        ui.InfoField("Returns to the snapshot before the last QoL reload. Changes made since then are discarded.", 2);
+        var tip = new UITooltip("Restore previous design", "Reloads the complete design snapshot from before the last Quality of Life operation that reloaded the vehicle, such as turret conversion, repair or paste. Any later edits are discarded. Use Ctrl+Z for ordinary mesh edits instead.");
+        ui.Button("Restore previous design", Ui.Callback(editor.RequestRestore), ref tip);
     });
 }

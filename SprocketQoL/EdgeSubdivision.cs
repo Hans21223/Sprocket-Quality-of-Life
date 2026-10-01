@@ -9,6 +9,9 @@ public static class EdgeSubdivision
         IEnumerable<(int A,int B)> selected, int sections, ISet<int>? faceScope = null)
     {
         if (sections < 2 || sections > 16) return MeshPlans.Rebuild.Fail("use 2 to 16 sections");
+        if (pos.Any(p => !float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z)) ||
+            faces.Any(f => f.Length < 3 || f.Distinct().Count() != f.Length || f.Any(v => v < 0 || v >= pos.Count)))
+            return MeshPlans.Rebuild.Fail("the mesh contains invalid points or faces");
         if (faceScope != null && (faceScope.Count == 0 || faceScope.Any(f => f < 0 || f >= faces.Count)))
             return MeshPlans.Rebuild.Fail("select faces first");
         var uses = new Dictionary<(int,int),List<int>>();
@@ -22,6 +25,8 @@ public static class EdgeSubdivision
         var edges=selected.Select(e=>FaceMerge.Key(e.A,e.B)).ToHashSet();
         if (edges.Count==0) return MeshPlans.Rebuild.Fail("select edges first");
         if (edges.Any(e=>!uses.ContainsKey(e))) return MeshPlans.Rebuild.Fail("select edges belonging to a face");
+        if (faceScope != null && edges.Any(e => !uses[e].Any(faceScope.Contains)))
+            return MeshPlans.Rebuild.Fail("select edges of the selected faces");
         var pending=new Queue<(int,int)>(edges);
         while (pending.TryDequeue(out var edge))
         {

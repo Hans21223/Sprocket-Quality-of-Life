@@ -14,6 +14,7 @@ internal static class DrawingOptions
     internal static string Weight(float kg) => float.IsFinite(kg) && kg > 0 ? (kg / 1000).ToString("0.##", CultureInfo.InvariantCulture) + " t" : "";
     internal static byte[] Blueprint(byte[] lines, int width = 0, int height = 0, int gridStep = 0, float gridStrength = 0.2f)
     {
+        if (lines.Length % 3 != 0) throw new ArgumentException("Blueprint input must contain complete RGB pixels.");
         if (gridStep > 0 && (width <= 0 || height <= 0 || (long)width * height * 3 != lines.Length))
             throw new ArgumentException("Blueprint grid dimensions must match the image.");
         gridStrength = float.IsFinite(gridStrength) ? Math.Clamp(gridStrength, 0, 1) : 0.2f;
@@ -44,11 +45,12 @@ internal static class DrawingOptions
         Vector3 right, Vector3 up, float minElevation, float maxElevation, float minTraverse, float maxTraverse, bool elevation, bool traverse)
     {
         var result = new List<Ghost>();
+        if (!Finite(pivot) || !Finite(tip)) return result;
         void Add(float degrees, bool vertical)
         {
             if (!float.IsFinite(degrees) || MathF.Abs(degrees) < 0.05f || MathF.Abs(degrees) > 180) return;
             var axis = vertical ? -right : up; // positive elevation raises a +Z gun
-            if (axis.LengthSquared() < 0.5f) return;
+            if (!Finite(axis) || axis.LengthSquared() < 0.5f) return;
             axis = Vector3.Normalize(axis);
             Vector3 Turn(Vector3 p, float angle) => pivot + Vector3.Transform(p - pivot, Quaternion.CreateFromAxisAngle(axis, angle * MathF.PI / 180));
             var shapes = barrel.Select(s => Drawing.Weld(s.P.Select(p => Turn(p, degrees)).ToArray(), s.T)).ToArray();
@@ -59,14 +61,14 @@ internal static class DrawingOptions
                 (vertical ? degrees > 0 ? "ELEVATION" : "DEPRESSION" : degrees > 0 ? "RIGHT TRAVERSE" : "LEFT TRAVERSE");
             result.Add(new Ghost(vertical ? 2 : 0, shapes, pivot, Turn(tip, degrees), arc, label));
         }
-        if (elevation) { Add(minElevation, true); if (maxElevation != minElevation) Add(maxElevation, true); }
-        if (traverse) { Add(minTraverse, false); if (maxTraverse != minTraverse) Add(maxTraverse, false); }
+        if (elevation && minElevation <= maxElevation) { Add(minElevation, true); if (maxElevation != minElevation) Add(maxElevation, true); }
+        if (traverse && minTraverse <= maxTraverse) { Add(minTraverse, false); if (maxTraverse != minTraverse) Add(maxTraverse, false); }
         return result;
     }
 
     internal static List<Ghost> TurretMotion(IReadOnlyList<Drawing.Shape> barrel, Vector3 pivot, Vector3 tip, Vector3 up, float min, float max)
     {
-        if (!float.IsFinite(min) || !float.IsFinite(max) || max <= min || min < -360 || max > 360 || up.LengthSquared() < 0.5f) return new();
+        if (!float.IsFinite(min) || !float.IsFinite(max) || max <= min || min < -360 || max > 360 || !Finite(pivot) || !Finite(tip) || !Finite(up) || up.LengthSquared() < 0.5f) return new();
         up = Vector3.Normalize(up);
         Vector3 Turn(Vector3 p, float angle) => pivot + Vector3.Transform(p - pivot, Quaternion.CreateFromAxisAngle(up, angle * MathF.PI / 180));
         bool full = max - min >= 359.9f;
@@ -82,8 +84,8 @@ internal static class DrawingOptions
     internal static void Segment(byte[] rgb, int w, int h, Vector3 a, Vector3 b, byte grey, bool dashed)
     {
         float length = Vector2.Distance(new(a.X, a.Y), new(b.X, b.Y));
-        if (!float.IsFinite(length)) return;
-        int count = Math.Clamp((int)MathF.Ceiling(length), 1, Math.Max(w, h) * 3);
+        if (w <= 0 || h <= 0 || !Finite(a) || !Finite(b) || !float.IsFinite(length)) return;
+        int count = Math.Max(1, (int)MathF.Min(MathF.Ceiling(length), (long)Math.Max(w, h) * 3));
         for (int i = 0; i <= count; i++)
         {
             if (dashed && (i / 10) % 2 != 0) continue;
@@ -95,34 +97,44 @@ internal static class DrawingOptions
     internal static void DrawMotion(IReadOnlyList<Ghost> motion, byte[][] sheets, Drawing.View[] views, int w, int h, (int X, int Y)[] at)
     {
         var labels = new List<(int X, int Y, int W, int H)>();
+        var masks = new Dictionary<int, bool[]>();
         foreach (var ghost in motion)
         {
             int i = ghost.View;
             var v = views[i];
-            var ink = new bool[v.Width * v.Height];
-            Drawing.Lines(ghost.Shapes, v, Drawing.Depths(ghost.Shapes, v), ink, 10);
-            foreach (var sheet in sheets)
+            if (ghost.Shapes.Length > 0)
+            {
+                if (!masks.TryGetValue(i, out var ink)) masks[i] = ink = new bool[v.Width * v.Height];
+                else Array.Clear(ink, 0, ink.Length);
+                Drawing.Lines(ghost.Shapes, v, Drawing.Depths(ghost.Shapes, v), ink, 10);
                 for (int y = 0; y < v.Height; y++)
                     for (int x = 0; x < v.Width; x++)
-                        if (ink[y * v.Width + x]) DrawingOptions.Ink(sheet, ((at[i].Y + y) * w + at[i].X + x) * 3, 70, 0.8f);
+                        if (ink[y * v.Width + x] && at[i].X + x >= 0 && at[i].Y + y >= 0 && at[i].X + x < w && at[i].Y + y < h)
+                            foreach (var sheet in sheets) Ink(sheet, ((at[i].Y + y) * w + at[i].X + x) * 3, 70, 0.8f);
+            }
             Vector3 OnSheet(Vector3 p) => v.Project(p) + new Vector3(at[i].X, at[i].Y, 0);
-            var tip = ghost.FullCircle ? ghost.Arc.Select(OnSheet).OrderByDescending(p => p.Y).First() : OnSheet(ghost.Tip);
+            var arc = ghost.Arc.Select(OnSheet).ToArray();
+            var tip = ghost.FullCircle && arc.Length > 0 ? arc.Aggregate((a,b) => a.Y >= b.Y ? a : b) : OnSheet(ghost.Tip);
             var pivot = OnSheet(ghost.Pivot);
-            var words = Drawing.Words(ghost.Label, 27, false, Math.Max(30, Math.Min(360, v.Width - 16)));
-            int tx = Math.Clamp((int)tip.X - words.W / 2, at[i].X + 6, at[i].X + v.Width - words.W - 6);
-            int ty = Math.Clamp((int)tip.Y + (tip.Y >= pivot.Y ? words.H + 22 : -22), at[i].Y + words.H + 6, at[i].Y + v.Height - 6);
+            var words = Drawing.Words(ghost.Label, Math.Clamp(v.Height - 12, 1, 27), false, Math.Max(1, Math.Min(360, v.Width - 12)));
+            int minX = at[i].X + Math.Min(6, v.Width / 2), maxX = Math.Max(minX, at[i].X + v.Width - words.W - 6);
+            int minY = at[i].Y + Math.Min(words.H + 6, v.Height - 1), maxY = Math.Max(minY, at[i].Y + v.Height - 6);
+            int tx = Math.Clamp((int)tip.X - words.W / 2, minX, maxX);
+            int ty = Math.Clamp((int)tip.Y + (tip.Y >= pivot.Y ? words.H + 22 : -22), minY, maxY);
             // Stagger nearby labels, staying within this view's reserved space.
             for (int attempt = 0; attempt < 12 && labels.Any(r => tx < r.X + r.W + 8 && tx + words.W + 8 > r.X && ty > r.Y - r.H - 8 && ty - words.H - 8 < r.Y); attempt++)
-                ty = Math.Clamp(ty + (tip.Y >= pivot.Y ? -1 : 1) * (words.H + 12), at[i].Y + words.H + 6, at[i].Y + v.Height - 6);
+                ty = Math.Clamp(ty + (tip.Y >= pivot.Y ? -1 : 1) * (words.H + 12), minY, maxY);
             labels.Add((tx, ty, words.W, words.H));
             foreach (var sheet in sheets)
             {
                 if (!ghost.FullCircle) DrawingOptions.Segment(sheet, w, h, pivot, tip, 115, true);
-                for (int k = 1; k < ghost.Arc.Length; k++) DrawingOptions.Segment(sheet, w, h, OnSheet(ghost.Arc[k - 1]), OnSheet(ghost.Arc[k]), 100, false);
+                for (int k = 1; k < arc.Length; k++) DrawingOptions.Segment(sheet, w, h, arc[k - 1], arc[k], 100, false);
                 DrawingOptions.Segment(sheet, w, h, tip, new Vector3(Math.Clamp(tip.X, tx, tx + words.W), tip.Y >= ty ? ty + 4 : ty - words.H - 4, 0), 115, false);
                 Drawing.Stamp(sheet, w, h, tx, ty, words, 40);
             }
         }
     }
+
+    static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
 
 }

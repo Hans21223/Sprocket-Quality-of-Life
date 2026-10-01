@@ -19,7 +19,18 @@ public static class DrawingMounts
     }
 
     public static int? SelectGun(int mount, IEnumerable<(int Id, int Caliber)> guns,
-        IReadOnlyDictionary<int, Part> parts, Func<int, bool> included) =>
-        guns.Where(g => included(g.Id) && Owner(g.Id, parts) == mount)
-            .OrderByDescending(g => g.Caliber).Select(g => (int?)g.Id).FirstOrDefault();
+        IReadOnlyDictionary<int, Part> parts, Func<int, bool> included)
+    {
+        if (mount < 0) return null;
+        int? best = null;
+        int caliber = int.MinValue;
+        foreach (var gun in guns)
+            if (included(gun.Id) && Owner(gun.Id, parts) == mount &&
+                (!best.HasValue || gun.Caliber > caliber || gun.Caliber == caliber && gun.Id < best.Value))
+            {
+                best = gun.Id;
+                caliber = gun.Caliber;
+            }
+        return best;
+    }
 }

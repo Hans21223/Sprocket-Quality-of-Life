@@ -29,6 +29,7 @@ public static class Fill
     public static List<int[]> Region(List<Vector3> pos, List<int> outer, List<List<int>> holes, Vector3 normal, List<Added>? added, bool light = true, Mode mode = Mode.Fewest)
     {
         var faces = RegionFaces(pos, outer, holes, normal, added, light, mode, out string path);
+        if (Paths.Count >= 4096) Paths.RemoveRange(0,2048);
         Paths.Add(path);
         return faces;
     }
@@ -36,10 +37,15 @@ public static class Fill
     static List<int[]> RegionFaces(List<Vector3> pos, List<int> outer, List<List<int>> holes, Vector3 normal, List<Added>? added, bool light, Mode mode, out string path)
     {
         path = "as is";
-        var plane = new Frame(pos, normal, outer);
         outer = Clean(outer);
         holes = holes.Select(Clean).Where(h => h.Count >= 3).ToList();
         if (outer.Count < 3) return new();
+        if (!Finite(normal) || normal.LengthSquared() < 1e-20f || outer.Concat(holes.SelectMany(h => h)).Any(v => v < 0 || v >= pos.Count || !Finite(pos[v])))
+        { path = "invalid region"; return new(); }
+        var plane = new Frame(pos, normal, outer);
+        if (Math.Abs(plane.Area(outer)) < 1e-14) return new();
+        if (holes.Any(h => h.Any(v => !plane.Inside(outer,plane.P(v)))))
+        { path = "hole outside region"; return new(); }
         if (plane.Area(outer) < 0) plane.Mirror();                         // outer turns counter-clockwise in 2D
         holes = holes.Select(h => plane.Area(h) > 0 ? Enumerable.Reverse(h).ToList() : h).ToList(); // holes clockwise
 
@@ -369,7 +375,8 @@ public static class Fill
                     double d = Vector2.DistanceSquared(plane.P(hole[i]), plane.P(poly[j]));
                     if (d < best.d && Visible(plane, poly, holes, hole[i], poly[j])) best = (d, i, j);
                 }
-            if (best.i < 0) continue;
+            // Leaving an unbridgeable hole out would fill across it and erase the cut.
+            if (best.i < 0) return new();
             // A corner an earlier bridge joined is in the outline twice: join at the copy whose side the hole is on.
             var q = plane.P(hole[best.i]);
             best.j = Enumerable.Range(0, poly.Count).FirstOrDefault(j => poly[j] == poly[best.j] && Opens(plane, poly, j, q), best.j);
@@ -530,6 +537,8 @@ public static class Fill
     static List<int> Clean(List<int> loop) => loop.Where((v, k) => v != loop[(k + 1) % loop.Count]).ToList();
     static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
     static double Cross(Vector2 a, Vector2 b) => (double)a.X * b.Y - (double)a.Y * b.X;
+
+    static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
     static double Wrap(double a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
 
     static List<double> Unwrap(List<double> a, double? first = null)

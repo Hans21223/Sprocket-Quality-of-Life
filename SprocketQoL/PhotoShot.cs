@@ -17,7 +17,8 @@ internal static class PhotoShot
     static PhotomodeOverlay? overlay;
     static SprocketApplication? app;
     static SettingsProfile? before;
-    static bool overlayWas;
+    static bool overlayWas, overlayCaptured;
+    static int captureId;
     static string file = "";
 
     /// While true nothing of the mod draws on screen (it would be in the photo).
@@ -28,18 +29,20 @@ internal static class PhotoShot
         try
         {
             if (step >= 0) { Advance(); return; }
-            if (Keyboard.current is not { } keys || !keys.f8Key.wasPressedThisFrame) return;
+            if (DrawingSheet.Capturing || Keyboard.current is not { } keys || !keys.f8Key.wasPressedThisFrame || MeshTools.Typing()) return;
             overlay = UnityEngine.Object.FindObjectOfType<PhotomodeOverlay>();
             app = UnityEngine.Object.FindObjectOfType<SprocketApplication>();
             if (overlay == null || app == null) return; // not in photo mode
+            overlayWas = overlay.overlayVisible;
+            overlayCaptured = true;
+            captureId++;
             var current = app.CurrentSettings;
             before = Profile(current, current.Graphics.Copy());
             var max = Profile(current, current.Graphics.Copy());
             Maximise(max.Graphics);
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "My Games", "Sprocket", "Photos");
             Directory.CreateDirectory(dir);
-            file = Path.Combine(dir, $"Sprocket {DateTime.Now:yyyy-MM-dd HH-mm-ss}.png");
-            overlayWas = overlay.overlayVisible;
+            file = Drawing.UnusedPath(Path.Combine(dir, $"Sprocket {DateTime.Now:yyyy-MM-dd HH-mm-ss}.png"));
             overlay.SetOverlayVisible(false);
             app.ApplySettings(max);
             step = 0; frames = 0;
@@ -60,7 +63,7 @@ internal static class PhotoShot
             if (step == 0 && frames >= SettleFrames)
             {
                 shotDone = false; shotError = null;
-                if (DesignEditor.Instance is { } editor) editor.StartCoroutine(Shoot().WrapToIl2Cpp());
+                if (DesignEditor.Instance is { } editor) editor.StartCoroutine(Shoot(captureId, file).WrapToIl2Cpp());
                 else throw new InvalidOperationException("no editor to run photo coroutine");
                 step = 1; frames = 0;
             }
@@ -92,9 +95,12 @@ internal static class PhotoShot
 
     /// The finished frame, as shown on screen, saved as a PNG. (The game's own ScreenCapture.CaptureScreenshot can't be
     /// called from a mod: its file name doesn't pass through.)
-    static System.Collections.IEnumerator Shoot()
+    static System.Collections.IEnumerator Shoot(int id, string destination)
     {
         yield return new WaitForEndOfFrame(); // after everything is drawn
+        // A timed-out or cancelled coroutine must not capture restored settings, overwrite a
+        // later shot's destination, or signal completion for a new capture.
+        if (id != captureId || step < 0) yield break;
         Texture2D? shot = null;
         try
         {
@@ -112,22 +118,23 @@ internal static class PhotoShot
             // particle coverage/distortion values. Encoding that alpha makes viewers blend the smoke AGAIN.
             // Save an opaque RGB photograph without multiplying or compositing its already-finished colours.
             // GetPixels32 and SavePng both use bottom-up rows, so the original orientation is preserved.
-            Drawing.SavePng(file, shot.width, shot.height, rgb);
+            Drawing.SavePng(destination, shot.width, shot.height, rgb);
             Plugin.ModLog.LogInfo($"QOL_PHOTO opaque RGB output; discarded render alpha on {nonOpaque} pixels");
         }
-        catch (Exception ex) { shotError = ex; }
+        catch (Exception ex) { if (id == captureId) shotError = ex; }
         finally { if (shot != null) UnityEngine.Object.Destroy(shot); }
-        shotDone = true;
+        if (id == captureId) shotDone = true;
     }
 
     /// Settings back as they were, and the overlay if it was showing.
     static void Restore()
     {
         step = -1;
+        captureId++;
         try { if (app != null && before != null) app.ApplySettings(before); }
         catch (Exception ex) { Plugin.ModLog.LogError($"QOL_PHOTO couldn't put the graphics settings back (reopen Settings to fix): {ex}"); }
-        try { if (overlay != null && overlayWas) overlay.SetOverlayVisible(true); } catch { }
-        before = null;
+        try { if (overlay != null && overlayCaptured) overlay.SetOverlayVisible(overlayWas); } catch { }
+        before = null; app = null; overlay = null; overlayCaptured = false;
     }
 
     /// A copy of the player's settings with its own graphics settings (the copy's may be shared with the original).

@@ -30,9 +30,12 @@ internal static class Drawing
         var index = new Dictionary<(long, long, long), int>();
         var corners = new List<Vector3>();
         var map = new int[points.Count];
+        Array.Fill(map, -1);
         for (int i = 0; i < points.Count; i++)
         {
             var p = points[i];
+            // One corrupt imported vertex must not turn every projected bound/depth into NaN.
+            if (!float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z)) continue;
             var key = ((long)MathF.Round(p.X * 10000), (long)MathF.Round(p.Y * 10000), (long)MathF.Round(p.Z * 10000));
             if (!index.TryGetValue(key, out int at)) { at = corners.Count; index[key] = at; corners.Add(p); }
             map[i] = at;
@@ -41,10 +44,12 @@ internal static class Drawing
         var normals = new List<Vector3>();
         for (int t = 0; t + 2 < triangles.Count; t += 3)
         {
+            if ((uint)triangles[t] >= map.Length || (uint)triangles[t + 1] >= map.Length || (uint)triangles[t + 2] >= map.Length) continue;
             int a = map[triangles[t]], b = map[triangles[t + 1]], c = map[triangles[t + 2]];
-            if (a == b || b == c || a == c) continue;
+            if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) continue;
             var n = Vector3.Cross(corners[b] - corners[a], corners[c] - corners[a]);
-            if (n.LengthSquared() < 1e-14f) continue;
+            float area2 = n.LengthSquared();
+            if (!float.IsFinite(area2) || area2 < 1e-14f) continue;
             tris.Add(a); tris.Add(b); tris.Add(c);
             normals.Add(Vector3.Normalize(n));
         }
@@ -357,25 +362,40 @@ internal static class Drawing
     internal static (int W, int H, byte[] Ink) Words(string text, int pixelHeight, bool bold, int maxWidth)
     {
         if (string.IsNullOrWhiteSpace(text)) return (0, 0, Array.Empty<byte>());
+        pixelHeight = Math.Clamp(pixelHeight, 1, 4096);
+        maxWidth = Math.Max(1, maxWidth);
         IntPtr dc = CreateCompatibleDC(IntPtr.Zero), font = IntPtr.Zero, bitmap = IntPtr.Zero;
         IntPtr oldFont = IntPtr.Zero, oldBitmap = IntPtr.Zero;
         try
         {
+            if (dc == IntPtr.Zero) throw new InvalidOperationException("Windows couldn't create a text drawing context");
             font = CreateFontW(-pixelHeight, 0, 0, 0, bold ? 700 : 400, 0, 0, 0, 1, 0, 0, 4, 0, "Segoe UI"); // 4: anti-aliased, not ClearType
+            if (font == IntPtr.Zero) throw new InvalidOperationException("Windows couldn't create the text font");
             oldFont = SelectObject(dc, font);
             const uint Wrap = 0x10, NoPrefix = 0x800, Tabs = 0x40, Measure = 0x400;
             var box = new Rect { Right = maxWidth };
             DrawTextW(dc, text, -1, ref box, Wrap | NoPrefix | Tabs | Measure);
-            int w = Math.Max(1, box.Right), h = Math.Max(1, box.Bottom);
+            if (box.Right > maxWidth)
+            {
+                // Word wrapping leaves an unbroken vehicle name wider than its column.
+                // Split such words at grapheme boundaries so every character remains present.
+                text = WrapLongWords(dc, text, maxWidth);
+                box = new Rect { Right = maxWidth };
+                DrawTextW(dc, text, -1, ref box, Wrap | NoPrefix | Tabs | Measure);
+            }
+            // DrawText's measurement can exceed the width for a single long word. Keep the
+            // bitmap inside its reserved column rather than letting it overlap the next one.
+            int w = Math.Clamp(box.Right, 1, maxWidth), h = Math.Max(1, box.Bottom);
             var info = new BitmapInfo { Size = 40, Width = w, Height = -h, Planes = 1, BitCount = 32 }; // -h: rows from the top
             bitmap = CreateDIBSection(dc, ref info, 0, out var bits, IntPtr.Zero, 0);
             if (bitmap == IntPtr.Zero) throw new InvalidOperationException("Windows couldn't make a picture for the text");
             oldBitmap = SelectObject(dc, bitmap);
+            var bgra = new byte[checked(w * h * 4)];
+            Marshal.Copy(bgra, 0, bits, bgra.Length); // transparent text needs a known black background
             SetTextColor(dc, 0xFFFFFF);
             SetBkMode(dc, 1); // transparent: white letters on the picture's black
             var area = new Rect { Right = w, Bottom = h };
             DrawTextW(dc, text, -1, ref area, Wrap | NoPrefix | Tabs);
-            var bgra = new byte[w * h * 4];
             Marshal.Copy(bits, bgra, 0, bgra.Length);
             var ink = new byte[w * h];
             for (int i = 0; i < ink.Length; i++) ink[i] = Math.Max(bgra[i * 4], Math.Max(bgra[i * 4 + 1], bgra[i * 4 + 2]));
@@ -390,6 +410,29 @@ internal static class Drawing
             if (dc != IntPtr.Zero) DeleteDC(dc);
         }
     }
+
+    static string WrapLongWords(IntPtr dc, string text, int maxWidth) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @"\S+", match =>
+        {
+            string word = match.Value;
+            var boundaries = System.Globalization.StringInfo.ParseCombiningCharacters(word).Append(word.Length).ToArray();
+            var pieces = new List<string>();
+            for (int start = 0; start + 1 < boundaries.Length;)
+            {
+                int low = start + 1, high = boundaries.Length - 1;
+                while (low < high)
+                {
+                    int middle = low + (high - low + 1) / 2;
+                    string part = word.Substring(boundaries[start], boundaries[middle] - boundaries[start]);
+                    var area = new Rect();
+                    DrawTextW(dc, part, -1, ref area, 0x800 | 0x400);
+                    if (area.Right <= maxWidth) low = middle; else high = middle - 1;
+                }
+                pieces.Add(word.Substring(boundaries[start], boundaries[low] - boundaries[start]));
+                start = low;
+            }
+            return string.Join("\n", pieces);
+        });
 
     /// A Words picture onto the sheet in grey `g`, its top left corner at (x, top) (sheet rows from the bottom).
     internal static void Stamp(byte[] rgb, int w, int h, int x, int top, (int W, int H, byte[] Ink) words, byte g)
@@ -430,30 +473,60 @@ internal static class Drawing
     [DllImport("gdi32")] static extern int SetBkMode(IntPtr dc, int mode);
     [DllImport("user32", CharSet = CharSet.Unicode)] static extern int DrawTextW(IntPtr dc, string text, int length, ref Rect rect, uint format);
 
+    /// A photo name that keeps an earlier shot taken in the same second.
+    internal static string UnusedPath(string path)
+    {
+        if (!File.Exists(path)) return path;
+        string folder = Path.GetDirectoryName(path) ?? "", stem = Path.GetFileNameWithoutExtension(path), extension = Path.GetExtension(path);
+        for (int n = 2; ; n++)
+        {
+            string candidate = Path.Combine(folder, $"{stem} ({n}){extension}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+    }
+
     /// An RGB picture (three bytes a pixel, rows from the bottom) as a PNG file.
     internal static void SavePng(string path, int w, int h, byte[] rgb)
     {
-        using var file = File.Create(path);
-        file.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
-        var head = new byte[13];
-        BigEndian(head, 0, w); BigEndian(head, 4, h);
-        head[8] = 8; head[9] = 2; // 8 bits, RGB
-        Chunk(file, "IHDR", head);
-        var packed = new MemoryStream();
-        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true))
-            for (int y = h - 1; y >= 0; y--) { z.WriteByte(0); z.Write(rgb, y * w * 3, w * 3); } // PNG rows go from the top
-        Chunk(file, "IDAT", packed.ToArray());
-        Chunk(file, "IEND", Array.Empty<byte>());
+        ArgumentNullException.ThrowIfNull(rgb);
+        if (w <= 0 || h <= 0 || (long)w * h * 3 != rgb.Length)
+            throw new ArgumentException("PNG dimensions must match the RGB image.");
+        string destination = Path.GetFullPath(path);
+        string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            // Finish a complete PNG beside the destination before replacing it. Invalid input
+            // or a failed write must not truncate a player's previous successful export.
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                file.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+                var head = new byte[13];
+                BigEndian(head, 0, w); BigEndian(head, 4, h);
+                head[8] = 8; head[9] = 2; // 8 bits, RGB
+                Chunk(file, "IHDR", head);
+                using var packed = new MemoryStream();
+                using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true))
+                    for (int y = h - 1; y >= 0; y--) { z.WriteByte(0); z.Write(rgb, y * w * 3, w * 3); }
+                // Reuse the compressed buffer instead of copying the entire PNG payload.
+                Chunk(file, "IDAT", packed.GetBuffer().AsSpan(0, checked((int)packed.Length)));
+                Chunk(file, "IEND", ReadOnlySpan<byte>.Empty);
+            }
+            File.Move(temporary, destination, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+        }
     }
 
-    static void Chunk(Stream s, string type, byte[] data)
+    static void Chunk(Stream s, string type, ReadOnlySpan<byte> data)
     {
         var head = new byte[8];
         BigEndian(head, 0, data.Length);
         for (int i = 0; i < 4; i++) head[4 + i] = (byte)type[i];
         s.Write(head);
         s.Write(data);
-        uint crc = Crc(Crc(0xffffffff, head, 4, 4), data, 0, data.Length) ^ 0xffffffff;
+        uint crc = Crc(Crc(0xffffffff, head.AsSpan(4, 4)), data) ^ 0xffffffff;
         var tail = new byte[4];
         BigEndian(tail, 0, (int)crc);
         s.Write(tail);
@@ -468,9 +541,9 @@ internal static class Drawing
         return c;
     }).ToArray();
 
-    static uint Crc(uint crc, byte[] data, int from, int count)
+    static uint Crc(uint crc, ReadOnlySpan<byte> data)
     {
-        for (int i = from; i < from + count; i++) crc = CrcTable[(crc ^ data[i]) & 0xff] ^ (crc >> 8);
+        foreach (byte value in data) crc = CrcTable[(crc ^ value) & 0xff] ^ (crc >> 8);
         return crc;
     }
 }

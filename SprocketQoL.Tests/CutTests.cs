@@ -1141,4 +1141,16 @@ static class CutTests
         Check(cuts > 0 && pockets > 0, "found real add-ons that cut their structure");
         Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {notCutting} add-ons not touching anything, {openCutters} open add-ons refused), slowest cut {slowest} ms: {slowestWhat}");
     }
+
+    internal static void RunGeometry()
+    {
+        checks=0;
+        CheckMeshTools();
+        CheckMergeFaces();
+        CheckFill();
+        CheckHole("fixture: hole in the top",Top,1);
+        CheckHole("fixture: hole through the shell",Through,2);
+        CheckPocket("fixture: pocket in the top",Top,.2,1);
+        Console.WriteLine($"CUT_GEOMETRY_TESTS_OK: {checks} checks");
+    }
 }

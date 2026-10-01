@@ -17,7 +17,7 @@ using Num = System.Numerics.Vector3;
 namespace SprocketQoL;
 
 /// Blender-style mesh tools for hand-made structures (MeshPlans does the maths): Flatten (P), Loop cut (T), Inset (I),
-/// Bevel (V), Select linked flat faces (U) and Proportional editing (O); plus a 0.5 mm grid and an orthographic view
+/// Bevel (V), Smooth Edge, Fillet, Select linked flat faces (U) and Proportional editing (O); plus a 0.5 mm grid and an orthographic view
 /// (Numpad 5). Each tool runs as one of the game's own mesh edits, so Ctrl+Z undoes it, and follows the editor's Mirror.
 [HarmonyPatch]
 public static class MeshTools
@@ -27,6 +27,7 @@ public static class MeshTools
     // The game's Delete operation, given nothing to delete, carries a tool so it gets the game's undo and mesh rebuild.
     // Only these instances run a tool; every other Delete runs as normal.
     static readonly Dictionary<IntPtr, (DeleteOp Op, string Name, Func<EditMesh, (bool Done, string Message)> Apply)> ours = new();
+    static readonly Dictionary<IntPtr, IntPtr> carriedTools = new();
     static PlateStructureEditOperations? notify;
 
     [HarmonyPrefix, HarmonyPatch(typeof(DeleteOp), "ExecuteInternal")]
@@ -44,11 +45,37 @@ public static class MeshTools
 
     internal static void Run(PlateStructureEditor editor, string name, Func<EditMesh, (bool, string)> apply) => Ui.Guard(name, () =>
     {
+        var designer = DesignEditor.Instance;
+        if (DrawingSheet.Capturing || PhotoShot.Capturing || designer?.IsBusy == true || designer?.Core?.Editor?.OperationInProgress == true)
+        {
+            editor.operations.NotifyError(name + ": finish the current edit or capture first");
+            return;
+        }
         var op = new DeleteOp(DeleteType.None) { Name = name };
         ours[op.Pointer] = (op, name, apply);
         var ops = notify = editor.operations;
-        ops.Execute(editor.meshEditor.CreateTopoOp(op), StructureEditOperationOptions.None, ops.GetNewGroupID());
-        editor.meshEditor.SelectFlush();
+        bool retained = false;
+        try
+        {
+            var carried = ops.Execute(editor.meshEditor.CreateTopoOp(op), StructureEditOperationOptions.None, ops.GetNewGroupID());
+            if (carried?.operation is { } historyOp)
+            {
+                carriedTools[historyOp.Pointer] = op.Pointer;
+                retained = true;
+            }
+            else ours.Remove(op.Pointer);
+            editor.meshEditor.SelectFlush();
+        }
+        catch { if (!retained) ours.Remove(op.Pointer); throw; }
+        finally { notify = null; }
+    });
+
+    // Keep tool callbacks for redo only as long as their native undo operation lives.
+    // ReleaseInternal is invoked when the game discards/clears an operation's history.
+    [HarmonyPrefix, HarmonyPatch(typeof(Operations.Operation), nameof(Operations.Operation.ReleaseInternal))]
+    static void ReleaseTool(Operations.Operation __instance) => Ui.Guard("Mesh tool history", () =>
+    {
+        if (carriedTools.Remove(__instance.Pointer, out var tool)) ours.Remove(tool);
     });
 
     /// The mesh as indices: every face's corners (in its own turning), point positions, and what's selected.
@@ -300,10 +327,10 @@ public static class MeshTools
     // ---------- the tools ----------
 
     static MeshPlans.FlattenMode flattenMode;
-    static readonly string[] FlattenNames = { "Flatten: best-fit plane", "Flatten: level (one height)", "Flatten: sideways (one x)", "Flatten: lengthways (one z)" };
+    static readonly string[] FlattenNames = { "Mode: best-fit plane", "Mode: level (same height)", "Mode: sideways (same X)", "Mode: lengthways (same Z)" };
     static float insetMm = 50, bevelMm = 30, flatAngle = 5, radiusMm = 500;
-    static float smoothMm = 30;
-    static int smoothSegments = 4, splitSections = 2;
+    static float smoothMm = 30, filletRadiusMm = 30;
+    static int smoothSegments = 4, filletSegments = 4, splitSections = 2;
     static bool splitOtherDirection;
     static IntPtr lastSplitMesh;
     static List<Num[]> lastSplitFaces = new();
@@ -386,6 +413,19 @@ public static class MeshTools
         });
     }
 
+    static void Fillet(PlateStructureEditor e)
+    {
+        if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Fillet: switch to Edges and select edges"); return; }
+        bool mirror = e.meshEditor.Symmetry;
+        float radius = filletRadiusMm / 1000; int segments = filletSegments;
+        Run(e, "Fillet", mesh =>
+        {
+            var v = new View(mesh);
+            var edges = WithTwins(v, v.SelectedEdges, mirror).Select(edge => FaceMerge.Key(edge.Item1, edge.Item2)).ToHashSet();
+            return Apply(mesh, v, EdgeFillet.Round(v.Pos, v.Corners, edges, radius, segments), "fillet", preserveBevelEdges: true, roundedEdges: edges);
+        });
+    }
+
     static void SplitEdges(PlateStructureEditor e)
     {
         if (e.meshEditor.SelectType != MeshEditType.Face) { e.operations.NotifyError("Split Face: switch to Faces and select the face to split"); return; }
@@ -454,7 +494,7 @@ public static class MeshTools
     static float bridgeSmooth = 100; // percent: 0 straight across, 100 about round
     static float mirrorMm = 5;
     static MeshPlans.MirrorKeep mirrorKeep;
-    static readonly string[] KeepNames = { "Fix mirror: both sides meet halfway", "Fix mirror: keep the right side (+x)", "Fix mirror: keep the left side (-x)" };
+    static readonly string[] KeepNames = { "Keep: meet halfway", "Keep: right side", "Keep: left side" };
 
     static Num Image(Num p) => new(-p.X, p.Y, p.Z);
 
@@ -640,7 +680,7 @@ public static class MeshTools
     internal static void Keys()
     {
         var keys = Keyboard.current;
-        if (keys == null || Typing()) return;
+        if (keys == null || Typing() || DrawingSheet.Capturing || PhotoShot.Capturing) return;
         var e = Hotkeys.Current;
         if (e != null && halfGrid) KeepHalfGrid(e);
         bool ctrl = keys.ctrlKey.isPressed;
@@ -680,12 +720,27 @@ public static class MeshTools
     // ---------- 0.5 mm grid ----------
 
     static float? gridBefore;
+    static MeshEditor? gridOwner;
+
+    static void RestoreHalfGrid()
+    {
+        try { if (gridOwner != null && gridBefore is { } before) gridOwner.GridSize = before; }
+        finally { gridOwner = null; gridBefore = null; }
+    }
+
+    [HarmonyPrefix, HarmonyPatch(typeof(MeshEditor), nameof(MeshEditor.Release))]
+    static void ReleaseGrid(MeshEditor __instance) => Ui.Guard("0.5 mm grid", () =>
+    {
+        if (gridOwner?.Pointer == __instance.Pointer) RestoreHalfGrid();
+    });
 
     /// Half a millimetre, in whatever unit the game's grid size is in (it shows millimetres; it may store metres).
     static void KeepHalfGrid(PlateStructureEditor e)
     {
+        if (gridOwner != null && gridOwner.Pointer != e.meshEditor.Pointer) RestoreHalfGrid();
         float now = e.meshEditor.GridSize;
         float half = (gridBefore ?? now) >= 0.01f ? 0.5f : 0.0005f;
+        gridOwner = e.meshEditor;
         gridBefore ??= now;
         if (Math.Abs(now - half) > half * 0.01f) e.meshEditor.GridSize = half;
     }
@@ -886,14 +941,17 @@ public static class MeshTools
 
     static (Bounds? All, Bounds? Body) Boxes()
     {
-        if (Time.unscaledTime - vehicleBoxAt < 1) return vehicleBox;
+        var target = DesignEditor.Instance?.Core?.Target?.Pointer ?? IntPtr.Zero;
+        if (vehicleBoxOwner == target && Time.unscaledTime - vehicleBoxAt < 1) return vehicleBox;
+        vehicleBoxOwner = target;
         vehicleBoxAt = Time.unscaledTime;
         var aerials = AntennaRenderers();
+        var counted = new HashSet<IntPtr>();
         Bounds? all = null, body = null;
         foreach (var part in DesignEditor.Instance?.AllParts() ?? Enumerable.Empty<Sprocket.Vehicles.VehicleObject>())
             foreach (var r in part.GetComponentsInChildren<Renderer>())
             {
-                if (!Drawn(r)) continue;
+                if (!counted.Add(r.Pointer) || !Drawn(r)) continue;
                 var b = r.bounds;
                 all = Grow(all, b);
                 if (!aerials.Contains(r.Pointer)) body = Grow(body, b);
@@ -1022,6 +1080,9 @@ public static class MeshTools
     static int arrowDraws; // since orthographic view went on or off: the size is logged once it has settled
     static float orthoZoom = 1; // on top of the orbit distance, which stops at the game's closest zoom
     static float? farBefore;
+    static Camera? orthoOwner;
+    static bool originalOrthographic;
+    static float originalOrthoSize;
     const float PullBack = 100; // metres the camera steps back in orthographic view, so it never cuts into the vehicle
     static Sprocket.OrbitalMovementController? orbit;
 
@@ -1029,6 +1090,18 @@ public static class MeshTools
     internal static void LeftEditor() => Ui.Guard("Orthographic view", () =>
     {
         if (ortho) ToggleOrtho();
+        RestoreCloseZoom();
+        RestoreHalfGrid();
+        Hotkeys.LeftEditor();
+        Ui.LeftEditor();
+        vehicleBoxAt = -1;
+        vehicleBoxOwner = IntPtr.Zero;
+        vehicleBox = default;
+        foreach (var fill in fills) if (fill != null) UnityEngine.Object.Destroy(fill);
+        fills.Clear(); fullbrightShadows = false;
+        if (shadowless.Count > 0) ToggleShadows();
+        if (flashlight != null) UnityEngine.Object.Destroy(flashlight);
+        flashlight = null; flashLight = null; flashHd = null;
         orbit = null;
     });
 
@@ -1044,16 +1117,21 @@ public static class MeshTools
     /// Perspective again, where the game put the camera, with its own far cut.
     static void PutCameraBack()
     {
-        var cam = Camera.main;
-        if (cam == null) return;
-        cam.orthographic = false;
-        if (orbit != null) cam.transform.SetPositionAndRotation(orbit.AppliedPosition, orbit.AppliedRotation);
+        var cam = orthoOwner;
+        if (cam != null)
+        {
+            cam.orthographic = originalOrthographic;
+            cam.orthographicSize = originalOrthoSize;
+            if (orbit != null) cam.transform.SetPositionAndRotation(orbit.AppliedPosition, orbit.AppliedRotation);
+        }
         Backdrop(cam, plain: false);
-        if (farBefore is { } far) { cam.farClipPlane = far; farBefore = null; }
+        if (farBefore is { } far && cam != null) cam.farClipPlane = far;
+        farBefore = null;
         Ground(cam, default, hide: false);
         Floor(hide: false);
         Fog(off: false);
         ArrowObserversBack();
+        orthoOwner = null;
     }
 
     // The spawn pad and ground under the vehicle, hidden in orthographic view (the vehicle alone, as a drawing shows it).
@@ -1123,17 +1201,18 @@ public static class MeshTools
     static bool groundTried;
     static readonly List<Renderer> groundHidden = new();
 
-    static void Ground(Camera cam, Vector3 at, bool hide)
+    static void Ground(Camera? cam, Vector3 at, bool hide)
     {
         if (!hide)
         {
-            if (groundLayer != null) { cam.cullingMask = maskBefore; groundLayer = null; }
+            if (groundLayer != null && cam != null) cam.cullingMask = maskBefore;
+            groundLayer = null;
             foreach (var r in groundHidden) if (r != null) r.enabled = true;
             groundHidden.Clear();
             groundTried = false;
             return;
         }
-        if (groundTried) return;
+        if (cam == null || groundTried) return;
         groundTried = true;
         // The first thing under the point in view that isn't part of the vehicle.
         Collider? ground = null;
@@ -1162,11 +1241,19 @@ public static class MeshTools
     [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.OrbitalMovementController), nameof(Sprocket.OrbitalMovementController.ApplyInputs))]
     static void OrthoCamera(Sprocket.OrbitalMovementController __instance) => Ui.Guard("Orthographic view", () =>
     {
+        if (DrawingSheet.Capturing || PhotoShot.Capturing) return;
+        var cam = Camera.main;
+        if (orthoOwner is not null && (orthoOwner == null || orthoOwner.Pointer != cam?.Pointer)) PutCameraBack();
         orbit = __instance;
         CloseZoom(__instance);
         if (!ortho) return;
-        var cam = Camera.main;
         if (cam == null) return;
+        if (orthoOwner == null)
+        {
+            orthoOwner = cam;
+            originalOrthographic = cam.orthographic;
+            originalOrthoSize = cam.orthographicSize;
+        }
         if (!orthoLogged)
         {
             orthoLogged = true;
@@ -1272,27 +1359,33 @@ public static class MeshTools
     {
         foreach (var (gizmo, observer) in arrowObservers.Values) if (gizmo != null) gizmo.observer = observer;
         arrowObservers.Clear();
+        if (arrowsViewpoint != null) UnityEngine.Object.Destroy(arrowsViewpoint);
+        arrowsViewpoint = null;
     }
 
     // Orthographic backdrop: the scene as it is, or plain: no sky (one colour behind) and no map (the camera draws only
     // the depth the vehicle fills, so walls, hills and the map's edge in front or behind don't show).
     static int backdrop = 1; // index into BackdropNames
-    static readonly string[] BackdropNames = { "Ortho backdrop: scene", "Ortho backdrop: plain grey", "Ortho backdrop: plain white", "Ortho backdrop: plain black" };
+    static readonly string[] BackdropNames = { "Backdrop: scene", "Backdrop: grey", "Backdrop: white", "Backdrop: black" };
     static readonly Color[] BackdropColours = { default, new(0.32f, 0.33f, 0.35f), Color.white, Color.black };
     static (UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData Hd, UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData.ClearColorMode Mode, Color Colour)? clearBefore;
     static float? orthoNearBefore;
     static (Bounds? All, Bounds? Body) vehicleBox;
+    static IntPtr vehicleBoxOwner;
     static float vehicleBoxAt = -1;
 
-    static void Backdrop(Camera cam, bool plain)
+    static void Backdrop(Camera? cam, bool plain)
     {
         if (!plain)
         {
             if (clearBefore is { } c && c.Hd != null) { c.Hd.clearColorMode = c.Mode; c.Hd.backgroundColorHDR = c.Colour; }
             clearBefore = null;
-            if (orthoNearBefore is { } near) { cam.nearClipPlane = near; orthoNearBefore = null; }
+            if (orthoNearBefore is { } near && cam != null) cam.nearClipPlane = near;
+            orthoNearBefore = null;
+            if (!orthoWhole && farBefore is { } far && cam != null) cam.farClipPlane = far;
             return;
         }
+        if (cam == null) return;
         if (cam.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData>() is { } hd)
         {
             clearBefore ??= (hd, hd.clearColorMode, hd.backgroundColorHDR);
@@ -1300,12 +1393,19 @@ public static class MeshTools
             hd.backgroundColorHDR = BackdropColours[backdrop];
         }
         if (VehicleBounds() is not { } box) return;
-        var depths = Enumerable.Range(0, 8).Select(i => Vector3.Dot(new Vector3((i & 1) == 0 ? box.min.x : box.max.x, (i & 2) == 0 ? box.min.y : box.max.y,
-            (i & 4) == 0 ? box.min.z : box.max.z) - cam.transform.position, cam.transform.forward)).ToList();
+        float nearest = float.MaxValue, furthest = float.MinValue;
+        var position = cam.transform.position;
+        var forward = cam.transform.forward;
+        for (int i = 0; i < 8; i++)
+        {
+            float depth = Vector3.Dot(new Vector3((i & 1) == 0 ? box.min.x : box.max.x, (i & 2) == 0 ? box.min.y : box.max.y,
+                (i & 4) == 0 ? box.min.z : box.max.z) - position, forward);
+            nearest = Math.Min(nearest, depth); furthest = Math.Max(furthest, depth);
+        }
         orthoNearBefore ??= cam.nearClipPlane;
         farBefore ??= cam.farClipPlane;
-        cam.nearClipPlane = Math.Max(0.01f, depths.Min() - 0.05f);
-        cam.farClipPlane = Math.Max(cam.nearClipPlane + 0.1f, depths.Max() + 0.05f);
+        cam.nearClipPlane = Math.Max(0.01f, nearest - 0.05f);
+        cam.farClipPlane = Math.Max(cam.nearClipPlane + 0.1f, furthest + 0.05f);
     }
 
     // The game's height fog, off in orthographic view: the camera stands 100 m back (a haze over the vehicle), and below
@@ -1388,25 +1488,42 @@ public static class MeshTools
     static bool closeZoom = true;
     const float ClosestZoom = 0.05f; // metres from what the camera orbits
     static float? minBefore, nearBefore;
+    static Sprocket.OrbitalMovementController? zoomOwner;
+    static Camera? zoomCamera;
+
+    static void RestoreCloseZoom()
+    {
+        if (zoomOwner != null && minBefore is { } min) zoomOwner.minDistance = min;
+        if (zoomCamera != null && nearBefore is { } near)
+        {
+            if (ortho && orthoNearBefore != null) orthoNearBefore = near;
+            else zoomCamera.nearClipPlane = near;
+        }
+        zoomOwner = null; zoomCamera = null;
+        minBefore = null; nearBefore = null;
+    }
 
     /// The game's orbit camera stops well short of small parts; this lets it come within a few centimetres, and the
     /// camera's near cut follows it in (only while close, so far views keep their depth precision).
     static void CloseZoom(Sprocket.OrbitalMovementController o)
     {
         var cam = Camera.main;
+        if ((zoomOwner is not null && (zoomOwner == null || zoomOwner.Pointer != o.Pointer)) ||
+            (zoomCamera is not null && (zoomCamera == null || zoomCamera.Pointer != cam?.Pointer))) RestoreCloseZoom();
         if (!closeZoom)
         {
-            if (minBefore is { } min) { o.minDistance = min; minBefore = null; }
-            if (nearBefore is { } near && cam != null) { cam.nearClipPlane = near; nearBefore = null; }
+            RestoreCloseZoom();
             return;
         }
         if (minBefore == null)
         {
             minBefore = o.minDistance;
+            zoomOwner = o;
             Plugin.ModLog.LogInfo($"Zoom in close: the game's closest zoom was {o.minDistance:0.00} m, now {ClosestZoom:0.00} m");
         }
         o.minDistance = Math.Min(minBefore.Value, ClosestZoom);
         if (cam == null || ortho) return; // orthographic view sets its own
+        zoomCamera = cam;
         nearBefore ??= cam.nearClipPlane;
         cam.nearClipPlane = Math.Clamp(o.Distance * 0.2f, Math.Min(0.005f, nearBefore.Value), nearBefore.Value);
     }
@@ -1439,6 +1556,7 @@ public static class MeshTools
         public readonly List<Vertex> Movers = new(), Near = new();
         public readonly List<Num> MoverFrom = new(), NearFrom = new();
         public readonly List<(int[] Movers, float[] Weights)> Follow = new();
+        public Num[] Delta = Array.Empty<Num>();
         public Num[]? Final;
     }
     // By the game's move object. Holding the object keeps its address from being reused by a later move while its
@@ -1466,6 +1584,7 @@ public static class MeshTools
         var s = new Session { Mesh = mesh };
         var slot = new Dictionary<int, int>();
         foreach (int m in moving) { slot[m] = s.Movers.Count; s.Movers.Add(all[m]); s.MoverFrom.Add(pos[m]); }
+        s.Delta = new Num[s.Movers.Count];
         foreach (var (v, (movers, weights)) in MeshPlans.Falloff(pos, moving, radiusMm / 1000))
         {
             s.Near.Add(all[v]);
@@ -1478,9 +1597,10 @@ public static class MeshTools
 
     static void Follow(Transformation op)
     {
-        if (SessionOf(op.Pointer) is not { } s) return;
-        var delta = s.Movers.Select((m, i) => HoleQuality.ToNum(m.position) - s.MoverFrom[i]).ToArray();
-        s.Final = new Num[s.Near.Count];
+        if (SessionOf(op.Pointer) is not { } s || s.Near.Count == 0) return;
+        var delta = s.Delta;
+        for (int i = 0; i < s.Movers.Count; i++) delta[i] = HoleQuality.ToNum(s.Movers[i].position) - s.MoverFrom[i];
+        s.Final ??= new Num[s.Near.Count];
         for (int i = 0; i < s.Near.Count; i++)
         {
             var (movers, weights) = s.Follow[i];
@@ -1528,60 +1648,99 @@ public static class MeshTools
     // ---------- panel ----------
 
     [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Guard("Mesh tools", () =>
+    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Mesh tools", layout, () =>
     {
-        var ui = layout.TryCast<IGUIElementDrawer>();
+        var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return;
         Ui.Section(layout, "Mesh tools");
-        ui.InfoField("Keys in brackets. Mirror applies to all of them.\nCtrl+Z undoes each one.", 2);
-        var tip = new UITooltip("Mesh tools", "Flatten: selected points onto one plane. Loop cut: through the ring of quads an edge crosses. " +
-                                "Inset: a smaller copy of the selected faces with a ring around it. Bevel: selected edges become chamfer strips. " +
-                                "Select linked flat: grows the selection over faces lying flat with it.");
-        ui.Button("Flatten (P)", Ui.Callback(() => Flatten(__instance)), ref tip);
-        ui.Button(FlattenNames[(int)flattenMode], Ui.Callback(() => { flattenMode = (MeshPlans.FlattenMode)(((int)flattenMode + 1) % FlattenNames.Length); __instance.RequestRedraw(); }), ref tip);
-        ui.Button("Loop cut (T): select an edge", Ui.Callback(() => LoopCut(__instance)), ref tip);
+        ui.InfoField("Choose Points, Edges or Faces before selecting.\nMesh edits follow Mirror; Ctrl+Z undoes a step.", 2);
+        var flattenTip = new UITooltip("Flatten", "Select three or more points or a face, then choose a mode. Level and axis modes also work with two points. Best-fit makes one flat plane; level makes one height. Sideways keeps one X position; lengthways keeps one Z position. Click the mode to change it. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Flatten (P)", Ui.Callback(() => Flatten(__instance)), ref flattenTip);
+        ui.Button(FlattenNames[(int)flattenMode], Ui.Callback(() => { flattenMode = (MeshPlans.FlattenMode)(((int)flattenMode + 1) % FlattenNames.Length); __instance.RequestRedraw(); }), ref flattenTip);
+        var insetTip = new UITooltip("Inset", "In Faces mode, select faces and choose a width in millimetres. Inset adds a smaller inner face with a border around it. Adjacent selected faces inset together. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Inset width (mm)", insetMm, 1, 500, Ui.FloatCallback(v => insetMm = MathF.Round(v)));
-        ui.Button("Inset (I)", Ui.Callback(() => Inset(__instance)), ref tip);
+        ui.Button("Inset (I)", Ui.Callback(() => Inset(__instance)), ref insetTip);
+
+        Ui.Section(layout, "Edge rounding");
+        ui.InfoField("Edges mode: select edges to round.\nMirror applies; Ctrl+Z undoes the whole edit.", 2);
+        var bevelTip = new UITooltip("Bevel", "In Edges mode, select edges with a face on each side. Width is the distance cut back on each side, in millimetres. Bevel adds one flat strip across each corner. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Bevel width (mm)", bevelMm, 1, 500, Ui.FloatCallback(v => bevelMm = MathF.Round(v)));
-        ui.Button("Bevel (V): select edges", Ui.Callback(() => Bevel(__instance)), ref tip);
-        var smoothTip = new UITooltip("Smooth Edge", "Rounds selected edges into several curved strips. Width is the distance cut back on each side; segments control the number of curved faces. Mirror applies; Ctrl+Z undoes the whole operation.");
+        ui.Button("Bevel (V)", Ui.Callback(() => Bevel(__instance)), ref bevelTip);
+        var smoothTip = new UITooltip("Smooth Edge", "In Edges mode, select edges with a face on each side. Width sets the distance cut back on each side, in millimetres. More segments make the curve smoother. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Smooth width (mm)", smoothMm, 1, 500, Ui.FloatCallback(v => smoothMm = MathF.Round(v)));
         ui.Slider("Smooth segments", smoothSegments, 2, 16, Ui.FloatCallback(v => smoothSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button("Smooth Edge", Ui.Callback(() => SmoothEdge(__instance)), ref smoothTip);
-        var splitTip = new UITooltip("Split Face", "In Faces mode, select the face to split. Straight cuts stay inside selected faces; neighbouring faces only gain matching boundary points. Direction A/B picks the other pair of sides on quads. Mirror applies; turn it off to affect only one side. Ctrl+Z undoes the whole operation.");
+        var filletTip = new UITooltip("Fillet", "In Edges mode, select corners between two flat faces. Radius is the size of the circular curve, in millimetres; more segments make it smoother. Reduce the radius if it cannot fit. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Slider("Fillet radius (mm)", filletRadiusMm, 1, 500, Ui.FloatCallback(v => filletRadiusMm = MathF.Round(v)));
+        ui.Slider("Fillet segments", filletSegments, 2, 16, Ui.FloatCallback(v => filletSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
+        ui.Button("Fillet", Ui.Callback(() => Fillet(__instance)), ref filletTip);
+        Ui.Section(layout, "Subdivision");
+        ui.InfoField("Loop cut: select an edge.\nSplit faces: use Faces mode and select faces.", 2);
+        var loopTip = new UITooltip("Loop cut", "In Edges mode, select an edge. Loop cut runs through adjoining four-sided faces and adds one cut halfway across them. It stops at an open border or a triangle. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Loop cut (T)", Ui.Callback(() => LoopCut(__instance)), ref loopTip);
+        var splitTip = new UITooltip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. Cuts stay inside the selected faces. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
         ui.Slider("Split sections", splitSections, 2, 16, Ui.FloatCallback(v => splitSections = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), ref splitTip);
         ui.Button("Split selected faces", Ui.Callback(() => SplitEdges(__instance)), ref splitTip);
-        var betweenTip = new UITooltip("Select between splits", "Select all faces created inside the most recent split on this structure. Neighbouring faces are excluded. If the split was undone or edited, redo it or split again first.");
+        var betweenTip = new UITooltip("Select between splits", "Selects all faces created inside the latest split on this structure. Split faces first. If that split was undone or its faces changed, redo it or split again before using this button.");
         ui.Button("Select between splits", Ui.Callback(() => SelectBetweenSplits(__instance)), ref betweenTip);
-        ui.Slider("Flat within (°)", flatAngle, 0.5f, 30, Ui.FloatCallback(v => flatAngle = MathF.Round(v * 2) / 2));
-        ui.Button("Select linked flat (U)", Ui.Callback(() => SelectFlat(__instance)), ref tip);
+
+        Ui.Section(layout, "Selection and movement");
+        ui.InfoField("Select linked flat starts from a selected face.\nProportional editing also moves nearby points.", 2);
+        var flatTip = new UITooltip("Select linked flat", "In Faces mode, select a starting face. Adds connected faces within the angle below. A smaller angle follows flatter surfaces; a larger angle also follows gentle bends. Mirror applies.");
+        ui.Slider("Flat angle (°)", flatAngle, 0.5f, 30, Ui.FloatCallback(v => flatAngle = MathF.Round(v * 2) / 2));
+        ui.Button("Select linked flat (U)", Ui.Callback(() => SelectFlat(__instance)), ref flatTip);
         ui.ToggleField("Proportional (O)", proportional, Ui.BoolCallback(v => proportional = v),
-            "Moving, scaling or rotating points pulls the points around them too, less the further away (up to the radius).");
-        ui.Slider("Proportional radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
-        ui.Slider("Flashlight (% of sun)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
-        ui.Slider("Fullbright (% of sun, each light)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
-        {
-            if (Plugin.FullbrightPercent != null) Plugin.FullbrightPercent.Value = MathF.Round(v);
-            FillBrightness();
-        }));
-        ui.ToggleField("Zoom in close", closeZoom, Ui.BoolCallback(v => closeZoom = v),
-            "The camera can come within a few centimetres of small parts (the game stops much further out).");
+            "When moving, scaling or rotating selected points, nearby points follow. Influence fades to zero at the radius below. Mirror applies; Ctrl+Z undoes the move.");
+        ui.Slider("Influence radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
         ui.ToggleField("0.5 mm grid", halfGrid, Ui.BoolCallback(v =>
         {
             halfGrid = v;
-            if (!v && gridBefore is { } before) { __instance.meshEditor.GridSize = before; gridBefore = null; }
-        }), "Snapping (hold Ctrl while moving) uses a 0.5 mm grid instead of the game's smallest, 1 mm.");
-        ui.Slider("Rotation snap (°, 0: the game's)", Plugin.RotationSnap?.Value ?? 0, 0, 90, Ui.FloatCallback(v =>
+            if (!v) RestoreHalfGrid();
+        }), "Hold the snap key (normally Ctrl) while moving to snap to a 0.5 mm grid.");
+        ui.InfoField("Rotation snap: 0 uses the game's setting.", 1);
+        ui.Slider("Rotation snap (°)", Plugin.RotationSnap?.Value ?? 0, 0, 90, Ui.FloatCallback(v =>
         {
             if (Plugin.RotationSnap != null) Plugin.RotationSnap.Value = MathF.Round(v * 4) / 4; // quarter degrees: 3.75° is a 96-sided circle
         }));
+
+        Ui.Section(layout, "Bridge and circle");
+        ui.InfoField("Bridge: select two open edge chains in Edges mode.\nCircle: select points around a loop.", 2);
+        var bridgeTip = new UITooltip("Bridge", "In Edges mode, select two open edge chains or two loops with the same number of points. Bridge joins them with faces. Cuts adds rows between the chains. Smoothness 0 gives a straight join; 100 follows the adjoining surfaces into a curve. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Slider("Bridge cuts", bridgeCuts, 0, 32, Ui.FloatCallback(v => bridgeCuts = (int)Math.Round(v)));
+        ui.Slider("Bridge smoothness (%)", bridgeSmooth, 0, 200, Ui.FloatCallback(v => bridgeSmooth = MathF.Round(v)));
+        ui.Button("Bridge selected edges", Ui.Callback(() => Bridge(__instance)), ref bridgeTip);
+        var circleTip = new UITooltip("Circle", "In Points mode, select at least three points around a loop. Circle spaces them evenly on a flat circle around their centre. To make a smoother circle, add more points with Loop cut first. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Circle selected points", Ui.Callback(() => Circle(__instance)), ref circleTip);
+
+        Ui.Section(layout, "Mirror fixes");
+        ui.InfoField("Fix mirror aligns nearly matching points.\nPoints with no matching partner are selected.", 2);
+        var fixTip = new UITooltip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
+            "that near the middle go onto it, so the editor's Mirror moves them together again. Selected points only, or the whole shape if none are selected. " +
+            "Points left with no mirror image are selected afterwards: the two sides differ there (merged, split or filled on one side only).");
+        ui.Slider("Pair distance (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
+        ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), ref fixTip);
+        ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), ref fixTip);
+        ui.ToggleField("Mirror point merges (M)", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
+            "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
+
+        Ui.Section(layout, "View and lighting");
+        ui.ToggleField("Part mass markers", MassMarkers.PartMarkersShown, Ui.BoolCallback(v =>
+        {
+            MassMarkers.SetPartMarkersShown(v);
+            __instance.RequestRedraw();
+        }), "Shows each part's blue centre-of-mass diamond when COM is enabled in the bottom-right view filters. Turn this off to keep only the vehicle mass marker. Turning COM off hides both kinds.");
+        if (MassMarkers.PartMarkersShown && !MassMarkers.MasterShown)
+            ui.InfoField("Part mass markers are hidden while COM is off in the view filters.", 1);
+        ui.InfoField("Numpad 5: orthographic view.\nF5 shadows, F6 flashlight, F7 fullbright.", 2);
+        ui.ToggleField("Zoom in close", closeZoom, Ui.BoolCallback(v => closeZoom = v),
+            "Lets the camera move close to small parts for detailed editing.");
         ui.ToggleField("Ortho: straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
             "Orthographic view snaps to front, back, sides or top (orbiting flips between them). Numpad 1 / 3 / 7: front, side, top; " +
             "with Ctrl, back and the other side. Off: orbit freely.");
         ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100));
-        var backTip = new UITooltip("Orthographic backdrop", "Scene: the sky and map as they are. Plain: no sky and no map, only the vehicle on one colour (grey, white or black).");
-        ui.Button(BackdropNames[backdrop] + "  (click to change)", Ui.Callback(() => { backdrop = (backdrop + 1) % BackdropNames.Length; __instance.RequestRedraw(); }), ref backTip);
+        var backTip = new UITooltip("Orthographic backdrop", "Click to cycle backgrounds. Scene keeps the sky and map; grey, white and black show only the vehicle on a plain background. Applies in orthographic view.");
+        ui.Button(BackdropNames[backdrop], Ui.Callback(() => { backdrop = (backdrop + 1) % BackdropNames.Length; __instance.RequestRedraw(); }), ref backTip);
         ui.ToggleField("Ortho: whole view", orthoWhole, Ui.BoolCallback(v =>
         {
             orthoWhole = v;
@@ -1591,29 +1750,13 @@ public static class MeshTools
         ui.ToggleField("Ortho: measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
             "Orthographic view, looking straight from the front, back, side or top: the vehicle's overall size across the screen " +
             "(under it) and up the screen (beside it), to the centimetre. Antennas aren't counted.");
-
-        Ui.Section(layout, "Bridge and circle");
-        ui.InfoField("Bridge: in Edges, select the open edges of two\nplates (or two loops), then Bridge.\nCircle: select points round a loop.", 3);
-        var bridgeTip = new UITooltip("Bridge", "Joins two chains of selected edges with a strip of faces, like Blender's Bridge Edge Loops: " +
-            "the open edges of two plates, or two loops of edges (a tube). Both need as many points. Cuts: rows of points across the strip. " +
-            "Smooth: 0 goes straight across; 100 leaves each plate the way it runs and curves round into the other. With Mirror on, the other side too.");
-        ui.Slider("Bridge cuts", bridgeCuts, 0, 32, Ui.FloatCallback(v => bridgeCuts = (int)Math.Round(v)));
-        ui.Slider("Bridge smooth (%)", bridgeSmooth, 0, 200, Ui.FloatCallback(v => bridgeSmooth = MathF.Round(v)));
-        ui.Button("Bridge: select two chains of edges", Ui.Callback(() => Bridge(__instance)), ref bridgeTip);
-        var circleTip = new UITooltip("Circle", "The selected points spread evenly round a true circle (LoopTools' Circle): on their best plane, " +
-            "round their middle, as far out as they are on average. For a rounder shape, loop cut first (more points), then Circle. With Mirror on, the other side follows.");
-        ui.Button("Circle: selected points round a loop", Ui.Callback(() => Circle(__instance)), ref circleTip);
-
-        Ui.Section(layout, "Mirror fixes");
-        ui.InfoField("Mirror pairs points only if they match to a\nfraction of a mm. Fix mirror makes near pairs\nexact again, and selects points with no pair.", 3);
-        var fixTip = new UITooltip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
-            "that near the middle go onto it, so the editor's Mirror moves them together again. Selected points only, or the whole shape if none are selected. " +
-            "Points left with no mirror image are selected afterwards: the two sides differ there (merged, split or filled on one side only).");
-        ui.Slider("Fix mirror within (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
-        ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), ref fixTip);
-        ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), ref fixTip);
-        ui.ToggleField("Merge (M) both sides with Mirror", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
-            "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
+        ui.InfoField("Light strength is relative to the scene's sunlight.", 1);
+        ui.Slider("Flashlight strength (%)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
+        ui.Slider("Fullbright strength (%)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
+        {
+            if (Plugin.FullbrightPercent != null) Plugin.FullbrightPercent.Value = MathF.Round(v);
+            FillBrightness();
+        }));
     });
 }
 
@@ -1623,20 +1766,23 @@ public static class MeshTools
 [HarmonyPatch]
 public static class TurretCopy
 {
-    // The parts added to the copy, with their parents: to put each copy on the copy of its parent afterwards.
-    static readonly List<(Sprocket.Vehicles.VehicleObject Part, Sprocket.Vehicles.VehicleObject Parent)> added = new();
-
     [HarmonyPrefix, HarmonyPatch(typeof(Sprocket.VehicleDesigner.Operations.VehicleOperations), nameof(Sprocket.VehicleDesigner.Operations.VehicleOperations.Duplicate))]
-    static void WholeTurret(ref Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject> instances)
+    static void WholeTurret(ref Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject> instances,
+        out List<(Sprocket.Vehicles.VehicleObject Part, Sprocket.Vehicles.VehicleObject Parent)> __state)
     {
-        added.Clear();
+        // Per-call pairs survive nested duplication without retaining old parts between calls.
+        var added = new List<(Sprocket.Vehicles.VehicleObject Part, Sprocket.Vehicles.VehicleObject Parent)>();
+        __state = added;
         Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject>? more = null;
         var given = instances;
-        Ui.Guard("Turret copy", () => more = WithEverythingOnRings(given));
+        Ui.Guard("Turret copy", () => more = WithEverythingOnRings(given, added));
         if (more != null) instances = more;
+        else added.Clear();
     }
 
-    static Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject>? WithEverythingOnRings(Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject> instances)
+    static Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject>? WithEverythingOnRings(
+        Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject> instances,
+        List<(Sprocket.Vehicles.VehicleObject Part, Sprocket.Vehicles.VehicleObject Parent)> added)
     {
         var sources = instances.Select(i => i?.Object).Where(o => o != null).ToList();
         if (!sources.Any(o => o!.GUID == Conversion.RingGuid)) return null;
@@ -1655,23 +1801,37 @@ public static class TurretCopy
     }
 
     [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.VehicleDesigner.Operations.VehicleOperations), nameof(Sprocket.VehicleDesigner.Operations.VehicleOperations.Duplicate))]
-    static void Reattach(Sprocket.VehicleDesigner.Operations.VehicleOperations __instance, Sprocket.Vehicles.Operations.Duplicate __result, int groupID) => Ui.Guard("Turret copy", () =>
+    static void Reattach(Sprocket.VehicleDesigner.Operations.VehicleOperations __instance, Sprocket.Vehicles.Operations.Duplicate __result, int groupID,
+        List<(Sprocket.Vehicles.VehicleObject Part, Sprocket.Vehicles.VehicleObject Parent)>? __state) => Ui.Guard("Turret copy", () =>
     {
-        if (added.Count == 0 || __result == null) return;
-        int moved = 0, missing = 0;
-        foreach (var (part, parent) in added)
+        if (__state == null) return;
+        try
         {
-            var copy = __result.GetDupe(part);
-            var copyParent = __result.GetDupe(parent);
-            if (copy == null || copyParent == null) { missing++; continue; }
-            if (copy.GetComponent<Sprocket.Vehicles.VehicleTransform>()?.Parent?.VehicleObject?.Pointer == copyParent.Pointer) continue;
-            __instance.SetParent(copyParent.GetReference(), new Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject>(new[] { copy.GetReference() }), groupID);
-            moved++;
+            if (__state.Count == 0 || __result == null) return;
+            int moved = 0, missing = 0;
+            foreach (var (part, parent) in __state)
+            {
+                var copy = __result.GetDupe(part);
+                var copyParent = __result.GetDupe(parent);
+                if (copy == null || copyParent == null) { missing++; continue; }
+                if (copy.GetComponent<Sprocket.Vehicles.VehicleTransform>()?.Parent?.VehicleObject?.Pointer == copyParent.Pointer) continue;
+                __instance.SetParent(copyParent.GetReference(), new Il2CppReferenceArray<Sprocket.Vehicles.ISoftVehicleObject>(new[] { copy.GetReference() }), groupID);
+                moved++;
+            }
+            Plugin.ModLog.LogInfo($"Turret copy: {__state.Count} parts copied with the ring; {moved} moved onto the new ring, {__state.Count - moved - missing} already on it" +
+                                  (missing > 0 ? $", {missing} copies not found" : ""));
         }
-        Plugin.ModLog.LogInfo($"Turret copy: {added.Count} parts copied with the ring; {moved} moved onto the new ring, {added.Count - moved - missing} already on it" +
-                              (missing > 0 ? $", {missing} copies not found" : ""));
-        added.Clear();
+        finally { __state.Clear(); }
     });
+
+    [HarmonyFinalizer, HarmonyPatch(typeof(Sprocket.VehicleDesigner.Operations.VehicleOperations), nameof(Sprocket.VehicleDesigner.Operations.VehicleOperations.Duplicate))]
+    static Exception? ClearCopyState(Exception? __exception,
+        List<(Sprocket.Vehicles.VehicleObject Part, Sprocket.Vehicles.VehicleObject Parent)>? __state)
+    {
+        // The original native operation can fail before its postfix runs. Keep its exception unchanged.
+        __state?.Clear();
+        return __exception;
+    }
 
     [HarmonyPostfix, HarmonyPatch(typeof(PartDefinitionIO), nameof(PartDefinitionIO.DeserializePartDefinitionJSON))]
     static void AllowCopy(PartDefinition __result) => Ui.Guard("Turret copy", () =>
