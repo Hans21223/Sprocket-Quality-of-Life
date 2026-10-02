@@ -16,6 +16,7 @@ public static class ExplodedView
     // game has since put it back itself, e.g. after you moved that part). Parent space, so the order doesn't matter.
     static readonly List<(Transform T, Vector3 Before, Vector3 After)> moved = new();
     static bool on;
+    internal static bool Active => on;
     static float nextRefresh;
 
     internal static void Keys()

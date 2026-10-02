@@ -3,14 +3,13 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
-**Quality of Life 1.8.2** adds constant-radius **Fillet**, preserves individual add-on paint when designs are
-reloaded, and fixes stale turret-motor callbacks and crossed mirrored drives. **COM** now controls the blue part
-mass diamonds, with a separate **Part mass markers** setting. Editor tools have clearer names, grouped foldouts,
-tooltips and help that fits the panel width.
+**Quality of Life 1.8.3** adds an **OBJ export / import** menu (F10). Choose the parts to export, preserving their
+relative positions, rotations and scale. Import OBJ geometry as an editable plate-structure blueprint in a chosen
+faction's library. Imported models do not change the open tank.
 
 Mesh edits and clipboard operations validate geometry and preserve surrounding edge settings, paint and mirror
 images. Photo and drawing exports restore temporary state, prevent overlapping captures and write PNGs safely.
-Acceleration predictions, paint lookups and renderer scans avoid repeated work. See [the 1.8.2 change list](CHANGELOG.md).
+Acceleration predictions, paint lookups and renderer scans avoid repeated work. See [the change list](CHANGELOG.md).
 
 ## What you need
 
@@ -74,8 +73,9 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   works, dents included. A pocket turns the add-on's surface inside the structure into plates with the add-on's
   armour. **Fill** chooses how the plate around the cut is rebuilt: **fewest points** (default) uses only the cut's
   own points and the face's corners, no new ones (like Blender's Boolean; triangles paired into quads where they
-  fit), **rectangle box** surrounds the cut with a clean rectangular box (also toggled via the **Rectangle box** checkbox), **light rings** adds one ring of points between the hole and the corners for evener faces, and **smooth
-  rings** a quad ring hugging the rim and more rings stepping out. Flat neighbouring faces with the same armour are
+  fit), **rectangle box** surrounds the cut with a clean rectangular box (also toggled via the **Rectangle box** checkbox), **light fill** adds points inside the face
+  until no face is long and thin (Delaunay refinement, as in Shewchuk's Triangle; for holes, notches and any outline),
+  and **smooth fill** also a ring of quads along the cut's curved edge and evener faces. Flat neighbouring faces with the same armour are
   rebuilt together. Rivets move onto the new faces. Happens in place; Ctrl+Z undoes it. A mirrored twin of the add-on
   cuts too. A mirrored plate (a twin pair, or one part the game shows on both sides) shares one shape, so it's cut on
   both sides, as the game's own editing does, and stays mirrored; to cut one side only, unmirror it first. Where each
@@ -99,8 +99,9 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   numbers use the ones the game set up for that drive, before it the game's defaults for standard tracks.
 - **Hole quality:** in a hand-made structure's panel, choose how many segments and how big the game's Create Hole tool
   makes a hole. Holes come out round, stay inside their face, and no longer leave faces inside out. **Hole fill:
-  fewest points** (default) joins the hole's ring to the face's corners with no new points; **light rings** puts one
-  ring of points between them, **smooth rings** more, evener rings, and **game's fan** gets the game's own fill back.
+  fewest points** (default) joins the hole's ring to the face's corners with no new points; **light fill** adds points
+  so no face is long and thin, **smooth fill** a ring of quads round the hole and evener faces, and **game's fan** gets
+  the game's own fill back. The circle sits square to the part (flat top, mirror twins match).
 - **Merge faces:** in a hand-made structure, select faces in Faces edit mode and press **Merge selected faces**. Faces
   that share edges become as few faces as their outline allows: two triangles become a quad, a strip of quads one quad,
   a fan a handful of quads. Points inside, and points along straight sides, go. A side point an unselected face also
@@ -240,6 +241,21 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   The lines come from the vehicle's own shapes: where faces meet at an angle, open edges and
   the outline of curved parts, with what's hidden behind other parts left out; each view is outlined from its picture
   too, so every part has its outline. Saved as PNG in `Documents\My Games\Sprocket\Photos`. Takes a few seconds.
+- **OBJ export / import (F10):** opens a separate menu in the vehicle editor, also available from a structure's
+  **OBJ export / import** foldout. Choose whole categories or individual parts; search and paging keep long lists
+  manageable. Defaults export the tank's exterior, tracks, weapons, fittings, baskets, antennas, external fuel tanks
+  and decals. Engines, powertrain, transmissions, ammunition, internal fuel tanks, crew, gunner sights, turret
+  traverse motors and laying drives are unchecked. **All**, **None**, **Defaults** and **Use editor selection**
+  provide quick choices. Export writes an OBJ, material file and texture folder together; keep these files together.
+  Geometry uses a shared tank origin, metres and Y-up, preserving each part's position, rotation, size and mirrors.
+  Turn off exploded view with F2 first. Existing exports are never overwritten.
+  **Import model** saves OBJ geometry as an editable plate-structure blueprint, with optional scale and whole-mm
+  plate thickness. Choose the faction and blueprint name; the destination is
+  `Documents\My Games\Sprocket\Factions\<faction>\Blueprints\Plate Structures`. OBJ objects become disconnected
+  pieces of one editable structure, keeping their relative positions. Add it to a tank from the game's
+  plate-structure library. Existing files
+  and the open tank are preserved. Import restores geometry; it does not rebuild textures, working tracks, guns,
+  engines or crew from an OBJ. Offline geometry and format checks do not replace in-game menu and reload testing.
 - **Max-quality photo (F8 in photo mode):** takes a photo with every graphics quality setting at its best, without
   leaving photo mode: the settings go up and the photo mode overlay hides for about a second, then both come back as
   they were. Resolution, anti-aliasing type and looks (vignette, film grain, depth of field on or off) stay yours.

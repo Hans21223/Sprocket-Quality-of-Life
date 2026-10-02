@@ -26,10 +26,8 @@ internal static class UiPresentation
         new("vehicle.speed", "Speed estimates", "Speed & acceleration"),
         new("parts.paint", "Part paint", "Own paint"),
         new("edit.restore", "Restore previous design", "Undo last Quality of Life edit"),
-        new("drawing.export", "Drawing export (F9)", "Drawing sheet (F9)"),
-        new("drawing.lines", "Drawing appearance", "Drawing lines", "Drawing appearance"),
-        new("drawing.motion", "Movement limits", "Gun movement annotations", "Drawing movement limits"),
-        new("drawing.blueprint", "Blue blueprint", "Blueprint appearance", "Blueprint options"),
+        new("drawing.export", "Drawing sheet (F9)", "Drawing export (F9)"),
+        new("model.obj", "OBJ export / import (F10)"),
     };
 
     static readonly Dictionary<string, Section> byName = BuildNames();

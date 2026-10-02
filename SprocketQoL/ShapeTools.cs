@@ -46,7 +46,7 @@ public static class ShapeTools
             fill = v ? Fill.Mode.Rectangle : (fill == Fill.Mode.Rectangle ? Fill.Mode.Fewest : fill);
             __instance.RequestRedraw();
         }), "Adds a rectangular border around the opening to keep the surrounding face tidy. Off: connects the opening directly to the face's corners.");
-        var fillTip = new UITooltip("Surrounding faces", "Click to cycle the layout around the cut. Fewest points uses only existing corners and the opening. Light rings adds one ring of points. Smooth rings adds more rings for even faces. Rectangle box adds a rectangular border.");
+        var fillTip = new UITooltip("Surrounding faces", "Click to cycle the layout around the cut. Fewest points uses only existing corners and the opening. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads along the cut and more points for even faces. Rectangle box adds a rectangular border.");
         ui.Button($"Faces: {Fill.ModeNames[(int)fill]}", Ui.Callback(() =>
         {
             fill = (Fill.Mode)(((int)fill + 1) % Fill.ModeNames.Length);

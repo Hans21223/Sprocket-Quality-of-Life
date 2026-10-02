@@ -1,7 +1,12 @@
-Quality of Life 1.8.2 - editor tools for Sprocket 0.2.55.5
+Quality of Life 1.8.3 - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
-NEW IN 1.8.2
+NEW IN 1.8.3
+- F10 opens a menu to export selected tank parts to OBJ, or import OBJ as a saved plate-structure blueprint.
+- Export retains relative positions, rotations, scale and mirrors; choose categories or individual parts.
+- Import saves only to the chosen faction's Blueprints\Plate Structures folder and preserves the open tank.
+
+PREVIOUSLY IN 1.8.2
 - Fillet: true constant-radius edge rounding, tangent to both adjoining faces; Mirror and one Ctrl+Z apply.
 - Individual add-on paint presets and assignments survive saved-design reloads, including returning to vehicle paint.
 - Removed turret rings release their motor callbacks; mirrored drive repair and nested copying retain separate links.
@@ -11,6 +16,23 @@ NEW IN 1.8.2
 - F8/F9 captures cannot overlap; temporary render state restores on failure and PNG replacement is validated.
 - Cached acceleration, paint and renderer work; gear predictions only shift when the next gear can pull.
 Generated/Standard mode uses the original game controls.
+
+OBJ IMPORT AND EXPORT (F10)
+F10 opens the OBJ export/import menu; a button also appears in structure panels.
+Choose export categories or individual parts, with search, paging and Defaults/All/None/editor selection.
+Defaults include the tank exterior, tracks, guns, fittings, baskets, antennas, external fuel tanks and decals.
+Engines, powertrain, transmissions, ammunition, internal fuel tanks, crew, gunner sights, turret traverse motors
+and laying drives start unchecked. You can include them individually or by category.
+All geometry uses one tank coordinate frame in metres, Y-up; relative positions, rotations, scale and mirrors stay.
+Export makes an OBJ, MTL and texture folder; keep them together. Choose a new filename; existing files are kept.
+Press F2 to close exploded view before export.
+Import model: choose an OBJ, faction, blueprint name, scale and whole-mm plate thickness. The editable structure
+is saved in Documents\My Games\Sprocket\Factions\<faction>\Blueprints\Plate Structures. OBJ objects become
+disconnected pieces of one editable structure, keeping their relative positions. Add it from the game's
+plate-structure library.
+Import preserves the open tank and existing files. OBJ import contains geometry, not textures or functioning
+tank mechanisms. OBJ geometry, parser, classification and import checks run offline. Native menu/export and
+loading the saved plate structure still need in-game testing.
 
 FILLET
 In Edges mode, select edges with two flat adjoining faces on a hand-made structure.
@@ -47,7 +69,7 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   Separate picked pieces: for a shape already in pieces that don't touch, click one face on each piece to split off
   and each whole piece becomes its own add-on.
 - Hole quality: segments and size for the Create Hole tool. Holes come out round and face the right way; the fill
-  around them uses the fewest points by default (light or smooth rings, or the game's own fan, to choose from).
+  around them uses the fewest points by default (light or smooth fill, or the game's own fan, to choose from).
 - Bridge (Blender's Bridge Edge Loops): in Edges mode select the open edges of two plates (or two loops) and press
   Bridge: a strip of faces joins them. Cuts: rows across it; Smooth 0 straight, 100 curves round like a fillet.
 - Circle: select points round a loop and press Circle: they spread evenly round a true circle (loop cut first for a
@@ -111,7 +133,7 @@ ADD-ON TOOLS
 - Boolean cut: uses an add-on to cut a hole, or a pocket with walls and a floor, into the structure under it.
   Any closed shape works, and rivets move onto the new faces. Mirrored plates (twin pairs, or one part shown on
   both sides) share one shape, so they're cut on both sides and stay mirrored. The add-on must be a closed shape. The fill around the cut uses the
-  fewest points by default (Fill: rectangle box to enclose the cut in a clean rectangular box, or light / smooth rings for evener faces).
+  fewest points by default (Fill: rectangle box to enclose the cut in a clean rectangular box, or light / smooth fill for faces without long thin slivers).
 
 INFO
 - Gun length: L/xx in calibers from the muzzle to the breech face (barrel + chamber holding the whole round),

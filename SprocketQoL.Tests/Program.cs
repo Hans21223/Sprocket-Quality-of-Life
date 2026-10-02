@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
+if (args.Contains("--obj-only")) { ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run(); return; }
 if (args.Contains("--paint-only")) { PartPaintPersistenceTests.Run(); return; }
 if (args.Contains("--ui-only")) { UiPresentationTests.Run(); return; }
 if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); return; }
@@ -14,6 +15,7 @@ if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
 if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
 if (args.Contains("--clipboard-only")) { SprocketQoL.Tests.ClipboardTests.Run(); return; }
 TurretDriveTests.Run();
+ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run();
 PartPaintPersistenceTests.Run();
 GizmoPickingTests.Run();
 BevelEdgeTests.Run();
@@ -259,6 +261,26 @@ CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.1f,
     var kept = HoleRing.Fit(hollow, game, new Vector3(1.5f, 2f, 0), out note, 3f); // centre and middle both in the gap
     Check(kept.SequenceEqual(game), "no safe spot: game's ring left alone: " + note);
     Check(HoleRing.Fit(square, game, new Vector3(0.5f, 0.5f, 0), out _, float.NaN).All(p => MathF.Abs(Vector2.Distance(new(p.X, p.Y), new(0.5f, 0.5f)) - 0.2f) < 1e-4f), "bad size value: game's size");
+}
+{
+    // Square to the part, whatever the face's shape or first corner (a player saw circles 5-10° off): flat top and bottom,
+    // 4 segments an upright square, and a mirrored face (x -> -x, corners reversed) gets the mirror image.
+    foreach (int m in new[] { 4, 6, 8, 12, 24, 32 })
+    foreach (var face in new[] { new[] { new Vector3(0.1f, 0, 0.3f), new Vector3(0.9f, 0, 0.5f), new Vector3(0.9f, 1, 0.5f), new Vector3(0.1f, 0.4f, 0.3f) },
+                                 new[] { new Vector3(0.2f, 0.3f, 0), new Vector3(1.4f, 0, 0), new Vector3(1.6f, 0.8f, 0), new Vector3(0.2f, 1, 0) } })
+    {
+        var centre = face.Aggregate(Vector3.Zero, (a, p) => a + p) / 4;
+        var game = Enumerable.Range(0, m).Select(k => centre + 0.1f * new Vector3(MathF.Cos(k * 2.3f), MathF.Sin(k * 2.3f), 0)).ToArray();
+        var ring = HoleRing.Fit(face, game, centre, out _);
+        var normal = Vector3.Normalize(HoleRing.Normal(face));
+        var up = Vector3.Normalize(Vector3.UnitY - normal * normal.Y);
+        var heights = ring.Select(p => Vector3.Dot(p - centre, up)).OrderBy(h => h).ToArray();
+        Check(MathF.Abs(heights[^1] - heights[^2]) < 1e-4f && MathF.Abs(heights[0] - heights[1]) < 1e-4f, $"{m}-segment hole has a flat top and bottom");
+        if (m == 4) Check(ring.All(p => MathF.Abs(MathF.Abs(Vector3.Dot(p - centre, up)) - MathF.Abs(heights[0])) < 1e-4f), "4 segments: an upright square");
+        var mirrored = face.Reverse().Select(p => p with { X = -p.X }).ToArray();
+        var twin = HoleRing.Fit(mirrored, game.Select(p => p with { X = -p.X }).ToArray(), centre with { X = -centre.X }, out _);
+        Check(ring.All(p => twin.Any(q => Vector3.Distance(q, p with { X = -p.X }) < 1e-4f)), $"{m}-segment hole on the mirrored face is the mirror image");
+    }
 }
 Console.WriteLine($"HOLE_TESTS_OK: {checks} checks total");
 

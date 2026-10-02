@@ -7,6 +7,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\SprocketQoL\ObjMeshFormat.cs" Link="ObjMeshFormat.cs" />
+    <Compile Include="..\SprocketQoL\ObjBlueprintImport.cs" Link="ObjBlueprintImport.cs" />
+    <Compile Include="..\SprocketQoL\ObjPlateFiles.cs" Link="ObjPlateFiles.cs" />
+    <Compile Include="..\SprocketQoL\ObjExportGeometry.cs" Link="ObjExportGeometry.cs" />
+    <Compile Include="..\SprocketQoL\ObjExportPolicy.cs" Link="ObjExportPolicy.cs" />
     <Compile Include="..\SprocketQoL\UiPresentation.cs" Link="UiPresentation.cs" />
     <Compile Include="..\SprocketQoL\PartPaintPersistence.cs" Link="PartPaintPersistence.cs" />
     <Compile Include="..\SprocketQoL\Conversion.cs" Link="Conversion.cs" />

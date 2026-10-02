@@ -194,6 +194,35 @@ static class CutTests
             double got = Math.Abs(faces.Sum(A)), unsigned = faces.Sum(f => Math.Abs(A(f)));
             Check(Math.Abs(got - want) < 1e-5 && Math.Abs(unsigned - want) < 1e-5, $"fill with a hole joined at another's joining corner: faces cover the region once ({got:0.00000} / {unsigned:0.00000} vs {want:0.00000})");
         }
+        {
+            // A round notch cut into a face's edge (a player's fan of slivers, 2026-10-02): light and smooth fills add
+            // points so no face is a sliver, and the face's mirror twin (x -> -x, points numbered and started
+            // differently) is filled exactly alike, so the editor's Mirror still pairs every point.
+            var outline = new List<Vector2> { new(0, 0), new(1, 0), new(1, 0.6f) };
+            outline.AddRange(Enumerable.Range(0, 17).Select(k => new Vector2(0.6f + 0.15f * MathF.Cos(-MathF.PI * k / 16), 0.6f + 0.15f * MathF.Sin(-MathF.PI * k / 16))));
+            outline.Add(new(0, 0.6f));
+            foreach (var mode in new[] { Fill.Mode.Fewest, Fill.Mode.Light, Fill.Mode.Smooth })
+            {
+                (List<Vector3> Pos, List<int[]> Faces) Run(bool mirror)
+                {
+                    var pos = outline.Select(p => new Vector3(mirror ? -2 - p.X : 2 + p.X, p.Y, 0.3f)).ToList();
+                    var loop = Enumerable.Range(0, pos.Count).ToList();
+                    if (mirror) { loop.Reverse(); loop = loop.Skip(5).Concat(loop.Take(5)).ToList(); }
+                    return (pos, Fill.Region(pos, loop, new(), Vector3.UnitZ, mode == Fill.Mode.Fewest ? null : new List<Fill.Added>(), mode == Fill.Mode.Light, mode));
+                }
+                var (pos, faces) = Run(false);
+                var (twinPos, twinFaces) = Run(true);
+                double Smallest(int[] f, List<Vector3> p) => Enumerable.Range(0, f.Length).Min(k =>
+                {
+                    Vector3 a = p[f[(k + f.Length - 1) % f.Length]] - p[f[k]], b = p[f[(k + 1) % f.Length]] - p[f[k]];
+                    return Math.Acos(Math.Clamp(Vector3.Dot(a, b) / (a.Length() * b.Length()), -1, 1)) * 180 / Math.PI;
+                });
+                string what = "notch, " + Fill.ModeNames[(int)mode];
+                if (mode != Fill.Mode.Fewest) Check(faces.All(f => Smallest(f, pos) > 8), $"{what}: no sliver (smallest angle {faces.Min(f => Smallest(f, pos)):0.0}°)");
+                string Key(IEnumerable<int[]> fs, List<Vector3> p, float side) => string.Join("|", fs.Select(f => string.Join(";", f.Select(i => $"{side * p[i].X:0.0000},{p[i].Y:0.0000}").OrderBy(x => x))).OrderBy(x => x));
+                Check(Key(faces, pos, 1) == Key(twinFaces, twinPos, -1), $"{what}: the mirror twin is filled exactly alike");
+            }
+        }
     }
 
     /// Create Hole as the game runs it, with every size the Hole size slider allows (the ring pushed out to the face's
@@ -1047,7 +1076,7 @@ static class CutTests
         CheckMirrorTurret(factions, checkRefs);
         {
             // The same hole and pocket with each fill: fewest points adds none beyond the cut's own, and uses fewer
-            // points than light rings, which use fewer than smooth.
+            // points than light fill, which use fewer than smooth.
             foreach (bool pocket in new[] { false, true })
             {
                 var counts = new[] { Fill.Mode.Fewest, Fill.Mode.Rectangle, Fill.Mode.Light, Fill.Mode.Smooth }

@@ -43,15 +43,16 @@ public static class HoleRing
         float turn = 0;
         for (int k = 0; k < m; k++) turn += Vector3.Dot(Vector3.Cross(inner[k] - c, inner[(k + 1) % m] - c), normal);
 
-        // Ring vertex k at angle k, turning the same way as the face's corners.
-        var u = Flat(Corner(0)) - c;
-        if (u.LengthSquared() < 1e-12f) u = Flat(inner[0]) - c;
-        u = Vector3.Normalize(u);
+        // Square to the part: measured from its up direction laid into the face (its forward one on a level face), half a
+        // segment round, so the circle has a flat top, its mirror twin is its mirror image and 4 segments make an upright
+        // square. (Starting from the face's first corner tilted it by a few degrees, differently on each side.) Ring
+        // vertex k turns the same way as the face's corners.
+        var u = Vector3.Normalize(new[] { Vector3.UnitY, Vector3.UnitZ }.Select(a => a - Vector3.Dot(a, normal) * normal).First(a => a.LengthSquared() > 0.1f));
         var v = Vector3.Cross(normal, u);
         var ring = new Vector3[m];
         for (int k = 0; k < m; k++)
         {
-            double angle = 2 * Math.PI * k / m;
+            double angle = 2 * Math.PI * (k + 0.5) / m;
             ring[k] = c + radius * ((float)Math.Cos(angle) * u + (float)Math.Sin(angle) * v);
         }
         note = $"{m} segments, radius {asked * 1000:0} -> {radius * 1000:0} mm, game ring ran {(turn >= 0 ? "same way as" : "opposite to")} the face";
