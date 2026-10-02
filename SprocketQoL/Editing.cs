@@ -383,11 +383,13 @@ public sealed class DesignEditor : MonoBehaviour
             if (wasReady && !ready)
             {
                 MeshTools.LeftEditor(); ExplodedView.LeftEditor(); GearSpeeds.LeftEditor(); PartPaint.LeftEditor();
+                ObjTransfer.LeftEditor();
             }
         });
-        if (ready && !busy) Ui.Guard("Ctrl+J", JoinHotkey);
-        if (ready && !busy && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); }
-        if (ready)
+        Ui.Guard("OBJ menu", ObjTransfer.Update);
+        if (ready && !busy && !ObjTransfer.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
+        if (ready && !busy && !ObjTransfer.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); }
+        if (ready && !ObjTransfer.BlocksInput)
         {
             Ui.Guard("Mesh tools keys", MeshTools.Keys);
             Ui.Guard("Exploded view", ExplodedView.Keys);
@@ -395,8 +397,8 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Hotkeys", Hotkeys.Keys);
             Ui.Guard("Gear speeds", GearSpeeds.Update);
         }
-        Ui.Guard("Photo", PhotoShot.Update);
-        if (ready) Ui.Guard("Drawing sheet", DrawingSheet.Update);
+        if (!ObjTransfer.BlocksInput) Ui.Guard("Photo", PhotoShot.Update);
+        if (ready && !ObjTransfer.BlocksInput) Ui.Guard("Drawing sheet", DrawingSheet.Update);
         // Design edits: a failure ends the edit (so the editor isn't left busy) and says why.
         try
         {
@@ -691,8 +693,11 @@ public sealed class DesignEditor : MonoBehaviour
     public void OnGUI()
     {
         if (PhotoShot.Capturing) return; // nothing of ours in the photo
-        Ui.Guard("Hotkeys", Hotkeys.DrawBox);
-        Ui.Guard("Measurements", MeshTools.DrawMeasures);
+        if (!ObjTransfer.BlocksInput)
+        {
+            Ui.Guard("Hotkeys", Hotkeys.DrawBox);
+            Ui.Guard("Measurements", MeshTools.DrawMeasures);
+        }
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;
         float width = Math.Min(620, Screen.width - 40);
         GUI.Box(new Rect((Screen.width - width) / 2, 80, width, 30), status); // below the game's vehicle name bar

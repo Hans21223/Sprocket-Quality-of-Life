@@ -647,7 +647,7 @@ internal static class DrawingSheet
                         if (seen.Add(cannon.Pointer) && cannon.Blueprint is { Caliber: > 0 } gun)
                         {
                             string called = string.IsNullOrWhiteSpace(gun.Name) || gun.Name == "Unnamed Cannon" ? "" : "  " + gun.Name.Trim();
-                            guns.Add($"{gun.Caliber} mm{called}   L/{gun.BarrelLength / (float)gun.Caliber:0.#}");
+                            guns.Add($"{gun.Caliber} mm{called}   L/{GunLength.Calibers(gun.BoreLength, gun.Caliber)}"); // as the Cannon panel shows it
                         }
                 var armament = string.Join("\n", guns.GroupBy(g => g).Select(g => (g.Count() > 1 ? $"{g.Count()} × " : "") + g.Key));
 
@@ -699,7 +699,9 @@ internal static class DrawingSheet
                     {
                         float limit = float.MaxValue;
                         try { if (track.TopSpeed > 0) limit = track.TopSpeed * 3.6f; } catch { }
-                        float Speed(float ratio) => Sprocket.VehicleDesigner.Powertrains.PowertrainInfo.CalculateSpeed(engine.MaxRPM, ratio * finalDrive, radius) * 3.6f;
+                        // At the rev limit, as the Speed & acceleration panel: the engine never revs past it.
+                        float revLimit = GearSpeeds.RevLimit(engine);
+                        float Speed(float ratio) => Sprocket.VehicleDesigner.Powertrains.PowertrainInfo.CalculateSpeed(revLimit, ratio * finalDrive, radius) * 3.6f;
                         float fwdSpeed = Math.Min(Speed(ratios.Min()), limit);
                         string fwdStr = MathF.Round(fwdSpeed).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
                         if (reverse.Length > 0)

@@ -158,9 +158,7 @@ public static class GearSpeeds
         float radius = sprocket?.HasBlueprint == true ? sprocket.Blueprint.Radius : 0;
         if (radius <= 0 || finalDrive <= 0 || engine.MaxRPM <= 0) return "Can't read the tracks' drive sprocket yet.";
 
-        // The engine never revs past its rev limit: its own setting, or (by default) the upshift rpm + 50.
-        float revLimit = Try(() => engine.RevLimit);
-        if (revLimit <= 0 || revLimit > engine.MaxRPM) revLimit = engine.MaxRPM;
+        float revLimit = RevLimit(engine);
         var (disengage, engage) = ShiftTimes(gearbox);
         var d = new Drive(engine, ratios, finalDrive, radius, mass, Try(() => track.TopSpeed), revLimit, disengage, engage, Try(() => engine.Inertia),
             tracks.Sum(t => Try(() => t!.ComputeSprocketInertia())), Try(() => VehiclePhysics.DefaultLinearDrag), Math.Max(1, tracks.Count));
@@ -201,6 +199,13 @@ public static class GearSpeeds
     }
 
     static float Try(Func<float> read) { try { return read(); } catch { return 0; } }
+
+    /// The engine never revs past its rev limit: its own setting, or (by default) the upshift rpm + 50.
+    internal static float RevLimit(EngineBlueprint engine)
+    {
+        float limit = Try(() => engine.RevLimit);
+        return limit <= 0 || limit > engine.MaxRPM ? engine.MaxRPM : limit;
+    }
 
     /// Disengaging and engaging time of the gearbox's type (synchromesh, constant or sliding mesh).
     static (float Disengage, float Engage) ShiftTimes(TransmissionBlock gearbox)

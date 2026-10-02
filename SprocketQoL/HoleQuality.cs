@@ -90,7 +90,7 @@ public static class HoleQuality
         if (order < 0) corners.Reverse();
         var mode = (Fill.Mode)holeFill;
         var faces = Fill.Region(pos, corners, new List<List<int>> { Enumerable.Range(outer.Length, inner.Length).ToList() }, normal,
-                                mode == Fill.Mode.Fewest ? null : added, mode == Fill.Mode.Light);
+                                mode == Fill.Mode.Fewest ? null : added, mode == Fill.Mode.Light, mode);
         if (faces.Count == 0 || faces.Any(f => f.Length is < 3 or > 4 || f.Distinct().Count() != f.Length)) return null;
         foreach (var a in added)
         {
@@ -251,7 +251,7 @@ public static class HoleQuality
         ui.Slider("Circle segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));
         // Applied in HoleRing.Fit, never through the game's CreateHoleOp.HoleRadiusScale: see there.
         ui.Slider("Relative size (%)", sizePercent, 10, 300, Ui.FloatCallback(v => sizePercent = (int)Math.Round(v)));
-        var tip = new UITooltip("Surrounding faces", "Click to cycle the faces around the hole. Fewest points uses the circle and existing corners. Light rings adds one ring of points. Smooth rings adds several rings for even faces. Original triangle fan uses the game's layout. The circle stays inside the selected face.");
+        var tip = new UITooltip("Surrounding faces", "Click to cycle the faces around the hole. Fewest points uses the circle and existing corners. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads round the hole and more points for even faces. Original triangle fan uses the game's layout. The circle stays inside the selected face.");
         // The panel only redraws when asked, so ask, or the button would keep showing the old choice.
         ui.Button(FillNames[holeFill], Ui.Callback(() => { holeFill = (holeFill + 1) % FillNames.Length; __instance.RequestRedraw(); }), ref tip);
     });

@@ -195,6 +195,7 @@ public static class Hotkeys
         found.Add("Spacing: F2  Exploded view   |   F3 / F4  Closer / further");
         found.Add("Lighting: F5  Shadows   |   F6  Flashlight   |   F7  Fullbright");
         found.Add("Capture: F8  Photo (photo mode)   |   F9  Drawing sheet");
+        found.Add("Models: F10  OBJ export / import menu");
         return found;
     }
 

@@ -27,5 +27,5 @@ public static class GunLength
                      "L/ is total length divided by calibre. The muzzle brake is excluded.", 5);
     });
 
-    static string Calibers(int lengthMm, int caliberMm) => caliberMm > 0 ? (lengthMm / (float)caliberMm).ToString("0.##") : "0";
+    internal static string Calibers(int lengthMm, int caliberMm) => caliberMm > 0 ? (lengthMm / (float)caliberMm).ToString("0.##") : "0";
 }

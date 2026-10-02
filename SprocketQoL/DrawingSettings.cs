@@ -30,9 +30,8 @@ public static class DrawingSettings
             ui.ToggleField(label, value, Ui.BoolCallback(v => { set(v); redraw(); }), help);
 
         Ui.Section(layout, "Drawing sheet (F9)");
-        ui.InfoField("Press F9 to save drawing sheets to Photos. Settings below are remembered.", 2);
+        ui.InfoField("Press F9 to save drawing sheets to Photos. These settings are remembered.", 2);
 
-        Ui.Section(layout, "Drawing appearance");
         bool lines = !(Plugin.DrawingNoWireframe?.Value ?? false);
         Toggle("Show drawing lines", lines,
             v => { if (Plugin.DrawingNoWireframe != null) Plugin.DrawingNoWireframe.Value = !v; },
@@ -50,15 +49,13 @@ public static class DrawingSettings
                 "On: adds only the vehicle's outer silhouette over the visible interior. Off: draws the full wireframe on the see-through sheet.");
         }
 
-        Ui.Section(layout, "Drawing movement limits");
-        ui.InfoField("Adds dashed limit positions and angle labels over the intact vehicle.", 2);
-        Toggle("Gun elevation", Plugin.DrawingElevation?.Value ?? false,
+        Toggle("Show gun elevation", Plugin.DrawingElevation?.Value ?? false,
             v => { if (Plugin.DrawingElevation != null) Plugin.DrawingElevation.Value = v; },
-            "Side view: shows the gun's elevation and depression limits from its laying drive. Does not cut away the tank.");
-        Toggle("Gun side traverse", Plugin.DrawingTraverse?.Value ?? false,
+            "Side view: dashed gun positions and angle labels at the gun's elevation and depression limits, from its laying drive. Does not cut away the tank.");
+        Toggle("Show gun side traverse", Plugin.DrawingTraverse?.Value ?? false,
             v => { if (Plugin.DrawingTraverse != null) Plugin.DrawingTraverse.Value = v; },
             "Top view: shows independent left/right gun movement from its laying drive, useful for casemates. This does not include turret rotation.");
-        Toggle("Turret rotation", Plugin.DrawingTurretTraverse?.Value ?? false,
+        Toggle("Show turret rotation", Plugin.DrawingTurretTraverse?.Value ?? false,
             v => { if (Plugin.DrawingTurretTraverse != null) Plugin.DrawingTurretTraverse.Value = v; },
             "Top view: shows turret movement using the traverse motor's Min and Max limits. An unrestricted turret gets one 360-degree arc.");
         if (gun != null)
@@ -76,7 +73,6 @@ public static class DrawingSettings
                 }, "Includes this gun in the movement annotations enabled above. Turning it off hides only its limit lines and labels; the gun stays visible. Remembered per design name and gun ID. Shared mounts use the largest included gun; other included guns can still annotate the same mount.");
         }
 
-        Ui.Section(layout, "Blueprint options");
         bool blue = Plugin.DrawingBlue?.Value ?? false;
         Toggle("Save blue blueprint", blue,
             v => { if (Plugin.DrawingBlue != null) Plugin.DrawingBlue.Value = v; },
