@@ -1,5 +1,9 @@
-Quality of Life 1.8.4 - editor tools for Sprocket 0.2.55.5
+Quality of Life 1.8.4.1 - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.8.4.1
+- The drawing sheet's top speed uses the same drivetrain maths as the Speed & acceleration panel.
+- The Shortcuts box can be dragged by its title bar and stays there (Mod Options > Settings puts it back).
 
 NEW IN 1.8.4
 - Speed & acceleration runs the game's own drivetrain maths step by step, read from the design: top speed within

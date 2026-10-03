@@ -20,31 +20,30 @@ public static class MergeFaces
     static readonly string[] SideNames = { "Shared points: remove extra lines", "Shared points: allow gaps", "Shared points: keep corners" };
     static readonly FaceMerge.SidePoints[] SideModes = { FaceMerge.SidePoints.TakeOutLine, FaceMerge.SidePoints.RunPast, FaceMerge.SidePoints.Keep };
 
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Merge faces", layout, () =>
+    internal static void Draw(PlateStructureEditor __instance, Panel layout) => Ui.Inspector("Merge faces", layout, () =>
     {
         var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // face editing is freeform only
         Ui.Section(layout, "Merge faces");
         ui.InfoField("Faces mode: select adjacent faces to simplify their shared surface. Ctrl+Z undoes it.", 2);
-        var sideTip = new UITooltip("Shared boundary points", "Click to cycle how straight-side points shared with unselected faces are handled. Remove extra lines also rebuilds adjoining faces, keeping them connected. Allow gaps skips shared points and can leave seams when moved. Keep corners preserves every shared boundary point.");
-        ui.Button(SideNames[sides], Ui.Callback(() => { sides = (sides + 1) % SideNames.Length; __instance.RequestRedraw(); }), ref sideTip);
-        var tip = new UITooltip("Merge selected faces", "Select at least two faces sharing an edge. Combines coplanar faces into fewer faces; bends over 20 degrees stay separate. Mirror follows the editor's Mirror setting. Ctrl+Z undoes it.");
+        var sideTip = new Tip("Shared boundary points", "Click to cycle how straight-side points shared with unselected faces are handled. Remove extra lines also rebuilds adjoining faces, keeping them connected. Allow gaps skips shared points and can leave seams when moved. Keep corners preserves every shared boundary point.");
+        ui.Button(SideNames[sides], Ui.Callback(() => { sides = (sides + 1) % SideNames.Length; __instance.RequestRedraw(); }), sideTip);
+        var tip = new Tip("Merge selected faces", "Select at least two faces sharing an edge. Combines coplanar faces into fewer faces; bends over 20 degrees stay separate. Mirror follows the editor's Mirror setting. Ctrl+Z undoes it.");
         ui.Button("Merge selected faces", Ui.Callback(() =>
         {
             mirror = __instance.meshEditor.Symmetry;
             MeshTools.Run(__instance, "Merge faces", mesh => Apply(mesh) is var result && result.StartsWith("merged") ? (true, result) : (false, result));
-        }), ref tip);
+        }), tip);
 
         Ui.Section(layout, "Separate");
         ui.InfoField("Move selected faces into new add-ons without changing their position. Ctrl+Z undoes it.", 2);
-        var sepTip = new UITooltip("Separate selection", "The selected faces leave this part and become a new add-on in the same place, " +
+        var sepTip = new Tip("Separate selection", "The selected faces leave this part and become a new add-on in the same place, " +
             "with their thickness, armour and rivets. In Points or Edges mode, faces whose corners are all selected go. " +
             "With Mirror on, the mirrored faces go too; a mirrored part's twin (or image) gives up the same faces to a twin of the new add-on.");
-        ui.Button("Selection to new add-on", Ui.Callback(() => Separate(__instance, pieces: false)), ref sepTip);
-        var pieceTip = new UITooltip("Separate picked pieces", "For a shape already in pieces that don't touch: click one face on each piece " +
+        ui.Button("Selection to new add-on", Ui.Callback(() => Separate(__instance, pieces: false)), sepTip);
+        var pieceTip = new Tip("Separate picked pieces", "For a shape already in pieces that don't touch: click one face on each piece " +
             "(Shift for more) and each whole piece becomes its own add-on in the same place. Pick every piece and the biggest stays here.");
-        ui.Button("Disconnected pieces to add-ons", Ui.Callback(() => Separate(__instance, pieces: true)), ref pieceTip);
+        ui.Button("Disconnected pieces to add-ons", Ui.Callback(() => Separate(__instance, pieces: true)), pieceTip);
     });
 
     /// The selected faces into a new add-on, or (`pieces`) each loose piece with a selected face into its own.

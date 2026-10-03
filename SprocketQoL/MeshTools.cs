@@ -1651,49 +1651,48 @@ public static class MeshTools
 
     // ---------- panel ----------
 
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Mesh tools", layout, () =>
+    internal static void Draw(PlateStructureEditor __instance, Panel layout) => Ui.Inspector("Mesh tools", layout, () =>
     {
         var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return;
         Ui.Section(layout, "Mesh tools");
         ui.InfoField("Choose Points, Edges or Faces before selecting.\nMesh edits follow Mirror; Ctrl+Z undoes a step.", 2);
-        var flattenTip = new UITooltip("Flatten", "Select three or more points or a face, then choose a mode. Level and axis modes also work with two points. Best-fit makes one flat plane; level makes one height. Sideways keeps one X position; lengthways keeps one Z position. Click the mode to change it. Mirror applies; Ctrl+Z undoes the edit.");
-        ui.Button("Flatten (P)", Ui.Callback(() => Flatten(__instance)), ref flattenTip);
-        ui.Button(FlattenNames[(int)flattenMode], Ui.Callback(() => { flattenMode = (MeshPlans.FlattenMode)(((int)flattenMode + 1) % FlattenNames.Length); __instance.RequestRedraw(); }), ref flattenTip);
-        var insetTip = new UITooltip("Inset", "In Faces mode, select faces and choose a width in millimetres. Inset adds a smaller inner face with a border around it. Adjacent selected faces inset together. Mirror applies; Ctrl+Z undoes the edit.");
+        var flattenTip = new Tip("Flatten", "Select three or more points or a face, then choose a mode. Level and axis modes also work with two points. Best-fit makes one flat plane; level makes one height. Sideways keeps one X position; lengthways keeps one Z position. Click the mode to change it. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Flatten (P)", Ui.Callback(() => Flatten(__instance)), flattenTip);
+        ui.Button(FlattenNames[(int)flattenMode], Ui.Callback(() => { flattenMode = (MeshPlans.FlattenMode)(((int)flattenMode + 1) % FlattenNames.Length); __instance.RequestRedraw(); }), flattenTip);
+        var insetTip = new Tip("Inset", "In Faces mode, select faces and choose a width in millimetres. Inset adds a smaller inner face with a border around it. Adjacent selected faces inset together. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Inset width (mm)", insetMm, 1, 500, Ui.FloatCallback(v => insetMm = MathF.Round(v)));
-        ui.Button("Inset (I)", Ui.Callback(() => Inset(__instance)), ref insetTip);
+        ui.Button("Inset (I)", Ui.Callback(() => Inset(__instance)), insetTip);
 
         Ui.Section(layout, "Edge rounding");
         ui.InfoField("Edges mode: select edges to round.\nMirror applies; Ctrl+Z undoes the whole edit.", 2);
-        var bevelTip = new UITooltip("Bevel", "In Edges mode, select edges with a face on each side. Width is the distance cut back on each side, in millimetres. Bevel adds one flat strip across each corner. Mirror applies; Ctrl+Z undoes the edit.");
+        var bevelTip = new Tip("Bevel", "In Edges mode, select edges with a face on each side. Width is the distance cut back on each side, in millimetres. Bevel adds one flat strip across each corner. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Bevel width (mm)", bevelMm, 1, 500, Ui.FloatCallback(v => bevelMm = MathF.Round(v)));
-        ui.Button("Bevel (V)", Ui.Callback(() => Bevel(__instance)), ref bevelTip);
-        var smoothTip = new UITooltip("Smooth Edge", "In Edges mode, select edges with a face on each side. Width sets the distance cut back on each side, in millimetres. More segments make the curve smoother. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Bevel (V)", Ui.Callback(() => Bevel(__instance)), bevelTip);
+        var smoothTip = new Tip("Smooth Edge", "In Edges mode, select edges with a face on each side. Width sets the distance cut back on each side, in millimetres. More segments make the curve smoother. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Smooth width (mm)", smoothMm, 1, 500, Ui.FloatCallback(v => smoothMm = MathF.Round(v)));
         ui.Slider("Smooth segments", smoothSegments, 2, 16, Ui.FloatCallback(v => smoothSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
-        ui.Button("Smooth Edge", Ui.Callback(() => SmoothEdge(__instance)), ref smoothTip);
-        var filletTip = new UITooltip("Fillet", "In Edges mode, select corners between two flat faces. Radius is the size of the circular curve, in millimetres; more segments make it smoother. Reduce the radius if it cannot fit. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Smooth Edge", Ui.Callback(() => SmoothEdge(__instance)), smoothTip);
+        var filletTip = new Tip("Fillet", "In Edges mode, select corners between two flat faces. Radius is the size of the circular curve, in millimetres; more segments make it smoother. Reduce the radius if it cannot fit. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Fillet radius (mm)", filletRadiusMm, 1, 500, Ui.FloatCallback(v => filletRadiusMm = MathF.Round(v)));
         ui.Slider("Fillet segments", filletSegments, 2, 16, Ui.FloatCallback(v => filletSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
-        ui.Button("Fillet", Ui.Callback(() => Fillet(__instance)), ref filletTip);
+        ui.Button("Fillet", Ui.Callback(() => Fillet(__instance)), filletTip);
         Ui.Section(layout, "Subdivision");
         ui.InfoField("Loop cut: select an edge.\nSplit faces: use Faces mode and select faces.", 2);
-        var loopTip = new UITooltip("Loop cut", "In Edges mode, select an edge. Loop cut runs through adjoining four-sided faces and adds one cut halfway across them. It stops at an open border or a triangle. Mirror applies; Ctrl+Z undoes the edit.");
-        ui.Button("Loop cut (T)", Ui.Callback(() => LoopCut(__instance)), ref loopTip);
-        var splitTip = new UITooltip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. Cuts stay inside the selected faces. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
+        var loopTip = new Tip("Loop cut", "In Edges mode, select an edge. Loop cut runs through adjoining four-sided faces and adds one cut halfway across them. It stops at an open border or a triangle. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Loop cut (T)", Ui.Callback(() => LoopCut(__instance)), loopTip);
+        var splitTip = new Tip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. Cuts stay inside the selected faces. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
         ui.Slider("Split sections", splitSections, 2, 16, Ui.FloatCallback(v => splitSections = Math.Clamp((int)MathF.Round(v), 2, 16)));
-        ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), ref splitTip);
-        ui.Button("Split selected faces", Ui.Callback(() => SplitEdges(__instance)), ref splitTip);
-        var betweenTip = new UITooltip("Select between splits", "Selects all faces created inside the latest split on this structure. Split faces first. If that split was undone or its faces changed, redo it or split again before using this button.");
-        ui.Button("Select between splits", Ui.Callback(() => SelectBetweenSplits(__instance)), ref betweenTip);
+        ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), splitTip);
+        ui.Button("Split selected faces", Ui.Callback(() => SplitEdges(__instance)), splitTip);
+        var betweenTip = new Tip("Select between splits", "Selects all faces created inside the latest split on this structure. Split faces first. If that split was undone or its faces changed, redo it or split again before using this button.");
+        ui.Button("Select between splits", Ui.Callback(() => SelectBetweenSplits(__instance)), betweenTip);
 
         Ui.Section(layout, "Selection and movement");
         ui.InfoField("Select linked flat starts from a selected face.\nProportional editing also moves nearby points.", 2);
-        var flatTip = new UITooltip("Select linked flat", "In Faces mode, select a starting face. Adds connected faces within the angle below. A smaller angle follows flatter surfaces; a larger angle also follows gentle bends. Mirror applies.");
+        var flatTip = new Tip("Select linked flat", "In Faces mode, select a starting face. Adds connected faces within the angle below. A smaller angle follows flatter surfaces; a larger angle also follows gentle bends. Mirror applies.");
         ui.Slider("Flat angle (°)", flatAngle, 0.5f, 30, Ui.FloatCallback(v => flatAngle = MathF.Round(v * 2) / 2));
-        ui.Button("Select linked flat (U)", Ui.Callback(() => SelectFlat(__instance)), ref flatTip);
+        ui.Button("Select linked flat (U)", Ui.Callback(() => SelectFlat(__instance)), flatTip);
         ui.ToggleField("Proportional (O)", proportional, Ui.BoolCallback(v => proportional = v),
             "When moving, scaling or rotating selected points, nearby points follow. Influence fades to zero at the radius below. Mirror applies; Ctrl+Z undoes the move.");
         ui.Slider("Influence radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
@@ -1710,21 +1709,21 @@ public static class MeshTools
 
         Ui.Section(layout, "Bridge and circle");
         ui.InfoField("Bridge: select two open edge chains in Edges mode.\nCircle: select points around a loop.", 2);
-        var bridgeTip = new UITooltip("Bridge", "In Edges mode, select two open edge chains or two loops with the same number of points. Bridge joins them with faces. Cuts adds rows between the chains. Smoothness 0 gives a straight join; 100 follows the adjoining surfaces into a curve. Mirror applies; Ctrl+Z undoes the edit.");
+        var bridgeTip = new Tip("Bridge", "In Edges mode, select two open edge chains or two loops with the same number of points. Bridge joins them with faces. Cuts adds rows between the chains. Smoothness 0 gives a straight join; 100 follows the adjoining surfaces into a curve. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Bridge cuts", bridgeCuts, 0, 32, Ui.FloatCallback(v => bridgeCuts = (int)Math.Round(v)));
         ui.Slider("Bridge smoothness (%)", bridgeSmooth, 0, 200, Ui.FloatCallback(v => bridgeSmooth = MathF.Round(v)));
-        ui.Button("Bridge selected edges", Ui.Callback(() => Bridge(__instance)), ref bridgeTip);
-        var circleTip = new UITooltip("Circle", "In Points mode, select at least three points around a loop. Circle spaces them evenly on a flat circle around their centre. To make a smoother circle, add more points with Loop cut first. Mirror applies; Ctrl+Z undoes the edit.");
-        ui.Button("Circle selected points", Ui.Callback(() => Circle(__instance)), ref circleTip);
+        ui.Button("Bridge selected edges", Ui.Callback(() => Bridge(__instance)), bridgeTip);
+        var circleTip = new Tip("Circle", "In Points mode, select at least three points around a loop. Circle spaces them evenly on a flat circle around their centre. To make a smoother circle, add more points with Loop cut first. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Button("Circle selected points", Ui.Callback(() => Circle(__instance)), circleTip);
 
         Ui.Section(layout, "Mirror fixes");
         ui.InfoField("Fix mirror aligns nearly matching points.\nPoints with no matching partner are selected.", 2);
-        var fixTip = new UITooltip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
+        var fixTip = new Tip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
             "that near the middle go onto it, so the editor's Mirror moves them together again. Selected points only, or the whole shape if none are selected. " +
             "Points left with no mirror image are selected afterwards: the two sides differ there (merged, split or filled on one side only).");
         ui.Slider("Pair distance (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
-        ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), ref fixTip);
-        ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), ref fixTip);
+        ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), fixTip);
+        ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), fixTip);
         ui.ToggleField("Mirror point merges (M)", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
             "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
 
@@ -1743,8 +1742,8 @@ public static class MeshTools
             $"Orthographic view snaps to front, back, sides or top (orbiting flips between them). {Keybinds.Shown("front")} / {Keybinds.Shown("side")} / {Keybinds.Shown("top")}: front, side, top; " +
             "with Ctrl, back and the other side. Off: orbit freely.");
         ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100));
-        var backTip = new UITooltip("Orthographic backdrop", "Click to cycle backgrounds. Scene keeps the sky and map; grey, white and black show only the vehicle on a plain background. Applies in orthographic view.");
-        ui.Button(BackdropNames[backdrop], Ui.Callback(() => { backdrop = (backdrop + 1) % BackdropNames.Length; __instance.RequestRedraw(); }), ref backTip);
+        var backTip = new Tip("Orthographic backdrop", "Click to cycle backgrounds. Scene keeps the sky and map; grey, white and black show only the vehicle on a plain background. Applies in orthographic view.");
+        ui.Button(BackdropNames[backdrop], Ui.Callback(() => { backdrop = (backdrop + 1) % BackdropNames.Length; __instance.RequestRedraw(); }), backTip);
         ui.ToggleField("Ortho: whole view", orthoWhole, Ui.BoolCallback(v =>
         {
             orthoWhole = v;

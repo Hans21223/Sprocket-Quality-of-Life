@@ -51,15 +51,14 @@ public static class ObjTransfer
     [HarmonyPrefix, HarmonyPatch(typeof(VehicleEditor), nameof(VehicleEditor.UpdatePointerOperators))]
     static bool BlockPointer() => !BlocksInput;
 
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Inspector(IGUILayout layout) => Ui.Inspector("OBJ transfer", layout, () =>
+    internal static void Inspector(Panel layout) => Ui.Inspector("OBJ transfer", layout, () =>
     {
         var ui = Ui.Drawer(layout);
         if (ui == null) return;
         Ui.Section(layout, "model.obj");
         ui.InfoField($"Export selected tank parts or import an OBJ model. {Keybinds.Shown("obj")} opens the menu.", 2);
-        var tip = new UITooltip("OBJ export and import", "Choose export categories and individual parts. Import an editable plate structure into your chosen faction's library. Exported parts retain their relative positions, rotations and size.");
-        ui.Button($"OBJ export / import ({Keybinds.Shown("obj")})", Ui.Callback(() => queued = Open), ref tip);
+        var tip = new Tip("OBJ export and import", "Choose export categories and individual parts. Import an editable plate structure into your chosen faction's library. Exported parts retain their relative positions, rotations and size.");
+        ui.Button($"OBJ export / import ({Keybinds.Shown("obj")})", Ui.Callback(() => queued = Open), tip);
     });
 
     internal static void Update()

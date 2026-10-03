@@ -6,11 +6,10 @@ namespace SprocketQoL;
 
 internal static class Ui
 {
-    // Replace this factory when a new inspector implementation is supported.
-    // Tools depend on InspectorUi, not the native drawer's concrete layout.
-    internal static Func<IGUILayout, IInspectorBackend?> BackendFactory = NativeInspectorBackend.Create;
+    // Tools depend on Panel and InspectorUi, never the game's panel types: the panel is the game's own (NativePanels) or
+    // QoL's fallback (QolPanel).
     static IInspectorBackend? latestBackend;
-    internal static InspectorUi? Drawer(IGUILayout layout) => BackendFactory(layout) is { } backend ? new(backend) : null;
+    internal static InspectorUi? Drawer(Panel? panel) => panel == null ? null : new(panel.Backend);
     internal static UiPresentation.ScreenBox? InspectorBounds()
     {
         try { return latestBackend?.ScreenBounds; }
@@ -19,9 +18,9 @@ internal static class Ui
     internal static void LeftEditor() => latestBackend = null;
     /// Several native component editors share one inspector layout (e.g. ring and basket).
     /// A QoL postfix must close its final foldout before the next native editor draws.
-    internal static void Inspector(string feature, IGUILayout layout, Action draw) => Guard(feature, () =>
+    internal static void Inspector(string feature, Panel? layout, Action draw) => Guard(feature, () =>
     {
-        var backend = BackendFactory(layout);
+        var backend = layout?.Backend;
         if (backend == null) return;
         latestBackend = backend;
         try { draw(); }
@@ -62,9 +61,9 @@ internal static class Ui
 
     /// Starts a top-level section the player can fold away (the game's own dropdown). It stays folded, across restarts
     /// too (saved in the plugin's config file).
-    internal static void Section(IGUILayout layout, string title)
+    internal static void Section(Panel? layout, string title)
     {
-        var backend = BackendFactory(layout);
+        var backend = layout?.Backend;
         if (backend == null) return;
         string saved = Plugin.Folded?.Value ?? "";
         if (closed == null || saved != foldedValue) { closed = new(saved); foldedValue = saved; }

@@ -71,8 +71,7 @@ public static class Hotkeys
     [HarmonyPostfix, HarmonyPatch(typeof(Transformation), nameof(Transformation.TransformEnd))]
     static void TransformDone() => planeFor = IntPtr.Zero;
 
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Seen(PlateStructureEditor __instance) => Ui.Guard("Hotkeys", () =>
+    internal static void Seen(PlateStructureEditor __instance) => Ui.Guard("Hotkeys", () =>
     {
         if (__instance.TryCast<FreeformPlateStructureEditor>() == null) return; // mesh editing is freeform only
         if (structure?.Pointer != __instance.Pointer) checkedFrame = -1;
@@ -80,6 +79,9 @@ public static class Hotkeys
     });
 
     static Rect closeRect; // where the × was drawn last (from the screen's top left); empty while the box is hidden
+    static Rect boxRect, titleRect; // the whole box and its title bar (dragged to move the box), as drawn last
+    static Vector2? dragAt;
+    static readonly InputShield.Drag drag = new();
     static Rect previousPageRect, nextPageRect;
     static int hintPage, hintPageCount;
     static GUIStyle? hintStyle;
@@ -98,12 +100,18 @@ public static class Hotkeys
 
     internal static void DrawBox()
     {
-        if (!(Plugin.ShowHotkeys?.Value ?? true) || !StructureSelected()) { closeRect = previousPageRect = nextPageRect = default; return; }
+        if (!(Plugin.ShowHotkeys?.Value ?? true) || !StructureSelected()) { closeRect = previousPageRect = nextPageRect = boxRect = default; return; }
         bool rebuilt = lines == null || Time.unscaledTime >= nextLines;
         if (rebuilt) { lines = Lines(); nextLines = Time.unscaledTime + 1; }
         var hints = lines!;
-        if (hints.Count == 0) { closeRect = previousPageRect = nextPageRect = default; return; }
+        if (hints.Count == 0) { closeRect = previousPageRect = nextPageRect = boxRect = default; return; }
         var area = UiPresentation.PlaceHelp(Screen.width, Screen.height, Ui.InspectorBounds());
+        // Dragged by its title bar: kept where it was put (on screen), not beside the panel.
+        if ((dragAt ?? InputShield.Read(Plugin.ShortcutsPosition?.Value)) is { } at)
+        {
+            float left = Math.Clamp(at.x, 0, Math.Max(0, Screen.width - area.Width)), top = Math.Clamp(at.y, 0, Math.Max(0, Screen.height - 80));
+            area = area with { X = left, Y = top, Height = Math.Max(80, Screen.height - top - 8) };
+        }
         float width = area.Width;
         float contentLimit = Math.Max(18, area.Height - 58);
         var style = hintStyle ??= new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 12 };
@@ -121,7 +129,9 @@ public static class Hotkeys
         float contentHeight = 0;
         for (int i = page.Start; i < page.Start + page.Count; i++) contentHeight += lineHeights[i];
         var box = new Rect(area.X, area.Y, width, Math.Min(area.Height, (pages.Length > 1 ? 58 : 30) + contentHeight));
-        GUI.Box(box, $"Shortcuts  ({Keybinds.Shown("hotkeys")} shows / hides, {Keybinds.Shown("menu")} changes keys)");
+        GUI.Box(box, $"Shortcuts  ({Keybinds.Shown("hotkeys")} shows / hides, {Keybinds.Shown("menu")} changes keys; drag to move)");
+        boxRect = box;
+        titleRect = new Rect(box.x, box.y, box.width - 30, 24);
         closeRect = new Rect(box.xMax - 26, box.y + 3, 22, 20);
         GUI.Box(closeRect, "×");
         float y = box.y + 26;
@@ -146,6 +156,14 @@ public static class Hotkeys
     {
         if (MeshTools.Typing() || DrawingSheet.Capturing || PhotoShot.Capturing) return;
         if (Keybinds.Pressed("hotkeys")) Show(!(Plugin.ShowHotkeys?.Value ?? true));
+        // Over the box: the game's mouse controls wait. Its title bar drags it (remembered).
+        if (boxRect.width > 0 && Mouse.current is { } over)
+        {
+            var mp = over.position.ReadValue();
+            if (drag.Active || boxRect.Contains(new Vector2(mp.x, Screen.height - mp.y))) InputShield.Claim();
+            dragAt = drag.Update(titleRect, boxRect.position, at => { if (Plugin.ShortcutsPosition != null) Plugin.ShortcutsPosition.Value = InputShield.Write(at); });
+            if (drag.Active) return;
+        }
         if (closeRect.width > 0 && Mouse.current is { } mouse && mouse.leftButton.wasPressedThisFrame)
         {
             var p = mouse.position.ReadValue();
@@ -165,10 +183,20 @@ public static class Hotkeys
     {
         if (checkedFrame == Time.frameCount) return visible;
         checkedFrame = Time.frameCount;
-        try { visible = structure != null && DesignEditor.Instance?.SelectedParts().Contains((int)structure.Component.VehicleObject.VUID) == true; }
+        try { visible = structure != null && Selected(structure); }
         catch { visible = false; structure = null; } // its part is gone
+        // No panel drawn for it (the game's panel can't be hooked): the structure editor the game has open.
+        if (!visible && Time.unscaledTime >= nextActive)
+        {
+            nextActive = Time.unscaledTime + 0.5f;
+            try { if (PanelSections.Active<FreeformPlateStructureEditor>() is { } open && Selected(open)) { structure = open; visible = true; } }
+            catch { }
+        }
         return visible;
     }
+
+    static float nextActive;
+    static bool Selected(PlateStructureEditor e) => DesignEditor.Instance?.SelectedParts().Contains((int)e.Component.VehicleObject.VUID) == true;
 
     static List<string> Lines()
     {

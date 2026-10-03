@@ -12,8 +12,7 @@ namespace SprocketQoL;
 [HarmonyPatch]
 public static class GunLength
 {
-    [HarmonyPostfix, HarmonyPatch(typeof(CannonEditor), nameof(CannonEditor.OnGUI))]
-    static void Draw(CannonEditor __instance, IGUILayout layout) => Ui.Inspector("Gun length", layout, () =>
+    internal static void Draw(CannonEditor __instance, Panel layout) => Ui.Inspector("Gun length", layout, () =>
     {
         var gun = __instance.Component?.Blueprint;
         var ui = Ui.Drawer(layout);
