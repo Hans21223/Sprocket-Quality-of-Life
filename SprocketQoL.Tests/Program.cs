@@ -6,7 +6,7 @@ if (args.Contains("--paint-only")) { PartPaintPersistenceTests.Run(); return; }
 if (args.Contains("--ui-only")) { UiPresentationTests.Run(); return; }
 if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); return; }
 if (args.Contains("--core-only")) { CoreAuditTests.Run(); GizmoPickingTests.Run(); return; }
-if (args.Contains("--acceleration-only")) { AccelerationTests.Run(); return; }
+if (args.Contains("--drive-only")) { DriveSimTests.Run(); return; }
 if (args.Contains("--fillet-only")) { FilletTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--smooth-split-only")) { SmoothSplitTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
@@ -286,5 +286,5 @@ Console.WriteLine($"HOLE_TESTS_OK: {checks} checks total");
 
 // ---------------- Boolean cut (CutTests.cs) ----------------
 DrawingTests.Run();
-AccelerationTests.Run();
+DriveSimTests.Run();
 CutTests.Run(Path.GetDirectoryName(root)!.Replace(@"\PMC\Blueprints", ""), CheckRefs);

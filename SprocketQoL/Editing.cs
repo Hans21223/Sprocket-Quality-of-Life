@@ -255,14 +255,13 @@ public sealed class DesignEditor : MonoBehaviour
     /// Ctrl+J, as in Blender: the selected add-ons join the last add-on, turret or hull selected (the active one).
     private void JoinHotkey()
     {
-        var keys = UnityEngine.InputSystem.Keyboard.current;
-        if (keys == null || !keys.ctrlKey.isPressed || !keys.jKey.wasPressedThisFrame || MeshTools.Typing() || CaptureBlocked()) return;
+        if (!Keybinds.Pressed("join") || MeshTools.Typing() || CaptureBlocked()) return;
         var picked = SelectedParts();
         var addons = SelectedParts(Conversion.AddonGuid);
         var bodies = SelectedParts(Conversion.CompartmentGuid);
         int target = picked.LastOrDefault(v => addons.Contains(v) || bodies.Contains(v), -1);
         var others = addons.Where(v => v != target).ToList();
-        if (target < 0 || others.Count == 0) { Say("Ctrl+J: select add-ons, then last the add-on, turret or hull they join.", 5); return; }
+        if (target < 0 || others.Count == 0) { Say($"{Keybinds.Shown("join")}: select add-ons, then last the add-on, turret or hull they join.", 5); return; }
         Plugin.ModLog.LogInfo($"Ctrl+J: joining {string.Join(", ", others)} into {target} (selection order {string.Join(", ", picked)})");
         RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into the last part selected.", json => AddonEdits.PlanMerge(json, target, others, LiveShapes(json)));
     }
@@ -369,6 +368,7 @@ public sealed class DesignEditor : MonoBehaviour
     public void Update()
     {
         // The per-frame features each on their own: one that fails (every frame) is logged once and stops no other.
+        Ui.Guard("QoL settings", QolMenu.Update);
         Ui.Guard("Editor lookup", () =>
         {
             bool wasReady = ready;

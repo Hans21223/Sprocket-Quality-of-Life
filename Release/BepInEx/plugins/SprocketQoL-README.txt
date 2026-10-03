@@ -1,21 +1,17 @@
-Quality of Life 1.8.3 - editor tools for Sprocket 0.2.55.5
+Quality of Life 1.8.4 - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
-NEW IN 1.8.3
-- F10 opens a menu to export selected tank parts to OBJ, or import OBJ as a saved plate-structure blueprint.
-- Export retains relative positions, rotations, scale and mirrors; choose categories or individual parts.
-- Import saves only to the chosen faction's Blueprints\Plate Structures folder and preserves the open tank.
+NEW IN 1.8.4
+- Speed & acceleration runs the game's own drivetrain maths step by step, read from the design: top speed within
+  0.1% of a test drive, each gear within about 3%. Every gear's top speed, 0-20/40/60 km/h times. No test drive needed.
+- Every Quality of Life key can be changed: Settings > Mod Options (Tool keys, Editing keys), or the F11 window.
+- Mod Options > Settings: hotkeys box, part mass markers, mirror merge, rotation snap, exploded spread, flashlight,
+  fullbright, backups kept, and an optional drive recorder (off by default).
 
-PREVIOUSLY IN 1.8.2
-- Fillet: true constant-radius edge rounding, tangent to both adjoining faces; Mirror and one Ctrl+Z apply.
-- Individual add-on paint presets and assignments survive saved-design reloads, including returning to vehicle paint.
-- Removed turret rings release their motor callbacks; mirrored drive repair and nested copying retain separate links.
-- COM hides both vehicle and part mass markers. Part mass markers can also be controlled separately.
-- Clearer tool names, grouped foldouts, selection tooltips, width-aware help and a paged shortcut panel.
-- Mesh and clipboard validation preserve surrounding edge flags, corner thickness, paint and mirror images.
-- F8/F9 captures cannot overlap; temporary render state restores on failure and PNG replacement is validated.
-- Cached acceleration, paint and renderer work; gear predictions only shift when the next gear can pull.
-Generated/Standard mode uses the original game controls.
+PREVIOUSLY IN 1.8.3
+- F10 opens a menu to export selected tank parts to OBJ, or import OBJ as a saved plate-structure blueprint.
+- Light and smooth fills around cuts and holes work for any outline, mirror-exact on both sides.
+- Create Hole circles sit square to the part.
 
 OBJ IMPORT AND EXPORT (F10)
 F10 opens the OBJ export/import menu; a button also appears in structure panels.
@@ -138,9 +134,9 @@ ADD-ON TOOLS
 INFO
 - Gun length: L/xx in calibers from the muzzle to the breech face (barrel + chamber holding the whole round),
   with the barrel alone and the round's length; a muzzle brake isn't counted.
-- Speed & acceleration (transmission and engine panels): every gear's top speed at the engine's rev limit (yours
-  if set, else upshift rpm + 50), the most power below it, capped by the tracks' speed limit, and the time from standing to top speed on flat
-  ground, shifting like the game's automatic gearbox. Test drive once so it uses your tracks' own losses.
+- Speed & acceleration (transmission and engine panels): every gear's top speed, the top speed with its rpm and
+  track slip, the most power below the rev limit, and the time from standing to 20, 40, 60... km/h on flat ground,
+  from the game's own engine, gearbox, clutch, sprocket and track maths with the design's own parts.
 
 Merges, cuts and face edits happen in place, and Ctrl+Z undoes them. Each edit also saves a backup of the design
 to BepInEx\SprocketQoLBackups\ (the newest 50 are kept; "Backups kept" in the config). Merge faces and Boolean

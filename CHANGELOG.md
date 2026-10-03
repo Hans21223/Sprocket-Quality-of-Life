@@ -1,3 +1,11 @@
+# Quality of Life 1.8.4
+
+- **Speed & acceleration, rebuilt on the game's own drivetrain:** the estimate now runs the game's engine, gearbox, clutch, sprocket and track maths step by step, as its own physics jobs do, with every input read from the design: the engine's torque curve, rev limiter and inertia, the gearbox and its shift times, each track's sprocket radius, belt bending and drag, the belts' grip and slip, rolling resistance (including the share that loads the belts) and the vehicle's mass. Against recorded test drives: top speed within 0.1%, each gear's acceleration within about 3%, 0-60 km/h within about 2% (the first 10-20 km/h read slower, as the tank's launch rocking isn't modelled). The panel shows every gear's own top speed (marked when the engine can't reach its rev limit in that gear), the top speed with its rpm and track slip, and 0-20 / 0-40 / 0-60 km/h times, worked out in the background. No test drive is needed first any more.
+- **Every Quality of Life key can be changed:** F1-F11, the numpad views, P, T, I, V, U, O and Ctrl+J. Panels and hints show the keys as you bound them.
+- **Mod Options tab in the game's Settings:** after Controls, drawn with the game's own fields, with three pages: Tool keys, Editing keys and Settings (hotkeys box, part mass markers, mirror merge, rotation snap, exploded view spread, flashlight and fullbright brightness, design backups kept). Click a key, then press the new one; Esc cancels, Backspace leaves it without a key, keys shared by two actions show red. **F11** opens the same keys in a window anywhere.
+- **Section names:** "Drawing sheet" and "OBJ export / import" no longer name their key (it can be changed). Folded sections stay folded.
+- **Diagnostics:** an optional drive recorder (Mod Options > Settings, off by default) writes your vehicle's drivetrain to `BepInEx\SprocketQoL-drives` while you drive, to check the speed figures against the game.
+
 # Quality of Life 1.8.3
 
 - **OBJ export menu (F10):** choose categories or individual parts, with search, paging and quick selection buttons. Exterior parts start selected; engines, powertrain, transmissions, ammunition, internal fuel tanks, crew, gunner sights, turret traverse motors and laying drives start unselected.

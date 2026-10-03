@@ -3,9 +3,9 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
-**Quality of Life 1.8.3** adds an **OBJ export / import** menu (F10). Choose the parts to export, preserving their
-relative positions, rotations and scale. Import OBJ geometry as an editable plate-structure blueprint in a chosen
-faction's library. Imported models do not change the open tank.
+**Quality of Life 1.8.4** works out speed and acceleration with the game's own drivetrain maths (top speed within
+0.1% of a test drive), lets you change every Quality of Life key, and adds a **Mod Options** tab to the game's
+Settings for its keys and settings. 1.8.3 added an **OBJ export / import** menu (F10).
 
 Mesh edits and clipboard operations validate geometry and preserve surrounding edge settings, paint and mirror
 images. Photo and drawing exports restore temporary state, prevent overlapping captures and write PNGs safely.
@@ -86,17 +86,14 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   the muzzle to the face of the breech block. That's the barrel plus the chamber, which holds the whole round (in the
   game, the propellant plus a 3-caliber shell). The barrel alone and the round's length are listed below it, to 0.01 caliber; a muzzle brake isn't counted.
 - **Speed & acceleration:** select a transmission or an engine, and its panel lists every gear's top speed (and
-  reverse) and how many seconds the vehicle takes from standing to top speed on flat ground, worked out the way the
-  game drives (read from its engine, gearbox and track code):
-  - top speeds at the engine's **rev limit** (your own rev limit if you set one, else the engine's upshift rpm + 50,
-    never more than its max rpm), capped by the tracks' speed limit, and the most power the engine gives below it;
-  - the automatic gearbox: first gear, then up a gear each time the engine passes the upshift rpm, if the next gear
-    still pulls; while changing, drive fades out and back in over the gearbox type's times;
-  - the engine's power curve, faded out over the last 50 rpm before the rev limit;
-  - the vehicle's mass, the engine and sprockets spinning up, drag, the tracks' rolling resistance, sprocket drag and
-    belt bending, and no more push than the tracks can grip.
-  The tracks' own figures depend on their technology and belt, which the editor doesn't hold: after a test drive the
-  numbers use the ones the game set up for that drive, before it the game's defaults for standard tracks.
+  reverse), the top speed with its rpm and track slip, the most power the engine gives below its rev limit, and the
+  time from standing to 20, 40, 60... km/h on flat ground. It runs the game's own drivetrain maths step by step, as
+  its physics jobs do: the engine's torque curve, rev limiter and inertia; the gearbox, its shift times and the
+  game's driver (launch, upshifts, rev matching); the clutch; each track's sprocket, belt bending and drag; the
+  belts' grip and slip on the ground; rolling resistance, part of which loads the belts; and the vehicle's mass. All
+  of it is read from the design, so no test drive is needed. Against recorded test drives the top speed is within
+  0.1% and each gear's acceleration within about 3%; the first 10-20 km/h read a little slow, as the tank's rocking at
+  launch isn't modelled. A gear marked "short of the rev limit" can't reach it on flat ground.
 - **Hole quality:** in a hand-made structure's panel, choose how many segments and how big the game's Create Hole tool
   makes a hole. Holes come out round, stay inside their face, and no longer leave faces inside out. **Hole fill:
   fewest points** (default) joins the hole's ring to the face's corners with no new points; **light fill** adds points
@@ -283,6 +280,9 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   all / none, **E** extrude, **J** split, **M** merge points, **H** slope, **X / Y / Z** lock to an axis, and more. The
   keys are read from the game's live bindings, so rebound keys show as rebound. **×** closes the box, **F1** shows or
   hides it, and it remembers which.
+- **Keys and settings:** every Quality of Life key can be changed in the game's **Settings > Mod Options** tab (Tool
+  keys, Editing keys) or the **F11** window: click a key, press the new one. Its **Settings** page holds the options
+  that have no panel of their own.
 - **Move or scale without height:** while moving or scaling, **Shift + the vertical-lock key (Z)** locks to the two
   flat axes, so a scale keeps the height. Shift + X or Shift + Y leaves out that axis instead. These are the game's
   own two-axis locks, which it has no key for; the axis key alone goes back to the one-axis lock.

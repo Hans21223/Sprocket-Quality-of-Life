@@ -29,7 +29,7 @@ internal static class PhotoShot
         try
         {
             if (step >= 0) { Advance(); return; }
-            if (DrawingSheet.Capturing || Keyboard.current is not { } keys || !keys.f8Key.wasPressedThisFrame || MeshTools.Typing()) return;
+            if (DrawingSheet.Capturing || !Keybinds.Pressed("photo") || MeshTools.Typing()) return;
             overlay = UnityEngine.Object.FindObjectOfType<PhotomodeOverlay>();
             app = UnityEngine.Object.FindObjectOfType<SprocketApplication>();
             if (overlay == null || app == null) return; // not in photo mode

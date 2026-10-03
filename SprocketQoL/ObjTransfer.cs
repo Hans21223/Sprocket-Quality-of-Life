@@ -46,7 +46,7 @@ public static class ObjTransfer
     const int PageSize = 12;
     const int LargeImport = 50_000; // faces; the largest structures known to work in the game have about 30,000
     internal static bool IsOpen => canvasObject != null;
-    internal static bool BlocksInput => IsOpen || dialog || Time.frameCount <= releaseAt;
+    internal static bool BlocksInput => IsOpen || dialog || Time.frameCount <= releaseAt || QolMenu.IsOpen;
 
     [HarmonyPrefix, HarmonyPatch(typeof(VehicleEditor), nameof(VehicleEditor.UpdatePointerOperators))]
     static bool BlockPointer() => !BlocksInput;
@@ -57,9 +57,9 @@ public static class ObjTransfer
         var ui = Ui.Drawer(layout);
         if (ui == null) return;
         Ui.Section(layout, "model.obj");
-        ui.InfoField("Export selected tank parts or import an OBJ model. F10 opens the menu.", 2);
+        ui.InfoField($"Export selected tank parts or import an OBJ model. {Keybinds.Shown("obj")} opens the menu.", 2);
         var tip = new UITooltip("OBJ export and import", "Choose export categories and individual parts. Import an editable plate structure into your chosen faction's library. Exported parts retain their relative positions, rotations and size.");
-        ui.Button("OBJ export / import (F10)", Ui.Callback(() => queued = Open), ref tip);
+        ui.Button($"OBJ export / import ({Keybinds.Shown("obj")})", Ui.Callback(() => queued = Open), ref tip);
     });
 
     internal static void Update()
@@ -81,10 +81,10 @@ public static class ObjTransfer
         var keys = Keyboard.current;
         if (IsOpen && !dialog)
         {
-            if (keys?.f10Key.wasPressedThisFrame == true || keys?.escapeKey.wasPressedThisFrame == true)
+            if (Keybinds.Pressed("obj") || keys?.escapeKey.wasPressedThisFrame == true)
             { Close(); return; }
         }
-        else if (!dialog && keys?.f10Key.wasPressedThisFrame == true && DesignEditor.Instance?.IsReady == true && !MeshTools.Typing()) Open();
+        else if (!dialog && Keybinds.Pressed("obj") && DesignEditor.Instance?.IsReady == true && !MeshTools.Typing()) Open();
         if (queued != null)
         {
             var action = queued; queued = null;
@@ -130,21 +130,9 @@ public static class ObjTransfer
         try
         {
             SuspendInputs();
-            font = TMP_Settings.defaultFontAsset;
-            if (font == null)
-                font = UnityEngine.Object.FindObjectOfType<TextMeshProUGUI>()?.font;
+            font = NativeUi.Font();
             if (font == null) throw new InvalidOperationException("The game's UI font is not ready; try again after selecting a structure.");
-            canvasObject = new GameObject("QoL OBJ menu", new Il2CppReferenceArray<Il2CppSystem.Type>(new[] { Il2CppType.Of<RectTransform>() }));
-            var canvas = canvasObject.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.sortingOrder = 30000;
-            var scaler = canvasObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1100, 760);
-            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
-            canvasObject.AddComponent<GraphicRaycaster>();
-            var shade = Node("Modal input shield", canvasObject.transform, 0, 0, 0, 0);
-            shade.anchorMin = Vector2.zero; shade.anchorMax = Vector2.one; shade.sizeDelta = Vector2.zero;
-            shade.gameObject.AddComponent<Image>().color = new Color(0.015f, 0.02f, 0.03f, 0.86f);
+            canvasObject = NativeUi.Canvas("QoL OBJ menu");
             BuildPanel();
         }
         catch { Close(); throw; }
@@ -218,7 +206,7 @@ public static class ObjTransfer
         panel = rect.gameObject;
         panel.AddComponent<Image>().color = new Color(0.08f, 0.09f, 0.105f, 1);
         Label(panel.transform, "OBJ export and import", 22, 14, 850, 30, 24);
-        Click(panel.transform, "Close (F10 / Esc)", 882, 12, 176, 34, Close);
+        Click(panel.transform, $"Close ({Keybinds.Shown("obj")} / Esc)", 882, 12, 176, 34, Close);
         Click(panel.transform, "Export tank", 22, 60, 170, 34, () => { importTab = false; rebuild = true; });
         Click(panel.transform, "Import model", 202, 60, 170, 34, () => { importTab = true; rebuild = true; });
         if (importTab) BuildImport(); else BuildExport();
@@ -367,7 +355,7 @@ public static class ObjTransfer
     {
         var editor = DesignEditor.Instance!;
         if (editor.IsBusy || editor.CaptureBlocked()) return;
-        if (ExplodedView.Active) throw new InvalidOperationException("Close this menu, then press F2 to put the exploded view back before exporting. This keeps every part in its normal position.");
+        if (ExplodedView.Active) throw new InvalidOperationException($"Close this menu, then press {Keybinds.Shown("explode")} to put the exploded view back before exporting. This keeps every part in its normal position.");
         if (selected.Count == 0) throw new InvalidOperationException("Select at least one part to export.");
         Directory.CreateDirectory(directory);
         string name = Conversion.Parse(editor.Snapshot())["header"]?["name"]?.GetValue<string>() ?? "Tank";
@@ -424,37 +412,13 @@ public static class ObjTransfer
         editor.Say(message, 10); rebuild = true;
     }
 
-    static RectTransform Node(string name, Transform parent, float x, float y, float width, float height)
-    {
-        var go = new GameObject(name, new Il2CppReferenceArray<Il2CppSystem.Type>(new[] { Il2CppType.Of<RectTransform>() }));
-        var rect = go.GetComponent<RectTransform>(); rect.SetParent(parent, false);
-        rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0, 1);
-        rect.anchoredPosition = new Vector2(x, -y); rect.sizeDelta = new Vector2(width, height);
-        return rect;
-    }
+    static RectTransform Node(string name, Transform parent, float x, float y, float width, float height) => NativeUi.Node(name, parent, x, y, width, height);
 
-    static TextMeshProUGUI Label(Transform parent, string text, float x, float y, float width, float height, float size)
-    {
-        var rect = Node("Label", parent, x, y, width, height);
-        var label = rect.gameObject.AddComponent<TextMeshProUGUI>(); label.font = font; label.fontSize = size;
-        label.color = new Color(0.93f, 0.93f, 0.92f); label.raycastTarget = false;
-        label.enableWordWrapping = true; label.overflowMode = TextOverflowModes.Ellipsis;
-        label.richText = false;
-        label.text = text; label.alignment = TextAlignmentOptions.TopLeft;
-        return label;
-    }
+    static TextMeshProUGUI Label(Transform parent, string text, float x, float y, float width, float height, float size) =>
+        NativeUi.Label(font, parent, text, x, y, width, height, size);
 
-    static Button Click(Transform parent, string label, float x, float y, float width, float height, Action action, bool leftAligned = false, bool row = false)
-    {
-        var rect = Node(label.Length == 0 ? "Button" : label, parent, x, y, width, height);
-        var image = rect.gameObject.AddComponent<Image>(); image.color = new Color(0.2f, 0.22f, 0.24f);
-        var button = rect.gameObject.AddComponent<Button>(); button.targetGraphic = image;
-        var text = Label(rect, label, 8, 2, width - 16, height - 4, 16);
-        text.alignment = leftAligned ? TextAlignmentOptions.MidlineLeft : TextAlignmentOptions.Center;
-        text.enableWordWrapping = false;
-        var callback = Ui.Callback(action); (row ? rowListeners : listeners).Add(callback); button.onClick.AddListener(callback);
-        return button;
-    }
+    static Button Click(Transform parent, string label, float x, float y, float width, float height, Action action, bool leftAligned = false, bool row = false) =>
+        NativeUi.Click(font, row ? rowListeners : listeners, parent, label, x, y, width, height, action, leftAligned);
 
     static void TextInput(Transform parent, string text, string placeholder, float x, float y, float width, float height, Action<string> change)
     {

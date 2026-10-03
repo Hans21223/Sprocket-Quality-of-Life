@@ -29,8 +29,8 @@ public static class DrawingSettings
         void Toggle(string label, bool value, Action<bool> set, string help) =>
             ui.ToggleField(label, value, Ui.BoolCallback(v => { set(v); redraw(); }), help);
 
-        Ui.Section(layout, "Drawing sheet (F9)");
-        ui.InfoField("Press F9 to save drawing sheets to Photos. These settings are remembered.", 2);
+        Ui.Section(layout, "Drawing sheet");
+        ui.InfoField($"Press {Keybinds.Shown("drawing")} to save drawing sheets to Photos. These settings are remembered.", 2);
 
         bool lines = !(Plugin.DrawingNoWireframe?.Value ?? false);
         Toggle("Show drawing lines", lines,
@@ -76,7 +76,7 @@ public static class DrawingSettings
         bool blue = Plugin.DrawingBlue?.Value ?? false;
         Toggle("Save blue blueprint", blue,
             v => { if (Plugin.DrawingBlue != null) Plugin.DrawingBlue.Value = v; },
-            "Saves an additional white-on-blue blueprint alongside the standard F9 sheets.");
+            "Saves an additional white-on-blue blueprint alongside the standard drawing sheets.");
         if (blue)
         {
             bool grid = Plugin.DrawingGrid?.Value ?? false;
