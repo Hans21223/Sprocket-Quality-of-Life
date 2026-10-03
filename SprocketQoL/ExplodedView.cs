@@ -29,15 +29,16 @@ public static class ExplodedView
             nextRefresh = Time.unscaledTime + 0.5f;
             if (moved.Any(m => Gone(m.T))) { Collapse(); Explode(); } // restore surviving parts before rebuilding the view
         }
-        if (keys.f2Key.wasPressedThisFrame)
+        if (Keybinds.Pressed("explode"))
         {
             on = !on;
             if (on) Explode(); else Collapse();
-            DesignEditor.Instance?.Say(on ? $"Exploded view: {Spread:0.00} m apart (F3 / F4 closer / further, F2 to put back)" : "Exploded view off", 4);
+            DesignEditor.Instance?.Say(on ? $"Exploded view: {Spread:0.00} m apart ({Keybinds.Shown("explodeCloser")} / {Keybinds.Shown("explodeFurther")} closer / further, {Keybinds.Shown("explode")} to put back)" : "Exploded view off", 4);
         }
-        if (keys.f3Key.wasPressedThisFrame || keys.f4Key.wasPressedThisFrame)
+        bool closer = Keybinds.Pressed("explodeCloser"), further = !closer && Keybinds.Pressed("explodeFurther");
+        if (closer || further)
         {
-            if (Plugin.ExplodeSpread != null) Plugin.ExplodeSpread.Value = Math.Clamp(Spread * (keys.f4Key.wasPressedThisFrame ? 1.25f : 0.8f), 0.05f, 20);
+            if (Plugin.ExplodeSpread != null) Plugin.ExplodeSpread.Value = Math.Clamp(Spread * (further ? 1.25f : 0.8f), 0.05f, 20);
             if (on) { Collapse(); Explode(); }
             DesignEditor.Instance?.Say($"Exploded view spread: {Spread:0.00} m", 3);
         }

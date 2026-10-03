@@ -50,7 +50,7 @@ internal static class DrawingSheet
 
     internal static void Update()
     {
-        if (busy || PhotoShot.Capturing || Keyboard.current is not { } keys || !keys.f9Key.wasPressedThisFrame || MeshTools.Typing()) return;
+        if (busy || PhotoShot.Capturing || !Keybinds.Pressed("drawing") || MeshTools.Typing()) return;
         if (DesignEditor.Instance is not { } editor || !editor.IsReady || editor.IsBusy || editor.Core?.Editor?.OperationInProgress == true) return;
         busy = true;
         try { editor.StartCoroutine(Run().WrapToIl2Cpp()); }

@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.3")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.4")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -29,6 +29,7 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<int>? BackupsKept;
     internal static ConfigEntry<float>? RotationSnap;
     internal static ConfigEntry<bool>? MirrorMerge;
+    internal static ConfigEntry<bool>? RecordDrives;
     public override void Load()
     {
         ModLog = Log;
@@ -52,9 +53,13 @@ public sealed class Plugin : BasePlugin
         RotationSnap = Config.Bind("Editor", "Rotation snap (degrees)", 0f, "While the game's rotation snap is on, turns snap in steps of this many degrees instead of the game's own (7.5 makes a 48-sided circle, 5 a 72-sided one). 0 keeps the game's step.");
         MirrorMerge = Config.Bind("Editor", "Mirror merge", true, "With the editor's Mirror on, Merge (M) merges the mirrored points on the other side too.");
         BackupsKept = Config.Bind("Backups", "Backups kept", 50, "How many design backups (BepInEx\\SprocketQoLBackups, one per edit) to keep; the oldest go first. 0 keeps them all.");
+        RecordDrives = Config.Bind("Diagnostics", "Record drives", false, "Write every physics step of your own vehicle's drivetrain to BepInEx\\SprocketQoL-drives while you drive (a few MB a minute), to check the Speed & acceleration figures against the game.");
+        Keybinds.Load(Config);
+        ModOptions.Register();
         AddComponent<DesignEditor>();
+        AddComponent<DriveRecorder>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer) };
+        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions) };
         foreach (var feature in features)
         {
             try { harmony.PatchAll(feature); }

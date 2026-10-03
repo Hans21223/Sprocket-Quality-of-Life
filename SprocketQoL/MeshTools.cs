@@ -684,30 +684,34 @@ public static class MeshTools
         var e = Hotkeys.Current;
         if (e != null && halfGrid) KeepHalfGrid(e);
         bool ctrl = keys.ctrlKey.isPressed;
-        if (keys.f5Key.wasPressedThisFrame) ToggleShadows();
-        if (keys.f6Key.wasPressedThisFrame) ToggleFlashlight();
-        if (keys.f7Key.wasPressedThisFrame) ToggleFullbright();
+        if (Keybinds.Pressed("shadows")) ToggleShadows();
+        if (Keybinds.Pressed("flashlight")) ToggleFlashlight();
+        if (Keybinds.Pressed("fullbright")) ToggleFullbright();
         AimFlashlight();
         PlaceFills();
         PlaceHeadlight();
-        if (keys.numpad1Key.wasPressedThisFrame) LookFrom(ctrl ? Vector3.forward : Vector3.back);   // front (Ctrl: back)
-        if (keys.numpad3Key.wasPressedThisFrame) LookFrom(ctrl ? Vector3.right : Vector3.left);     // right side (Ctrl: left)
-        if (keys.numpad7Key.wasPressedThisFrame) LookFrom(ctrl ? Vector3.up : Vector3.down);         // top (Ctrl: from below)
-        if (keys.numpad9Key.wasPressedThisFrame) LookFrom(-(held ?? shown));                         // the opposite view
-        if (ctrl || keys.altKey.isPressed || keys.shiftKey.isPressed) return; // those belong to the game
-        if (keys.numpad5Key.wasPressedThisFrame) ToggleOrtho();
-        if (ortho && (keys.numpadPlusKey.wasPressedThisFrame || keys.numpadMinusKey.wasPressedThisFrame))
+        // Ctrl turns a view the other way round (unless that view's own key needs Ctrl).
+        bool Other(string id) => ctrl && !Keybinds.NeedsCtrl(id);
+        if (Keybinds.Pressed("front")) LookFrom(Other("front") ? Vector3.forward : Vector3.back);
+        if (Keybinds.Pressed("side")) LookFrom(Other("side") ? Vector3.right : Vector3.left);
+        if (Keybinds.Pressed("top")) LookFrom(Other("top") ? Vector3.up : Vector3.down);
+        if (Keybinds.Pressed("opposite")) LookFrom(-(held ?? shown));
+        // Plain keys only from here: Ctrl, Alt and Shift with them belong to the game (unless a key is bound with them).
+        bool Plain(string id) => Keybinds.Pressed(id) && (Keybinds.NeedsCtrl(id) || !(ctrl || keys.altKey.isPressed || keys.shiftKey.isPressed));
+        if (Plain("ortho")) ToggleOrtho();
+        bool zoomIn = Plain("zoomIn"), zoomOut = !zoomIn && Plain("zoomOut");
+        if (ortho && (zoomIn || zoomOut))
         {
-            orthoZoom = Math.Clamp(orthoZoom * (keys.numpadPlusKey.wasPressedThisFrame ? 1.25f : 0.8f), 0.1f, 10);
+            orthoZoom = Math.Clamp(orthoZoom * (zoomIn ? 1.25f : 0.8f), 0.1f, 10);
             e?.RequestRedraw(); // the panel's zoom slider follows
         }
         if (e == null) return;
-        if (keys.pKey.wasPressedThisFrame) Flatten(e);
-        else if (keys.tKey.wasPressedThisFrame) LoopCut(e);
-        else if (keys.iKey.wasPressedThisFrame) Inset(e);
-        else if (keys.vKey.wasPressedThisFrame) Bevel(e);
-        else if (keys.uKey.wasPressedThisFrame) SelectFlat(e);
-        else if (keys.oKey.wasPressedThisFrame) { proportional = !proportional; e.RequestRedraw(); Plugin.ModLog.LogInfo($"Proportional editing {(proportional ? "on" : "off")}"); }
+        if (Plain("flatten")) Flatten(e);
+        else if (Plain("loopCut")) LoopCut(e);
+        else if (Plain("inset")) Inset(e);
+        else if (Plain("bevel")) Bevel(e);
+        else if (Plain("selectFlat")) SelectFlat(e);
+        else if (Plain("proportional")) { proportional = !proportional; e.RequestRedraw(); Plugin.ModLog.LogInfo($"Proportional editing {(proportional ? "on" : "off")}"); }
     }
 
     /// Typing in a text box (a part's name): the keys are letters then, not tools.
@@ -776,7 +780,7 @@ public static class MeshTools
                 light.shadows = LightShadows.None;
             }
         if (sun != null) headlight = Headlight(sun);
-        DesignEditor.Instance?.Say(shadowless.Count > 0 ? $"Shadows off ({shadowless.Count} lights), F5 to turn them back on" : "No light casting shadows found", 3);
+        DesignEditor.Instance?.Say(shadowless.Count > 0 ? $"Shadows off ({shadowless.Count} lights), {Keybinds.Shown("shadows")} to turn them back on" : "No light casting shadows found", 3);
         Plugin.ModLog.LogInfo($"Shadows off on {shadowless.Count} lights");
     });
 
@@ -907,7 +911,7 @@ public static class MeshTools
         }
         fillsAt = -10;
         PlaceFills();
-        DesignEditor.Instance?.Say("Fullbright on: even light from every side, no shadows (F7 to turn off)", 3);
+        DesignEditor.Instance?.Say($"Fullbright on: even light from every side, no shadows ({Keybinds.Shown("fullbright")} to turn off)", 3);
         Plugin.ModLog.LogInfo($"Fullbright on: {fills.Count} point lights round the vehicle, {SunLux(sun) * FillShare:0} lux each on it ({FillShare:P0} of the sun); the renderer draws {MaxDirectional()} directional light(s), so none of those");
     });
 
@@ -1048,7 +1052,7 @@ public static class MeshTools
         flashLight.shadows = LightShadows.None;
         flashLux = SunLux(sun);
         AimFlashlight();
-        DesignEditor.Instance?.Say("Flashlight on: it points where the mouse points (F6 to turn off)", 3);
+        DesignEditor.Instance?.Say($"Flashlight on: it points where the mouse points ({Keybinds.Shown("flashlight")} to turn off)", 3);
         Plugin.ModLog.LogInfo($"Flashlight on ({FlashShare:P0} of the sun's {flashLux:0} lux where it lands)");
     });
 
@@ -1732,11 +1736,11 @@ public static class MeshTools
         }), "Shows each part's blue centre-of-mass diamond when COM is enabled in the bottom-right view filters. Turn this off to keep only the vehicle mass marker. Turning COM off hides both kinds.");
         if (MassMarkers.PartMarkersShown && !MassMarkers.MasterShown)
             ui.InfoField("Part mass markers are hidden while COM is off in the view filters.", 1);
-        ui.InfoField("Numpad 5: orthographic view.\nF5 shadows, F6 flashlight, F7 fullbright.", 2);
+        ui.InfoField($"{Keybinds.Shown("ortho")}: orthographic view.\n{Keybinds.Shown("shadows")} shadows, {Keybinds.Shown("flashlight")} flashlight, {Keybinds.Shown("fullbright")} fullbright.", 2);
         ui.ToggleField("Zoom in close", closeZoom, Ui.BoolCallback(v => closeZoom = v),
             "Lets the camera move close to small parts for detailed editing.");
         ui.ToggleField("Ortho: straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
-            "Orthographic view snaps to front, back, sides or top (orbiting flips between them). Numpad 1 / 3 / 7: front, side, top; " +
+            $"Orthographic view snaps to front, back, sides or top (orbiting flips between them). {Keybinds.Shown("front")} / {Keybinds.Shown("side")} / {Keybinds.Shown("top")}: front, side, top; " +
             "with Ctrl, back and the other side. Off: orbit freely.");
         ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100));
         var backTip = new UITooltip("Orthographic backdrop", "Click to cycle backgrounds. Scene keeps the sky and map; grey, white and black show only the vehicle on a plain background. Applies in orthographic view.");
@@ -1745,7 +1749,7 @@ public static class MeshTools
         {
             orthoWhole = v;
             if (!v && ortho) { var cam = Camera.main; if (cam != null && orbit != null) cam.transform.position = orbit.AppliedPosition; }
-        }), "Orthographic view (Numpad 5): the camera steps back so it never cuts into the vehicle when you zoom in close. " +
+        }), $"Orthographic view ({Keybinds.Shown("ortho")}): the camera steps back so it never cuts into the vehicle when you zoom in close. " +
             "Off: it stays where the game puts it, and zooming in close shows the inside.");
         ui.ToggleField("Ortho: measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
             "Orthographic view, looking straight from the front, back, side or top: the vehicle's overall size across the screen " +

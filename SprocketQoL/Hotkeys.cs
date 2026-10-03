@@ -121,7 +121,7 @@ public static class Hotkeys
         float contentHeight = 0;
         for (int i = page.Start; i < page.Start + page.Count; i++) contentHeight += lineHeights[i];
         var box = new Rect(area.X, area.Y, width, Math.Min(area.Height, (pages.Length > 1 ? 58 : 30) + contentHeight));
-        GUI.Box(box, "Shortcuts  (F1 shows / hides)");
+        GUI.Box(box, $"Shortcuts  ({Keybinds.Shown("hotkeys")} shows / hides, {Keybinds.Shown("menu")} changes keys)");
         closeRect = new Rect(box.xMax - 26, box.y + 3, 22, 20);
         GUI.Box(closeRect, "×");
         float y = box.y + 26;
@@ -145,7 +145,7 @@ public static class Hotkeys
     internal static void Keys()
     {
         if (MeshTools.Typing() || DrawingSheet.Capturing || PhotoShot.Capturing) return;
-        if (Keyboard.current?.f1Key.wasPressedThisFrame == true) Show(!(Plugin.ShowHotkeys?.Value ?? true));
+        if (Keybinds.Pressed("hotkeys")) Show(!(Plugin.ShowHotkeys?.Value ?? true));
         if (closeRect.width > 0 && Mouse.current is { } mouse && mouse.leftButton.wasPressedThisFrame)
         {
             var p = mouse.position.ReadValue();
@@ -187,15 +187,16 @@ public static class Hotkeys
         if (controls.FindAction("Core/VerticalConstraint", false) is { } vertical &&
             InputActionRebindingExtensions.GetBindingDisplayString(vertical, default(InputBinding.DisplayStringOptions), (string?)null) is { Length: > 0 } up)
             found.Insert(Math.Min(5, found.Count), $"Axis lock: Shift+{up}  move / scale at the same height");
-        found.Add("Add-ons: Ctrl+J  merge into the last selected add-on");
-        found.Add("Mesh: P  Flatten   |   T  Loop cut   |   I  Inset   |   V  Bevel");
-        found.Add("Selection: U  Linked flat faces   |   O  Proportional editing");
-        found.Add("View: Numpad 5  Orthographic   |   Numpad + / -  Zoom");
-        found.Add("View: Numpad 1 / 3 / 7  Front / side / top   |   Numpad 9  Opposite");
-        found.Add("Spacing: F2  Exploded view   |   F3 / F4  Closer / further");
-        found.Add("Lighting: F5  Shadows   |   F6  Flashlight   |   F7  Fullbright");
-        found.Add("Capture: F8  Photo (photo mode)   |   F9  Drawing sheet");
-        found.Add("Models: F10  OBJ export / import menu");
+        static string K(string id) => Keybinds.Shown(id);
+        found.Add($"Add-ons: {K("join")}  merge into the last selected add-on");
+        found.Add($"Mesh: {K("flatten")}  Flatten   |   {K("loopCut")}  Loop cut   |   {K("inset")}  Inset   |   {K("bevel")}  Bevel");
+        found.Add($"Selection: {K("selectFlat")}  Linked flat faces   |   {K("proportional")}  Proportional editing");
+        found.Add($"View: {K("ortho")}  Orthographic   |   {K("zoomIn")} / {K("zoomOut")}  Zoom");
+        found.Add($"View: {K("front")} / {K("side")} / {K("top")}  Front / side / top   |   {K("opposite")}  Opposite");
+        found.Add($"Spacing: {K("explode")}  Exploded view   |   {K("explodeCloser")} / {K("explodeFurther")}  Closer / further");
+        found.Add($"Lighting: {K("shadows")}  Shadows   |   {K("flashlight")}  Flashlight   |   {K("fullbright")}  Fullbright");
+        found.Add($"Capture: {K("photo")}  Photo (photo mode)   |   {K("drawing")}  Drawing sheet");
+        found.Add($"Models: {K("obj")}  OBJ export / import menu   |   {K("menu")}  QoL settings and keys");
         return found;
     }
 

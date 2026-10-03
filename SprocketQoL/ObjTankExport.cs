@@ -50,7 +50,7 @@ internal static class ObjTankExport
     {
         if (editor.Core?.Target == null || !editor.IsReady || editor.IsBusy)
             throw new InvalidOperationException("Open a tank in the editor before exporting.");
-        if (ExplodedView.Active) throw new InvalidOperationException("Turn off exploded view (F2) before exporting, so all parts keep their normal positions.");
+        if (ExplodedView.Active) throw new InvalidOperationException($"Turn off exploded view ({Keybinds.Shown("explode")}) before exporting, so all parts keep their normal positions.");
         string destination = Path.GetFullPath(destinationPath);
         if (!string.Equals(Path.GetExtension(destination), ".obj", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Choose a file ending in .obj.");

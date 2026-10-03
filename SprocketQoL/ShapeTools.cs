@@ -22,7 +22,7 @@ public static class ShapeTools
         var others = editor.SelectedParts(Conversion.AddonGuid).Where(v => v != addon).ToList();
         if (body && others.Count == 0) return; // only offered when add-ons are selected with it
         Ui.Section(layout, body ? "Merge add-ons into this" : "Merge add-ons");
-        if (others.Count == 0) ui.InfoField("Select at least two add-ons. Ctrl+J merges them into the last selected add-on.", 2);
+        if (others.Count == 0) ui.InfoField($"Select at least two add-ons. {Keybinds.Shown("join")} merges them into the last selected add-on.", 2);
         else
         {
             ui.InfoField($"{others.Count} selected add-on{(others.Count == 1 ? "" : "s")} will join this {(body ? "hull or turret" : "add-on")}. Ctrl+Z undoes the merge.", 2);
