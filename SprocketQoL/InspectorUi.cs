@@ -6,6 +6,18 @@ using UnityEngine.Events;
 
 namespace SprocketQoL;
 
+/// A button's tooltip: QoL's own, so tools don't name the game's UI types (the native backend converts it).
+internal readonly record struct Tip(string Header, string Body);
+
+/// Where a QoL section draws: a backend (the game's own panel, or QoL's fallback panel) and how to have it redrawn.
+internal sealed class Panel
+{
+    internal readonly IInspectorBackend Backend;
+    readonly Action redraw;
+    internal Panel(IInspectorBackend backend, Action redraw) { Backend = backend; this.redraw = redraw; }
+    internal void Redraw() { try { redraw(); } catch { } }
+}
+
 /// A small boundary between tools and the game's current inspector widgets.
 /// Future UI backends can implement this contract without changing tool operations.
 internal interface IInspectorBackend
@@ -13,7 +25,7 @@ internal interface IInspectorBackend
     float FieldWidth { get; }
     UiPresentation.ScreenBox? ScreenBounds { get; }
     void Info(string text, int lines);
-    void Button(string label, UnityAction onClick, ref UITooltip tooltip);
+    void Button(string label, UnityAction onClick, Tip tip);
     void Slider(string label, float value, float min, float max, Il2CppSystem.Action<float> change);
     void Toggle(string label, bool value, Il2CppSystem.Action<bool> change, string tooltip);
     void BeginSection(string title, bool expanded, Il2CppSystem.Action<bool> change);
@@ -25,7 +37,7 @@ internal sealed class InspectorUi
     readonly IInspectorBackend backend;
     internal InspectorUi(IInspectorBackend backend) => this.backend = backend;
     internal void InfoField(string text, int lines = 1) => backend.Info(text, UiPresentation.InfoLines(text, backend.FieldWidth, lines));
-    internal void Button(string label, UnityAction onClick, ref UITooltip tooltip) => backend.Button(label, onClick, ref tooltip);
+    internal void Button(string label, UnityAction onClick, Tip tip) => backend.Button(label, onClick, tip);
     internal void Slider(string label, float value, float min, float max, Il2CppSystem.Action<float> change) => backend.Slider(label, value, min, max, change);
     internal void Slider(string label, int value, int min, int max, Il2CppSystem.Action<float> change) => backend.Slider(label, value, min, max, change);
     internal void ToggleField(string label, bool value, Il2CppSystem.Action<bool> change, string tooltip = "") => backend.Toggle(label, value, change, tooltip);
@@ -66,7 +78,11 @@ internal sealed class NativeInspectorBackend : IInspectorBackend
         }
     }
     public void Info(string text, int lines) => drawer.InfoField(text, lines);
-    public void Button(string label, UnityAction onClick, ref UITooltip tooltip) => drawer.Button(label, onClick, ref tooltip);
+    public void Button(string label, UnityAction onClick, Tip tip)
+    {
+        var tooltip = new UITooltip(tip.Header, tip.Body);
+        drawer.Button(label, onClick, ref tooltip);
+    }
     public void Slider(string label, float value, float min, float max, Il2CppSystem.Action<float> change) => drawer.Slider(label, value, min, max, change);
     public void Toggle(string label, bool value, Il2CppSystem.Action<bool> change, string tooltip) => drawer.ToggleField(label, value, change, tooltip);
     public void BeginSection(string title, bool expanded, Il2CppSystem.Action<bool> change) => layout.BeginDropdown(title, expanded, change);

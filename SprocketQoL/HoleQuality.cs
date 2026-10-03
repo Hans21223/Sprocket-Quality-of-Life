@@ -241,8 +241,7 @@ public static class HoleQuality
 
     internal static Num ToNum(UnityEngine.Vector3 v) => new(v.x, v.y, v.z);
 
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Hole quality", layout, () =>
+    internal static void Draw(PlateStructureEditor __instance, Panel layout) => Ui.Inspector("Hole quality", layout, () =>
     {
         var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // Create Hole is a freeform tool
@@ -251,8 +250,8 @@ public static class HoleQuality
         ui.Slider("Circle segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));
         // Applied in HoleRing.Fit, never through the game's CreateHoleOp.HoleRadiusScale: see there.
         ui.Slider("Relative size (%)", sizePercent, 10, 300, Ui.FloatCallback(v => sizePercent = (int)Math.Round(v)));
-        var tip = new UITooltip("Surrounding faces", "Click to cycle the faces around the hole. Fewest points uses the circle and existing corners. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads round the hole and more points for even faces. Original triangle fan uses the game's layout. The circle stays inside the selected face.");
+        var tip = new Tip("Surrounding faces", "Click to cycle the faces around the hole. Fewest points uses the circle and existing corners. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads round the hole and more points for even faces. Original triangle fan uses the game's layout. The circle stays inside the selected face.");
         // The panel only redraws when asked, so ask, or the button would keep showing the old choice.
-        ui.Button(FillNames[holeFill], Ui.Callback(() => { holeFill = (holeFill + 1) % FillNames.Length; __instance.RequestRedraw(); }), ref tip);
+        ui.Button(FillNames[holeFill], Ui.Callback(() => { holeFill = (holeFill + 1) % FillNames.Length; __instance.RequestRedraw(); }), tip);
     });
 }

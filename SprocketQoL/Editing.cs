@@ -383,7 +383,7 @@ public sealed class DesignEditor : MonoBehaviour
             if (wasReady && !ready)
             {
                 MeshTools.LeftEditor(); ExplodedView.LeftEditor(); GearSpeeds.LeftEditor(); PartPaint.LeftEditor();
-                ObjTransfer.LeftEditor();
+                ObjTransfer.LeftEditor(); QolPanel.Close();
             }
         });
         Ui.Guard("OBJ menu", ObjTransfer.Update);
@@ -397,6 +397,8 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Hotkeys", Hotkeys.Keys);
             Ui.Guard("Gear speeds", GearSpeeds.Update);
         }
+        if (ready) Ui.Guard("QoL panel", QolPanel.Update);
+        Ui.Guard("Mouse over QoL boxes", ready ? InputShield.Update : InputShield.Release);
         if (!ObjTransfer.BlocksInput) Ui.Guard("Photo", PhotoShot.Update);
         if (ready && !ObjTransfer.BlocksInput) Ui.Guard("Drawing sheet", DrawingSheet.Update);
         // Design edits: a failure ends the edit (so the editor isn't left busy) and says why.
@@ -708,15 +710,14 @@ public sealed class DesignEditor : MonoBehaviour
 [HarmonyPatch]
 public static class RestoreSection
 {
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Restore", layout, () =>
+    internal static void Draw(PlateStructureEditor __instance, Panel layout) => Ui.Inspector("Restore", layout, () =>
     {
         var editor = DesignEditor.Instance;
         var ui = Ui.Drawer(layout);
         if (editor == null || ui == null || !editor.CanRestore || editor.LastEditedPart != (int)__instance.Component.VehicleObject.VUID) return;
         Ui.Section(layout, "Undo last Quality of Life edit");
         ui.InfoField("Returns to the snapshot before the last QoL reload. Changes made since then are discarded.", 2);
-        var tip = new UITooltip("Restore previous design", "Reloads the complete design snapshot from before the last Quality of Life operation that reloaded the vehicle, such as turret conversion, repair or paste. Any later edits are discarded. Use Ctrl+Z for ordinary mesh edits instead.");
-        ui.Button("Restore previous design", Ui.Callback(editor.RequestRestore), ref tip);
+        var tip = new Tip("Restore previous design", "Reloads the complete design snapshot from before the last Quality of Life operation that reloaded the vehicle, such as turret conversion, repair or paste. Any later edits are discarded. Use Ctrl+Z for ordinary mesh edits instead.");
+        ui.Button("Restore previous design", Ui.Callback(editor.RequestRestore), tip);
     });
 }

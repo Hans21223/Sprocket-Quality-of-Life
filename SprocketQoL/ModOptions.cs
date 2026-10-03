@@ -85,6 +85,7 @@ internal static class ModOptions
         keepInts.Add(pick);
         ui.TabGroup(pick, part, Parts);
         if (part == 2) { Settings(ui); return; }
+        if (part == 3) { Compatibility(ui, Redraw); return; }
 
         ui.InfoField(capturing != null
             ? $"Press the new key for {Keybinds.All.First(b => b.Id == capturing).Name} (with Ctrl, Shift or Alt if wanted). Esc cancels, Backspace leaves it without a key."
@@ -109,12 +110,41 @@ internal static class ModOptions
     }
 
     static int part;
-    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings" };
+    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility" };
     static readonly HashSet<string> EditingGroups = new() { "View", "Mesh", "Selection", "Add-ons" };
     static readonly List<Il2CppSystem.Action<int>> keepInts = new();
 
+    /// What attached to the game (a game update can rename or remove what a hook needs), and QoL's own part panel.
+    static void Compatibility(IGUIElementDrawer ui, Action redraw)
+    {
+        var failed = Hooks.Failures.ToList();
+        ui.InfoField(failed.Count == 0
+            ? $"All {Hooks.Attached} of Quality of Life's hooks into the game attached: everything works as made."
+            : $"{Hooks.Attached} of {Hooks.Report.Count} hooks into the game attached. The tools below whose hook didn't attach are off until Quality of Life is updated for this version of the game.", 2);
+        ui.Header("QoL part panel");
+        ui.InfoField("Quality of Life's own panel, on the right, with every QoL section of the selected parts. Automatic shows it only when the game's part panel can't be drawn into (after a game update changes it).", 3);
+        int mode = Array.IndexOf(QolPanel.Modes, QolPanel.Mode);
+        var pickMode = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i =>
+        {
+            if (Plugin.PanelMode != null) Plugin.PanelMode.Value = QolPanel.Modes[i];
+            redraw();
+        }))!;
+        keepInts.Add(pickMode);
+        ui.TabGroup(pickMode, Math.Max(0, mode), QolPanel.Modes);
+        ui.Header(failed.Count == 0 ? "Nothing missing" : "Not attached");
+        foreach (var f in failed.Take(12)) ui.InfoField($"{f.Feature}: {f.Hook}. {f.Error}", 2, new Color(1f, 0.6f, 0.5f));
+        if (failed.Count > 12) ui.InfoField($"...and {failed.Count - 12} more (BepInEx\\LogOutput.log lists them all).", 1);
+    }
+
     static void Settings(IGUIElementDrawer ui)
     {
+        var placeTip = new UITooltip("Back in place", "Puts the QoL panel back on the right and the Shortcuts box beside the part panel.");
+        ui.Button("Put the QoL panel and Shortcuts box back in place", Ui.Callback(() =>
+        {
+            if (Plugin.PanelPosition != null) Plugin.PanelPosition.Value = "";
+            if (Plugin.ShortcutsPosition != null) Plugin.ShortcutsPosition.Value = "";
+            QolPanel.Close();
+        }), ref placeTip);
         Toggle(ui, Plugin.ShowHotkeys, "Hotkeys box beside hand-made structures", "The box listing the editing keys (its key toggles it too).");
         Toggle(ui, Plugin.PartMassMarkers, "Part mass markers", "Each part's blue mass marker while the editor's COM view filter is on.");
         Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");

@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.4")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.4.1")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -30,6 +30,7 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<float>? RotationSnap;
     internal static ConfigEntry<bool>? MirrorMerge;
     internal static ConfigEntry<bool>? RecordDrives;
+    internal static ConfigEntry<string>? PanelMode, PanelPosition, ShortcutsPosition;
     public override void Load()
     {
         ModLog = Log;
@@ -54,17 +55,20 @@ public sealed class Plugin : BasePlugin
         MirrorMerge = Config.Bind("Editor", "Mirror merge", true, "With the editor's Mirror on, Merge (M) merges the mirrored points on the other side too.");
         BackupsKept = Config.Bind("Backups", "Backups kept", 50, "How many design backups (BepInEx\\SprocketQoLBackups, one per edit) to keep; the oldest go first. 0 keeps them all.");
         RecordDrives = Config.Bind("Diagnostics", "Record drives", false, "Write every physics step of your own vehicle's drivetrain to BepInEx\\SprocketQoL-drives while you drive (a few MB a minute), to check the Speed & acceleration figures against the game.");
+        PanelMode = Config.Bind("Panels", "QoL panel", "Automatic", "Quality of Life's own part panel: Automatic (only when the game's part panels can't be drawn into, after a game update), Always, or Off.");
+        PanelPosition = Config.Bind("Panels", "QoL panel position", "", "Where the QoL panel was dragged to (left, top), or empty for the right side.");
+        ShortcutsPosition = Config.Bind("Panels", "Shortcuts box position", "", "Where the Shortcuts box was dragged to (left, top in screen pixels), or empty for beside the part panel.");
         Keybinds.Load(Config);
         ModOptions.Register();
         AddComponent<DesignEditor>();
         AddComponent<DriveRecorder>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions) };
-        foreach (var feature in features)
-        {
-            try { harmony.PatchAll(feature); }
-            catch (Exception ex) { Log.LogError($"{feature.Name} disabled, could not attach to the game: {ex}"); }
-        }
+        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels) };
+        // One hook at a time: a game method a game update removed turns off that hook only (Mod Options > Compatibility).
+        foreach (var feature in features) Hooks.Attach(harmony, feature);
+        PanelSections.Register();
+        if (Hooks.Failures.Any()) Log.LogWarning("Quality of Life: " + Hooks.Summary());
+        else Log.LogInfo("Quality of Life: " + Hooks.Summary());
         Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo, Own paint, Bridge, Circle, Fix mirror, Mirror merge, Rotation snap, OBJ export / import (F10).");
     }
 }

@@ -279,7 +279,7 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   including the ones the game's hint bar leaves out: **B** box select (then drag), **C** circle select, **A** select
   all / none, **E** extrude, **J** split, **M** merge points, **H** slope, **X / Y / Z** lock to an axis, and more. The
   keys are read from the game's live bindings, so rebound keys show as rebound. **×** closes the box, **F1** shows or
-  hides it, and it remembers which.
+  hides it, and it remembers which. Drag its title bar to move it; it stays there.
 - **Keys and settings:** every Quality of Life key can be changed in the game's **Settings > Mod Options** tab (Tool
   keys, Editing keys) or the **F11** window: click a key, press the new one. Its **Settings** page holds the options
   that have no panel of their own.

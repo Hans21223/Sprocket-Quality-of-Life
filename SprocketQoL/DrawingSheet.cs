@@ -688,33 +688,13 @@ internal static class DrawingSheet
                 }
 
                 string speedText = "";
-                if (engine is { MaxRPM: > 0 } && gearbox != null && track?.BlueprintSlot?.HasBlueprint == true)
+                // As the Speed & acceleration panel works it out: where the drive settles on level ground in the fastest gear.
+                float mass = 0;
+                try { mass = (gearbox ?? (Sprocket.Vehicles.VehicleComponent?)track)?.Vehicle?.Mass ?? 0; } catch { }
+                if (GearSpeeds.TopSpeeds(engine, gearbox, tracks, mass) is { Forward: > 0 } top)
                 {
-                    var ratios = (gearbox.resultingDriveGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
-                    var reverse = (gearbox.resultingReverseGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
-                    float finalDrive = track.BlueprintSlot.Blueprint.FinalDriveRatio;
-                    var sprocket = track.SprocketAssembly?.WheelBlueprint;
-                    float radius = sprocket?.HasBlueprint == true ? sprocket.Blueprint.Radius : 0;
-                    if (ratios.Length > 0 && radius > 0 && finalDrive > 0)
-                    {
-                        float limit = float.MaxValue;
-                        try { if (track.TopSpeed > 0) limit = track.TopSpeed * 3.6f; } catch { }
-                        // At the rev limit, as the Speed & acceleration panel: the engine never revs past it.
-                        float revLimit = GearSpeeds.RevLimit(engine);
-                        float Speed(float ratio) => Sprocket.VehicleDesigner.Powertrains.PowertrainInfo.CalculateSpeed(revLimit, ratio * finalDrive, radius) * 3.6f;
-                        float fwdSpeed = Math.Min(Speed(ratios.Min()), limit);
-                        string fwdStr = MathF.Round(fwdSpeed).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
-                        if (reverse.Length > 0)
-                        {
-                            float revSpeed = Math.Min(Speed(reverse.Min()), limit);
-                            string revStr = MathF.Round(revSpeed).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
-                            speedText = $"Top speed:  {fwdStr} km/h (forward) / {revStr} km/h (reverse)";
-                        }
-                        else
-                        {
-                            speedText = $"Top speed:  {fwdStr} km/h";
-                        }
-                    }
+                    string Kmh(float v) => MathF.Round(v).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+                    speedText = top.Reverse > 0 ? $"Top speed:  {Kmh(top.Forward)} km/h (forward) / {Kmh(top.Reverse)} km/h (reverse)" : $"Top speed:  {Kmh(top.Forward)} km/h";
                 }
 
                 var mobility = string.Join("\n", new[] { powerText, speedText }.Where(s => !string.IsNullOrEmpty(s)));

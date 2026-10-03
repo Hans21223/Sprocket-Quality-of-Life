@@ -1,3 +1,8 @@
+# Quality of Life 1.8.4.1
+
+- **Drawing sheet top speed** now comes from the same drivetrain maths as the Speed & acceleration panel (forward and reverse). It used to take the rev limit at the wheel's radius, capped by the track panel's speed limit, which read too fast.
+- **Shortcuts box can be moved:** drag it by its title bar; it stays where you put it. While the mouse is over it, the editor's camera and clicks leave it alone. Mod Options > Settings puts it back beside the part panel.
+
 # Quality of Life 1.8.4
 
 - **Speed & acceleration, rebuilt on the game's own drivetrain:** the estimate now runs the game's engine, gearbox, clutch, sprocket and track maths step by step, as its own physics jobs do, with every input read from the design: the engine's torque curve, rev limiter and inertia, the gearbox and its shift times, each track's sprocket radius, belt bending and drag, the belts' grip and slip, rolling resistance (including the share that loads the belts) and the vehicle's mass. Against recorded test drives: top speed within 0.1%, each gear's acceleration within about 3%, 0-60 km/h within about 2% (the first 10-20 km/h read slower, as the tank's launch rocking isn't modelled). The panel shows every gear's own top speed (marked when the engine can't reach its rev limit in that gear), the top speed with its rpm and track slip, and 0-20 / 0-40 / 0-60 km/h times, worked out in the background. No test drive is needed first any more.

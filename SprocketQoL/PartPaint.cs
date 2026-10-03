@@ -205,8 +205,7 @@ public static class PartPaint
         return cachedCamos = choices;
     }
 
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Own paint", layout, () =>
+    internal static void Draw(PlateStructureEditor __instance, Panel layout) => Ui.Inspector("Own paint", layout, () =>
     {
         var editor = DesignEditor.Instance;
         var ui = Ui.Drawer(layout);
@@ -220,14 +219,14 @@ public static class PartPaint
         // Cycles: vehicle paint, own paint 1, 2, ... up to one more than in use, then back.
         int next = slot == 0 ? First : slot - First + 1 < Math.Min(used + 1, Last - First + 1) ? slot + 1 : 0;
         ui.InfoField($"Applies to {parts.Count} selected part{(parts.Count == 1 ? "" : "s")}. Parts using the same paint preset share its colours. Ctrl+Z undoes paint changes.", 2);
-        var tip = new UITooltip("Choose a paint preset", $"Click to use {(next == 0 ? "vehicle paint" : Name(next))}. Presets can be shared by several parts; changing a preset updates all its parts. A new preset copies Primary paint. Only exterior paint changes; interior paint is preserved. Ctrl+Z undoes changes.");
+        var tip = new Tip("Choose a paint preset", $"Click to use {(next == 0 ? "vehicle paint" : Name(next))}. Presets can be shared by several parts; changing a preset updates all its parts. A new preset copies Primary paint. Only exterior paint changes; interior paint is preserved. Ctrl+Z undoes changes.");
         ui.Button($"Paint: {(slot == 0 ? "vehicle" : Name(slot))}", Ui.Callback(() => Ui.Guard("Own paint", () =>
         {
             if (editor.CaptureBlocked()) return;
             Commit();
             Assign(p, parts, next);
             __instance.RequestRedraw();
-        })), ref tip);
+        })), tip);
         if (slot == 0 || Jobs(p).GetPaintJob(slot) is not { } job) return;
 
         // The own paint's settings, as the Paint tab has them for the vehicle's paints. Each drag is one Ctrl+Z step.
@@ -245,7 +244,7 @@ public static class PartPaint
         // Camo: none, or one of the images in My Games\Sprocket\Paint (stored the way the Paint tab stores them).
         var camos = Camos();
         string camo = job.ColourMapUri ?? "", nextCamo = camos[(camos.IndexOf(camo) + 1) % camos.Count];
-        var camoTip = new UITooltip("Choose camouflage", $"Click to use {Short(nextCamo)}. Cycles through no camouflage and images in Documents\\My Games\\Sprocket\\Paint. Applies to every part using this preset. Ctrl+Z undoes it.");
+        var camoTip = new Tip("Choose camouflage", $"Click to use {Short(nextCamo)}. Cycles through no camouflage and images in Documents\\My Games\\Sprocket\\Paint. Applies to every part using this preset. Ctrl+Z undoes it.");
         ui.Button($"Camo: {Short(camo)}", Ui.Callback(() => Ui.Guard("Own paint", () =>
         {
             if (editor.CaptureBlocked()) return;
@@ -258,7 +257,7 @@ public static class PartPaint
                 Hotkeys.Current?.RequestRedraw();
             }
             if (!editor.Undoable($"{Name(slot)} camo", () => Put(nextCamo), () => Put(camo))) Put(nextCamo);
-        })), ref camoTip);
+        })), camoTip);
     });
 
     /// A slider being dragged: the change shows at once; when it's left alone (or another setting is touched) the

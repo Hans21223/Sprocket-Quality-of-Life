@@ -95,23 +95,21 @@ public static class GearSpeeds
         return false;
     }
 
-    [HarmonyPostfix, HarmonyPatch(typeof(TransmissionEditor), nameof(TransmissionEditor.OnGUI))]
-    static void InTransmission(TransmissionEditor __instance, IGUILayout layout) =>
+    internal static void InTransmission(TransmissionEditor __instance, Panel layout) =>
         Ui.Inspector(Title, layout, () =>
         {
             redrawPanel = () => __instance.RequestRedraw();
             Draw(layout, __instance.Component, null, __instance.Component.Vehicle?.Mass ?? 0);
         });
 
-    [HarmonyPostfix, HarmonyPatch(typeof(CombustionEngineComponentEditor), nameof(CombustionEngineComponentEditor.OnGUI))]
-    static void InEngine(CombustionEngineComponentEditor __instance, IGUILayout layout) =>
+    internal static void InEngine(CombustionEngineComponentEditor __instance, Panel layout) =>
         Ui.Inspector(Title, layout, () =>
         {
             redrawPanel = () => __instance.RequestRedraw();
             Draw(layout, null, __instance.blueprint, __instance.Component.Vehicle?.Mass ?? 0);
         });
 
-    static void Draw(IGUILayout layout, TransmissionBlock? gearbox, EngineBlueprint? engine, float mass)
+    static void Draw(Panel layout, TransmissionBlock? gearbox, EngineBlueprint? engine, float mass)
     {
         var ui = Ui.Drawer(layout);
         if (ui == null) return;
@@ -236,19 +234,7 @@ public static class GearSpeeds
         var gearboxes = parts.Select(c => c.TryCast<TransmissionBlock>()).Where(t => t != null).ToList();
         gearbox ??= gearboxes.FirstOrDefault(t => t!.SelectedInPowertrain) ?? gearboxes.FirstOrDefault();
         var tracks = parts.Select(c => c.TryCast<TrackAssembly>()).Where(t => t?.BlueprintSlot?.HasBlueprint == true).Select(t => t!).ToList();
-        if (engine == null) return "Add an engine to see speeds.";
-        if (gearbox == null) return "Add a transmission to see speeds.";
-        if (tracks.Count == 0) return "Add tracks to see speeds.";
-        var ratios = (gearbox.resultingDriveGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
-        var reverse = (gearbox.resultingReverseGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
-        if (ratios.Length == 0) return "No drive gears yet.";
-        var track = tracks[0];
-        float finalDrive = track.BlueprintSlot.Blueprint.FinalDriveRatio;
-        float radius = Try(() => track.SprocketAssembly.BeltWrapRadius);
-        if (radius <= 0 || finalDrive <= 0 || engine.MaxRPM <= 0 || engine.MaxTorque <= 0) return "Can't read the tracks' drive sprocket yet.";
-        if (mass <= 0) return "Can't read the vehicle's mass yet.";
-
-        var vehicle = Build(engine, ratios, gearbox, tracks, finalDrive, radius, mass);
+        if (VehicleOf(engine, gearbox, tracks, mass, out var reverse, out var problem) is not { } vehicle) return problem;
         string key = Inputs(vehicle, reverse);
         if (key != predictionKey || predictionText == null)
         {
@@ -261,6 +247,34 @@ public static class GearSpeeds
     }
 
     static float topSpeed;
+
+    /// The vehicle as the game sets it up for a drive (Build), from its engine, gearbox, tracks and mass; null, with
+    /// what's missing, if it can't be. `reverse`: the reverse gears' ratios.
+    static DriveSim.Vehicle? VehicleOf(EngineBlueprint? engine, TransmissionBlock? gearbox, List<TrackAssembly> tracks, float mass, out float[] reverse, out string problem)
+    {
+        reverse = Array.Empty<float>();
+        problem = engine == null ? "Add an engine to see speeds." : gearbox == null ? "Add a transmission to see speeds." : tracks.Count == 0 ? "Add tracks to see speeds." : "";
+        if (engine == null || gearbox == null || tracks.Count == 0) return null;
+        var ratios = (gearbox.resultingDriveGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
+        reverse = (gearbox.resultingReverseGearRatios?.ToArray() ?? Array.Empty<float>()).Select(Math.Abs).Where(r => r > 0).ToArray();
+        if (ratios.Length == 0) { problem = "No drive gears yet."; return null; }
+        var track = tracks[0];
+        float finalDrive = track.BlueprintSlot.Blueprint.FinalDriveRatio;
+        float radius = Try(() => track.SprocketAssembly.BeltWrapRadius);
+        if (radius <= 0 || finalDrive <= 0 || engine.MaxRPM <= 0 || engine.MaxTorque <= 0) { problem = "Can't read the tracks' drive sprocket yet."; return null; }
+        if (mass <= 0) { problem = "Can't read the vehicle's mass yet."; return null; }
+        return Build(engine, ratios, gearbox, tracks, finalDrive, radius, mass);
+    }
+
+    /// Top speed forward and in reverse (km/h) on level ground, as the Speed & acceleration panel works it out (the
+    /// fastest gear where the drive settles; 0 for none); null if the drivetrain can't be read.
+    internal static (float Forward, float Reverse)? TopSpeeds(EngineBlueprint? engine, TransmissionBlock? gearbox, List<TrackAssembly> tracks, float mass)
+    {
+        if (VehicleOf(engine, gearbox, tracks, mass, out var reverse, out _) is not { } v) return null;
+        float forward = v.Gears.Max(r => DriveSim.TopSpeed(v, r).Speed) * 3.6f;
+        float back = reverse.Length > 0 ? DriveSim.TopSpeed(v, reverse.Min()).Speed * 3.6f : 0;
+        return (forward, back);
+    }
 
     static string Speeds(DriveSim.Vehicle vehicle, float[] reverse, out float top)
     {

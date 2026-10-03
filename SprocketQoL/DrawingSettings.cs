@@ -10,19 +10,16 @@ namespace SprocketQoL;
 [HarmonyPatch]
 public static class DrawingSettings
 {
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Structure(PlateStructureEditor __instance, IGUILayout layout) => Draw(layout, () => __instance.RequestRedraw());
-    [HarmonyPostfix, HarmonyPatch(typeof(TurretRingEditor), nameof(TurretRingEditor.OnGUI))]
-    static void Ring(TurretRingEditor __instance, IGUILayout layout) => Draw(layout, () => __instance.RequestRedraw());
-    [HarmonyPostfix, HarmonyPatch(typeof(CannonEditor), nameof(CannonEditor.OnGUI))]
-    static void Cannon(CannonEditor __instance, IGUILayout layout) => Draw(layout, () => __instance.RequestRedraw(), __instance.Component);
+    internal static void Structure(PlateStructureEditor __instance, Panel layout) => Draw(layout, () => __instance.RequestRedraw());
+    internal static void Ring(TurretRingEditor __instance, Panel layout) => Draw(layout, () => __instance.RequestRedraw());
+    internal static void Cannon(CannonEditor __instance, Panel layout) => Draw(layout, () => __instance.RequestRedraw(), __instance.Component);
 
     internal static string GunKey(Cannon gun) => GunAnnotationPreferences.Key(gun.Vehicle?.DesignInfo?.Name, (int)gun.VehicleObject.VUID);
 
     static string? cachedLimits;
     static GunAnnotationPreferences gunLimits = new(null);
 
-    static void Draw(IGUILayout layout, Action redraw, Cannon? gun = null) => Ui.Inspector("Drawing sheet settings", layout, () =>
+    static void Draw(Panel layout, Action redraw, Cannon? gun = null) => Ui.Inspector("Drawing sheet settings", layout, () =>
     {
         var ui = Ui.Drawer(layout);
         if (ui == null) return;

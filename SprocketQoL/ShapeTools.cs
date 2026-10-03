@@ -10,8 +10,7 @@ namespace SprocketQoL;
 [HarmonyPatch]
 public static class ShapeTools
 {
-    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditor), nameof(PlateStructureEditor.OnGUI))]
-    static void Draw(PlateStructureEditor __instance, IGUILayout layout) => Ui.Inspector("Merge and cut", layout, () =>
+    internal static void Draw(PlateStructureEditor __instance, Panel layout) => Ui.Inspector("Merge and cut", layout, () =>
     {
         var part = __instance.Component.VehicleObject;
         var editor = DesignEditor.Instance;
@@ -26,11 +25,11 @@ public static class ShapeTools
         else
         {
             ui.InfoField($"{others.Count} selected add-on{(others.Count == 1 ? "" : "s")} will join this {(body ? "hull or turret" : "add-on")}. Ctrl+Z undoes the merge.", 2);
-            var tip = new UITooltip("Merge into this part", body
+            var tip = new Tip("Merge into this part", body
                 ? "Keeps the add-ons' position, shape and armour, and makes them part of this hull or turret. Their interior becomes part of this compartment. Mirrored copies merge too. Ctrl+Z undoes the merge."
                 : "Keeps the add-ons' position, shape and armour. Attached parts move onto this add-on. When every selected add-on has a mirror partner, those partners merge too. Ctrl+Z undoes the merge.");
             ui.Button($"Merge {others.Count} add-on{(others.Count == 1 ? "" : "s")} into this", Ui.Callback(() =>
-                editor.RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into part {addon}.", json => AddonEdits.PlanMerge(json, addon, others, editor.LiveShapes(json)))), ref tip);
+                editor.RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into part {addon}.", json => AddonEdits.PlanMerge(json, addon, others, editor.LiveShapes(json)))), tip);
         }
         if (body) return; // cutting with a part is for add-ons
 
@@ -46,22 +45,22 @@ public static class ShapeTools
             fill = v ? Fill.Mode.Rectangle : (fill == Fill.Mode.Rectangle ? Fill.Mode.Fewest : fill);
             __instance.RequestRedraw();
         }), "Adds a rectangular border around the opening to keep the surrounding face tidy. Off: connects the opening directly to the face's corners.");
-        var fillTip = new UITooltip("Surrounding faces", "Click to cycle the layout around the cut. Fewest points uses only existing corners and the opening. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads along the cut and more points for even faces. Rectangle box adds a rectangular border.");
+        var fillTip = new Tip("Surrounding faces", "Click to cycle the layout around the cut. Fewest points uses only existing corners and the opening. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads along the cut and more points for even faces. Rectangle box adds a rectangular border.");
         ui.Button($"Faces: {Fill.ModeNames[(int)fill]}", Ui.Callback(() =>
         {
             fill = (Fill.Mode)(((int)fill + 1) % Fill.ModeNames.Length);
             rectangleBox = (fill == Fill.Mode.Rectangle);
             __instance.RequestRedraw();
-        }), ref fillTip);
+        }), fillTip);
         foreach (bool pocket in new[] { false, true })
         {
-            var tip = new UITooltip(pocket ? "Cut recess" : "Cut through-hole", pocket
+            var tip = new Tip(pocket ? "Cut recess" : "Cut through-hole", pocket
                 ? "Makes a recess with walls and a floor, shaped by this add-on. The new plates inherit the add-on's armour. Ctrl+Z undoes the cut."
                 : "Makes an opening through every plate this add-on overlaps. Mirrored plates are cut on both sides. Ctrl+Z undoes the cut.");
             var mode = rectangleBox ? Fill.Mode.Rectangle : fill;
             ui.Button(pocket ? "Cut recess (walls and floor)" : "Cut through-hole", Ui.Callback(() =>
                 editor.RequestLiveEdit(pocket ? "Cutting a pocket" : "Cutting a hole", pocket ? "Pocket cut." : "Hole cut.",
-                    json => AddonEdits.PlanCut(json, addon, targets, !keepCutter, pocket, mode, editor.LiveShapes(json)))), ref tip);
+                    json => AddonEdits.PlanCut(json, addon, targets, !keepCutter, pocket, mode, editor.LiveShapes(json)))), tip);
         }
     });
 
