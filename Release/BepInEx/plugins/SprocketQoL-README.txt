@@ -1,4 +1,4 @@
-Quality of Life 1.8.5 - editor tools for Sprocket 0.2.55.5
+Quality of Life 1.8.6 - editor tools for Sprocket 0.2.56.0
 https://github.com/Hans21223/Sprocket-Quality-of-Life
 
 NEW IN 1.8.5
@@ -161,3 +161,8 @@ to BepInEx\SprocketQoLBackups\ (the newest 50 are kept; "Backups kept" in the co
 cut are new: save a copy of your tank before using them.
 
 Found a bug? Open an issue on GitHub with a screenshot and your BepInEx\LogOutput.log.
+
+GAME PROFILE
+This binary was built for Sprocket 0.2.56.0.
+1.8.6 rebuilds the engine editor tools against the assembly moved in 0.2.56.0.
+68 hooks and 51 native routines checked offline. Use loader 1.2.2; gameplay testing pending.

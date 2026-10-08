@@ -1,3 +1,13 @@
+# Quality of Life 1.8.6
+
+- Rebuild for **Sprocket 0.2.56.0**. The game moved its engine editor types into
+  `Sprocket.EngineDesigner.Editor.dll`; QoL now references that assembly for the engine inspector
+  and its Speed & acceleration section.
+- All 68 hooks match the fresh game interop, and 51 relevant native methods retain their instruction
+  logic after address relocation. Offline compilation and native/API checks pass; gameplay remains
+  unverified. The 1.8.5 hole, mesh and photo fixes are retained.
+- Use 1.8.5 with **Sprocket 0.2.55.5**. The new engine editor assembly is absent from that build.
+
 # Quality of Life 1.8.5
 
 - Fix Create Hole collapsing into a point and leaving crossed or overlapping plates. Reject a collapsed ring
