@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\SprocketQoL\PhotoOutput.cs" Link="PhotoOutput.cs" />
     <Compile Include="..\SprocketQoL\ObjMeshFormat.cs" Link="ObjMeshFormat.cs" />
     <Compile Include="..\SprocketQoL\ObjBlueprintImport.cs" Link="ObjBlueprintImport.cs" />
     <Compile Include="..\SprocketQoL\ObjPlateFiles.cs" Link="ObjPlateFiles.cs" />
@@ -17,6 +18,7 @@
     <Compile Include="..\SprocketQoL\Conversion.cs" Link="Conversion.cs" />
     <Compile Include="..\SprocketQoL\AddonEdits.cs" Link="AddonEdits.cs" />
     <Compile Include="..\SprocketQoL\HoleRing.cs" Link="HoleRing.cs" />
+    <Compile Include="..\SprocketQoL\HoleFill.cs" Link="HoleFill.cs" />
     <Compile Include="..\SprocketQoL\MeshCut.cs" Link="MeshCut.cs" />
     <Compile Include="..\SprocketQoL\Fill.cs" Link="Fill.cs" />
     <Compile Include="..\SprocketQoL\FaceMerge.cs" Link="FaceMerge.cs" />

@@ -1,5 +1,6 @@
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+using Sprocket.MeshEditing;
 using Sprocket.PlateMesh;
 using Sprocket.UI;
 using Sprocket.Vehicles.PlateStructures.Design;
@@ -16,35 +17,138 @@ public static class HoleQuality
     static int segments = 32, sizePercent = 100;
 
     static ushort? holeThickness; // the holed face's plate thickness, read before the game takes the face away
+    static Num? originalSide;
+    static PlateStructureEditor? lastEditor;
+
+    sealed class HoleEdit
+    {
+        internal readonly EditMesh Original;
+        internal readonly HoleEdit? Previous;
+        internal string? Failure;
+        internal HoleEdit(MeshTopologyEditOp topology, HoleEdit? previous)
+        { Original = topology.mesh; Previous = previous; }
+    }
+    static HoleEdit? activeEdit;
+
+    // The native operation removes the old face before it asks FillEdgeLoop to fill
+    // around the hole. Keep its undo snapshot so a rejected fill cannot leave half a cut,
+    // including when the second, mirrored cut fails. Redo must use the valid snapshot too.
+    [HarmonyPrefix, HarmonyPatch(typeof(MeshTopologyEditOp), nameof(MeshTopologyEditOp.Execute))]
+    static void BeginHole(MeshTopologyEditOp __instance, out HoleEdit? __state)
+    {
+        __state = null;
+        if (__instance.meshOp?.TryCast<CreateHoleOp>() == null) return;
+        activeEdit = __state = new HoleEdit(__instance, activeEdit);
+    }
+
+    [HarmonyPostfix, HarmonyPatch(typeof(MeshTopologyEditOp), nameof(MeshTopologyEditOp.Execute))]
+    static void EndHole(MeshTopologyEditOp __instance, HoleEdit? __state)
+    {
+        if (__state == null) return;
+        try
+        {
+            if (__state.Failure == null && __instance.final is { } final)
+            {
+                MeshTools.RepairThickening(final);
+                __state.Failure = MeshTools.CloneProblem(final);
+            }
+        }
+        catch (Exception ex) { __state.Failure = ex.Message; }
+        finally
+        {
+            activeEdit = __state.Previous;
+            holeThickness = null;
+            holeRivets = null;
+            faceSide = null;
+            originalSide = null;
+        }
+        if (__state.Failure == null) return;
+        __instance.final = __state.Original;
+        __instance.Revert(__instance.context);
+        __state.Original.MarkDirty(MeshDirtyFlags.All);
+        Plugin.ModLog.LogWarning("Create Hole cancelled; original shape restored: " + __state.Failure);
+        Ui.Guard("Create Hole", () => lastEditor?.operations.NotifyError("Create Hole: " + __state.Failure + ". Shape unchanged."));
+    }
+
+    static void Reject(string reason)
+    {
+        if (activeEdit != null) activeEdit.Failure ??= reason;
+        Plugin.ModLog.LogWarning("Create Hole rejected: " + reason);
+        if (activeEdit == null)
+            Ui.Guard("Create Hole", () => lastEditor?.operations.NotifyError("Create Hole: " + reason + ". Shape unchanged."));
+    }
 
     [HarmonyPrefix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.CreateHole))]
-    static void UseQuality(ref int resolution, EditMesh mesh, Il2CppReferenceArray<Vertex> vertices)
+    static bool UseQuality(ref int resolution, EditMesh mesh, Il2CppReferenceArray<Vertex> vertices, ref Il2CppReferenceArray<Vertex> __result)
     {
         Plugin.ModLog.LogInfo($"Create Hole: game asked for {resolution} segments, using {segments} at {sizePercent}% size");
         resolution = segments;
         holeThickness = null;
         holeRivets = null;
-        Ui.Guard("Create Hole", () =>
+        faceSide = null;
+        originalSide = null;
+        try
         {
-            var face = FaceOf(vertices);
+            if (activeEdit?.Failure != null) { __result = new Il2CppReferenceArray<Vertex>(0); return false; }
+            if (vertices == null || vertices.Length < 3 || vertices.Any(v => v == null) || vertices.Select(v => v.Pointer).Distinct().Count() != vertices.Length)
+                throw new InvalidOperationException("select the corners of one face");
+            if (vertices.Any(v => !Finite(ToNum(v.position)))) throw new InvalidOperationException("face has invalid points");
+            var normal = UnityEngine.Vector3.zero;
+            var centre = UnityEngine.Vector3.zero;
+            var sorted = ElementSelection.SortVerticesOnRadialPlane(vertices.Cast<Il2CppSystem.Collections.Generic.IReadOnlyList<Vertex>>(), out normal, out centre);
+            var face = Face.GetExistingFace(sorted, sorted.Length);
+            // Cutting points spread across several faces adds a second plate over the old
+            // plates: the native tool only deletes a face with exactly this corner loop.
+            if (face == null) throw new InvalidOperationException("select one complete face, not points across several faces");
+            var corners = sorted.Select(v => ToNum(v.position)).ToArray();
+            var c = ToNum(centre);
+            float radius = Enumerable.Range(0, corners.Length).Min(i => DistanceToSegment(c, corners[i], corners[(i + 1) % corners.Length])) * 0.9f;
+            var side = HoleRing.Normal(corners);
+            if (!Finite(c) || !Finite(side) || side.LengthSquared() < 1e-12f) throw new InvalidOperationException("face is too small for a hole");
+            side = Num.Normalize(side);
+            var u = Num.Normalize(new[] { Num.UnitY, Num.UnitZ }.Select(a => a - Num.Dot(a, side) * side).First(a => a.LengthSquared() > 0.1f));
+            var v = Num.Cross(side, u);
+            var seed = Enumerable.Range(0, segments).Select(k => c + radius * ((float)Math.Cos(k * Math.Tau / segments) * u + (float)Math.Sin(k * Math.Tau / segments) * v)).ToArray();
+            if (!HoleRing.TryFit(corners, seed, c, out _, out string reason, sizePercent / 100f))
+                throw new InvalidOperationException(reason);
+            originalSide = HoleRing.Normal(Corners(face));
             holeThickness = face?.firstLoop?.thickness;
             // The game drops the holed face's rivets with it: noted here, put back on the faces round the hole after.
             if (face != null) holeRivets = new MeshTools.RivetKeeper(mesh, new[] { face });
-        });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Reject(ex.Message);
+            __result = new Il2CppReferenceArray<Vertex>(0);
+            return false; // before native DeleteFace, CreateCircle or FillEdgeLoop
+        }
+    }
+
+    static bool Finite(Num p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
+    static float DistanceToSegment(Num p, Num a, Num b)
+    {
+        var ab = b - a;
+        float t = ab.LengthSquared() < 1e-12f ? 0 : Math.Clamp(Num.Dot(p - a, ab) / ab.LengthSquared(), 0, 1);
+        return Num.Distance(p, a + t * ab);
     }
 
     static MeshTools.RivetKeeper? holeRivets;
 
     /// The holed face's rivets onto the faces now round the hole (those in the hole itself go).
     [HarmonyPostfix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.FillEdgeLoop))]
-    static void KeepRivets(Il2CppReferenceArray<Face> __result) => Ui.Guard("Create Hole", () =>
+    static void KeepRivets(Il2CppReferenceArray<Face> __result)
     {
-        var keeper = holeRivets;
-        holeRivets = null;
-        if (keeper is not { Count: > 0 } || __result == null) return;
-        var (kept, lost) = keeper.Place(__result, reach: 0.002f);
-        Plugin.ModLog.LogInfo($"Create Hole: rivets {kept} kept, {lost} in the hole removed");
-    });
+        try
+        {
+            var keeper = holeRivets;
+            holeRivets = null;
+            if (keeper is not { Count: > 0 } || __result == null || activeEdit?.Failure != null) return;
+            var (kept, lost) = keeper.Place(__result, reach: 0.002f);
+            Plugin.ModLog.LogInfo($"Create Hole: rivets {kept} kept, {lost} in the hole removed");
+        }
+        catch (Exception ex) { Reject(ex.Message); }
+    }
 
     static Num? faceSide; // which way the face being holed really faces, to check the filled-in faces against
     static int holeFill; // index into FillNames: Fill.Mode's (fewest points first), then the game's own fan
@@ -59,12 +163,13 @@ public static class HoleQuality
     {
         Il2CppReferenceArray<Face>? mine = null;
         faceSide = null;
-        Ui.Guard("Create Hole", () =>
+        try
         {
             var corners = outer.Select(v => ToNum(v.position)).ToArray();
-            var ring = HoleRing.Fit(corners, inner.Select(v => ToNum(v.position)).ToArray(), ToNum(centre), out var note, sizePercent / 100f);
+            if (!HoleRing.TryFit(corners, inner.Select(v => ToNum(v.position)).ToArray(), ToNum(centre), out var ring, out var note, sizePercent / 100f))
+                throw new InvalidOperationException(note);
             for (int k = 0; k < inner.Length; k++) inner[k].position = new UnityEngine.Vector3(ring[k].X, ring[k].Y, ring[k].Z);
-            int order = FaceOrder(outer);
+            int order = originalSide is { } original ? (Num.Dot(HoleRing.Normal(corners), original) > 0 ? 1 : -1) : FaceOrder(outer);
             faceSide = order == 0 ? null : HoleRing.Normal(corners) * order;
             // The holed face is already gone by now: new faces copy a neighbour's settings and the holed face's thickness.
             string fill = GameFill ? "game's fill" : faceSide == null ? "game's fill (can't tell which way the face faces)"
@@ -72,7 +177,15 @@ public static class HoleQuality
                 : (mine = CleanFill(mesh, outer, inner, faceSide.Value, order, like, holeThickness ?? like.firstLoop.thickness)) == null ? "game's fill (clean fill didn't fit)"
                 : $"clean fill ({Fill.Paths[^1]}, {holeThickness?.ToString() ?? "neighbour's"} thickness)";
             Plugin.ModLog.LogInfo($"Create Hole ring: {note}; {fill}");
-        });
+        }
+        catch (Exception ex)
+        {
+            // Exceptions crossing an IL2CPP Harmony trampoline are swallowed. Record the
+            // failure explicitly so EndHole restores the original; never run the fan on it.
+            Reject(ex.Message);
+            __result = new Il2CppReferenceArray<Face>(0);
+            return false;
+        }
         if (mine == null) return true;
         __result = mine;
         return false;
@@ -91,7 +204,8 @@ public static class HoleQuality
         var mode = (Fill.Mode)holeFill;
         var faces = Fill.Region(pos, corners, new List<List<int>> { Enumerable.Range(outer.Length, inner.Length).ToList() }, normal,
                                 mode == Fill.Mode.Fewest ? null : added, mode == Fill.Mode.Light, mode);
-        if (faces.Count == 0 || faces.Any(f => f.Length is < 3 or > 4 || f.Distinct().Count() != f.Length)) return null;
+        if (HoleFill.Check(pos, corners, Enumerable.Range(outer.Length, inner.Length).ToArray(), faces, normal) is string problem)
+            throw new InvalidOperationException("surrounding faces did not fit: " + problem);
         foreach (var a in added)
         {
             // CreateVertex copies its prototype's position, so place each new vertex after creating it.
@@ -155,18 +269,38 @@ public static class HoleQuality
 
     /// The game's fill turns some of its new faces inside out (a different few each time): turn those back round.
     [HarmonyPostfix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.FillEdgeLoop))]
-    static void FixSides(Il2CppReferenceArray<Face> __result) => Ui.Guard("Create Hole", () =>
+    static void FixSides(Il2CppReferenceArray<Face> __result, Il2CppReferenceArray<Vertex> outer, Il2CppReferenceArray<Vertex> inner)
     {
-        if (faceSide is not { } side || __result == null) return;
-        // The game's list can name a face twice; turning it twice would put it back inside out.
-        var faces = __result.GroupBy(f => f.Pointer).Select(g => g.First()).ToList();
-        var wrong = faces.Where(f => Num.Dot(HoleRing.Normal(Corners(f)), side) < 0).ToList();
-        wrong.ForEach(Flip);
-        var problems = faces.Select(Problem).Where(p => p != null).Distinct().ToList();
-        int right = faces.Count(f => Num.Dot(HoleRing.Normal(Corners(f)), side) > 0);
-        Plugin.ModLog.LogInfo($"Create Hole fill: turned {wrong.Count} of {faces.Count} faces the right way round, {right} now face out" +
-                              (problems.Count == 0 ? ", mesh checks OK" : ", MESH CHECK FAILED: " + string.Join("; ", problems)));
-    });
+        try
+        {
+            if (faceSide is not { } side || __result == null || activeEdit?.Failure != null) return;
+            // The game's list can name a face twice; turning it twice would put it back inside out.
+            var faces = __result.GroupBy(f => f.Pointer).Select(g => g.First()).ToList();
+            var wrong = faces.Where(f => Num.Dot(HoleRing.Normal(Corners(f)), side) < 0).ToList();
+            wrong.ForEach(Flip);
+            var problems = faces.Select(Problem).Where(p => p != null).Distinct().ToList();
+            // Also check the game's optional triangle fan. Sound native links do not prove
+            // that every ring edge was used or that the faces actually leave an open hole.
+            var positions = new List<Num>();
+            var indices = new Dictionary<IntPtr, int>();
+            int Index(Vertex vertex)
+            {
+                if (!indices.TryGetValue(vertex.Pointer, out int index))
+                { indices[vertex.Pointer] = index = positions.Count; positions.Add(ToNum(vertex.position)); }
+                return index;
+            }
+            var outerIds = outer.Select(Index).ToArray();
+            if (Num.Dot(HoleRing.Normal(outer.Select(v => ToNum(v.position)).ToArray()), side) < 0) Array.Reverse(outerIds);
+            var innerIds = inner.Select(Index).ToArray();
+            var made = faces.Select(f => Corners(f, Index)).ToArray();
+            if (HoleFill.Check(positions, outerIds, innerIds, made, side) is string geometry) problems.Add(geometry);
+            int right = faces.Count(f => Num.Dot(HoleRing.Normal(Corners(f)), side) > 0);
+            if (problems.Count > 0) Reject(string.Join("; ", problems));
+            Plugin.ModLog.LogInfo($"Create Hole fill: turned {wrong.Count} of {faces.Count} faces the right way round, {right} now face out" +
+                                  (problems.Count == 0 ? ", mesh checks OK" : ", MESH CHECK FAILED: " + string.Join("; ", problems)));
+        }
+        catch (Exception ex) { Reject(ex.Message); }
+    }
 
     /// Reverses a face's corner order: each corner keeps its vertex, thickness and thicken edge, and moves onto the
     /// edge behind it. Done with the mesh's own link helpers.
@@ -245,6 +379,7 @@ public static class HoleQuality
     {
         var ui = Ui.Drawer(layout);
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // Create Hole is a freeform tool
+        lastEditor = __instance;
         Ui.Section(layout, "Hole quality");
         ui.InfoField("Faces mode: these settings apply to Create Hole. Ctrl+Z undoes each hole.", 2);
         ui.Slider("Circle segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));

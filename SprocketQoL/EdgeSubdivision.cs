@@ -10,7 +10,7 @@ public static class EdgeSubdivision
     {
         if (sections < 2 || sections > 16) return MeshPlans.Rebuild.Fail("use 2 to 16 sections");
         if (pos.Any(p => !float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z)) ||
-            faces.Any(f => f.Length < 3 || f.Distinct().Count() != f.Length || f.Any(v => v < 0 || v >= pos.Count)))
+            faces.Any(f => f.Length is not (3 or 4) || f.Distinct().Count() != f.Length || f.Any(v => v < 0 || v >= pos.Count)))
             return MeshPlans.Rebuild.Fail("the mesh contains invalid points or faces");
         if (faceScope != null && (faceScope.Count == 0 || faceScope.Any(f => f < 0 || f >= faces.Count)))
             return MeshPlans.Rebuild.Fail("select faces first");
@@ -76,15 +76,37 @@ public static class EdgeSubdivision
             remove.Add(f);
             if (faceScope != null && !faceScope.Contains(f))
             {
-                // Keep the neighbour as one face, only adding shared boundary vertices. This
-                // stops the cut here without introducing a crack or lines across the neighbour.
+                // Stop the strip at this neighbour, but retain every shared boundary vertex.
+                // Sprocket cannot save/clone an n-gon, so fill the expanded boundary with
+                // triangles and quads rather than leaving it as one unsupported face.
                 var boundary = new List<int>();
+                // Exact edge parameters avoid tiny sliver triangles caused by float rounding
+                // when a rotated/transformed plate's subdivided border is projected again.
+                var uvCorners = c.Length == 4
+                    ? new[] { Vector3.Zero, Vector3.UnitX, new Vector3(1, 1, 0), Vector3.UnitY }
+                    : new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY };
+                var uv = new List<Vector3>();
                 for (int k=0;k<c.Length;k++)
                 {
                     int a=c[k], b=c[(k+1)%c.Length]; boundary.Add(a);
-                    if (Cut(k)) for(int s=1;s<sections;s++) boundary.Add(OnEdge(a,b,s,sections));
+                    uv.Add(uvCorners[k]);
+                    if (Cut(k)) for(int s=1;s<sections;s++)
+                    {
+                        boundary.Add(OnEdge(a,b,s,sections));
+                        uv.Add(Vector3.Lerp(uvCorners[k], uvCorners[(k+1)%c.Length], s/(float)sections));
+                    }
                 }
-                add.Add(new(boundary.ToArray(),f));
+                var normal = HoleRing.Normal(c.Select(v => pos[v]).ToList());
+                bool convex = Enumerable.Range(0, c.Length).All(k =>
+                    Vector3.Dot(Vector3.Cross(pos[c[(k+1)%c.Length]] - pos[c[k]],
+                        pos[c[(k+2)%c.Length]] - pos[c[(k+1)%c.Length]]), normal) >= -1e-6f * normal.LengthSquared());
+                // A concave quad cannot be treated as a square: its diagonal must stay
+                // inside the authored outline. Tessellate its actual boundary instead.
+                var layout = convex ? uv : boundary.Select(v => v < pos.Count ? pos[v] : points[v-pos.Count].P).ToList();
+                var filled = Fill.Region(layout, Enumerable.Range(0, boundary.Count).ToList(), new(), convex ? Vector3.UnitZ : normal, null);
+                if (filled.Count == 0 || filled.Any(face => face.Length is not (3 or 4)))
+                    return MeshPlans.Rebuild.Fail("a face beside the split couldn't be rebuilt as triangles or quads");
+                add.AddRange(filled.Select(face => new MeshPlans.NewFace(face.Select(v => boundary[v]).ToArray(), f)));
                 continue;
             }
             if(c.Length==4)

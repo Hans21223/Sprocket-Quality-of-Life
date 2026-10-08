@@ -6,6 +6,9 @@ Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with
 **Quality of Life 1.8.4** works out speed and acceleration with the game's own drivetrain maths (top speed within
 0.1% of a test drive), lets you change every Quality of Life key, and adds a **Mod Options** tab to the game's
 Settings for its keys and settings. 1.8.3 added an **OBJ export / import** menu (F10).
+**1.8.5** adds **Mod Options > Photos** with 2K-8K F8 rendering or screenshot upscaling, fixes plate structure
+save/load failures after mesh edits, rejects collapsed or overlapping hole cuts, and keeps local face splits within
+the game's triangle/quad limit.
 
 Mesh edits and clipboard operations validate geometry and preserve surrounding edge settings, paint and mirror
 images. Photo and drawing exports restore temporary state, prevent overlapping captures and write PNGs safely.
@@ -255,7 +258,10 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   engines or crew from an OBJ. Offline geometry and format checks do not replace in-game menu and reload testing.
 - **Max-quality photo (F8 in photo mode):** takes a photo with every graphics quality setting at its best, without
   leaving photo mode: the settings go up and the photo mode overlay hides for about a second, then both come back as
-  they were. Resolution, anti-aliasing type and looks (vignette, film grain, depth of field on or off) stay yours.
+  they were. **Settings > Mod Options > Photos** selects **Screen / 2K / 4K / 6K / 8K**, keeping the camera's
+  proportions (long edge: 2560 / 3840 / 5760 / 7680 pixels). **Render** draws the photo at the chosen size;
+  **Upscale** resizes the finished screenshot. Screen keeps your current resolution. The window size is unchanged.
+  Anti-aliasing type and looks (vignette, film grain, depth of field on or off) stay yours.
   The finished photo is saved as opaque RGB: exhaust and other transparent effects keep their rendered colour
   without leaking the render target's alpha into the PNG and being blended again by image viewers.
   Saved as PNG in `Documents\My Games\Sprocket\Photos`.

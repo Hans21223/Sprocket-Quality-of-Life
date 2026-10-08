@@ -26,7 +26,7 @@ public static class MeshTools
 
     // The game's Delete operation, given nothing to delete, carries a tool so it gets the game's undo and mesh rebuild.
     // Only these instances run a tool; every other Delete runs as normal.
-    static readonly Dictionary<IntPtr, (DeleteOp Op, string Name, Func<EditMesh, (bool Done, string Message)> Apply)> ours = new();
+    static readonly Dictionary<IntPtr, (DeleteOp Op, string Name, Func<EditMesh, (bool Done, string Message)> Apply, MeshTopologyEditOp Topology, EditMesh Original)> ours = new();
     static readonly Dictionary<IntPtr, IntPtr> carriedTools = new();
     static PlateStructureEditOperations? notify;
 
@@ -34,12 +34,24 @@ public static class MeshTools
     static bool Intercept(DeleteOp __instance, EditMesh mesh)
     {
         if (!ours.TryGetValue(__instance.Pointer, out var tool)) return true;
-        Ui.Guard(tool.Name, () =>
+        try
         {
             var (done, message) = tool.Apply(mesh);
+            if (CloneProblem(mesh) is string problem) throw new InvalidOperationException(problem);
             Plugin.ModLog.LogInfo($"{tool.Name}: {message}");
             if (!done) notify?.NotifyError($"{tool.Name}: {message}");
-        });
+        }
+        catch (Exception ex)
+        {
+            // IL2CPP's Harmony trampoline logs and swallows managed exceptions, so
+            // throwing does not abort this transaction. Reattach the untouched original
+            // explicitly, and make redo point to that valid mesh instead of this candidate.
+            tool.Topology.final = tool.Original;
+            tool.Topology.Revert(tool.Topology.context);
+            tool.Original.MarkDirty(MeshDirtyFlags.All);
+            Plugin.ModLog.LogError($"{tool.Name}: edit cancelled; original mesh restored. {ex}");
+            notify?.NotifyError(tool.Name + ": edit cancelled; the original shape was restored");
+        }
         return false;
     }
 
@@ -51,13 +63,23 @@ public static class MeshTools
             editor.operations.NotifyError(name + ": finish the current edit or capture first");
             return;
         }
+        var currentMesh = editor.meshEditor?.Mesh?.EditMesh;
+        if (currentMesh == null) return;
+        RepairThickening(currentMesh);
+        if (CloneProblem(currentMesh) is string problem)
+        {
+            editor.operations.NotifyError(name + ": " + problem);
+            Plugin.ModLog.LogError(name + ": " + problem);
+            return;
+        }
         var op = new DeleteOp(DeleteType.None) { Name = name };
-        ours[op.Pointer] = (op, name, apply);
+        var topology = editor.meshEditor!.CreateTopoOp(op);
+        ours[op.Pointer] = (op, name, apply, topology, currentMesh);
         var ops = notify = editor.operations;
         bool retained = false;
         try
         {
-            var carried = ops.Execute(editor.meshEditor.CreateTopoOp(op), StructureEditOperationOptions.None, ops.GetNewGroupID());
+            var carried = ops.Execute(topology, StructureEditOperationOptions.None, ops.GetNewGroupID());
             if (carried?.operation is { } historyOp)
             {
                 carriedTools[historyOp.Pointer] = op.Pointer;
@@ -66,7 +88,14 @@ public static class MeshTools
             else ours.Remove(op.Pointer);
             editor.meshEditor.SelectFlush();
         }
-        catch { if (!retained) ours.Remove(op.Pointer); throw; }
+        catch
+        {
+            topology.final = currentMesh;
+            topology.Revert(topology.context);
+            currentMesh.MarkDirty(MeshDirtyFlags.All);
+            if (!retained) ours.Remove(op.Pointer);
+            throw;
+        }
         finally { notify = null; }
     });
 
@@ -235,12 +264,7 @@ public static class MeshTools
             for (int k = 0; k < face.vertexCount; k++, l = l.next)
             {
                 var from = From(source, ids[l.vertex.Pointer]);
-                l.thickenMode = from.thickenMode;
-                // A corner thickens along an edge from its own point; a new point can't use the one its source point had
-                // (the game's check: LoopVertexNotInThickenEdge), so the game picks one for it.
-                var edge = from.thickenEdge;
-                l.thickenEdge = edge != null && (edge.v0.Pointer == l.vertex.Pointer || edge.v1.Pointer == l.vertex.Pointer) ? edge : null;
-                if (l.thickenEdge == null && l.thickenMode == ThickenMode.AlongEdgeManual) l.thickenMode = ThickenMode.AlongEdgeAuto;
+                CopyThickening(l, from);
             }
         }
         var (kept, lost) = rivets.Place(made.Select(m => m.Face), reach: 0.05f);
@@ -302,26 +326,122 @@ public static class MeshTools
         }
     }
 
-    /// A corner thickening along an edge being deleted lets the game pick instead; then the marked parts go.
+    /// Copy authored corner settings; a new point cannot use its source point's edge.
+    internal static void CopyThickening(Loop destination, Loop source)
+    {
+        destination.thickenMode = source.thickenMode;
+        var edge = source.thickenEdge;
+        destination.thickenEdge = edge != null && !edge.HasFlag(ElementFlags.Delete) &&
+            (edge.v0.Pointer == destination.vertex.Pointer || edge.v1.Pointer == destination.vertex.Pointer) ? edge : null;
+        if (destination.thickenEdge == null && destination.thickenMode == ThickenMode.AlongEdgeManual)
+            destination.thickenMode = ThickenMode.AlongEdgeAuto;
+    }
+
+    /// DeleteMarked only compacts the lists. Native deletion also unlinks disk/radial
+    /// cycles, so auto thickening cannot rediscover edges that no longer belong to the mesh.
     internal static int FinishDelete(EditMesh mesh)
     {
+        var faces = Enumerable.Range(0, mesh.faces.Count).Select(i => mesh.faces[i]).Where(f => f.HasFlag(ElementFlags.Delete)).ToList();
+        var edges = Enumerable.Range(0, mesh.edges.Count).Select(i => mesh.edges[i]).Where(e => e.HasFlag(ElementFlags.Delete)).ToList();
+        var vertices = Enumerable.Range(0, mesh.vertices.Count).Select(i => mesh.vertices[i]).Where(v => v.HasFlag(ElementFlags.Delete)).ToList();
+        var deletedEdges = edges.Select(e => e.Pointer).ToHashSet();
+        var deletedVertices = vertices.Select(v => v.Pointer).ToHashSet();
+        foreach (var edge in mesh.edges)
+            if (!deletedEdges.Contains(edge.Pointer) && (deletedVertices.Contains(edge.v0.Pointer) || deletedVertices.Contains(edge.v1.Pointer)))
+                throw new InvalidOperationException("a removed point is still used by a surviving edge");
+        // The native helpers return early for already marked elements. Clear only the
+        // planned marks first, then let the helpers perform and mark their own deletion.
+        foreach (var face in faces) face.DisableFlag(ElementFlags.Delete);
+        foreach (var edge in edges) edge.DisableFlag(ElementFlags.Delete);
+        foreach (var vertex in vertices) vertex.DisableFlag(ElementFlags.Delete);
+        foreach (var face in faces) Delete.DeleteFace(mesh, face);
+        foreach (var edge in edges) Delete.DeleteEdge(mesh, edge);
+        foreach (var vertex in vertices) Delete.DeleteVertex(mesh, vertex);
+        int repointed = RepairThickening(mesh);
+        mesh.DeleteMarked();
+        repointed += RepairThickening(mesh);
+        mesh.MarkDirty(MeshDirtyFlags.All);
+        if (CloneProblem(mesh) is string problem) throw new InvalidOperationException(problem);
+        return repointed;
+    }
+
+    /// Validate pointer membership rather than just an edge's recycled numeric index.
+    internal static int RepairThickening(EditMesh mesh)
+    {
+        var edges = Enumerable.Range(0, mesh.edges.Count).Select(i => mesh.edges[i]).Where(e => !e.HasFlag(ElementFlags.Delete)).Select(e => e.Pointer).ToHashSet();
         int repointed = 0;
-        var faces = mesh.faces;
-        for (int i = 0; i < faces.Count; i++)
+        foreach (var face in mesh.faces)
         {
-            if (faces[i].HasFlag(ElementFlags.Delete)) continue;
-            var l = faces[i].firstLoop;
-            for (int k = 0; k < faces[i].vertexCount; k++, l = l.next)
-                if (l.thickenEdge != null && l.thickenEdge.HasFlag(ElementFlags.Delete))
+            if (face.HasFlag(ElementFlags.Delete)) continue;
+            var l = face.firstLoop;
+            for (int k = 0; k < face.vertexCount && l != null; k++, l = l.next)
+                if (l.thickenEdge is { } edge && (!edges.Contains(edge.Pointer) || l.vertex == null ||
+                    edge.v0 == null || edge.v1 == null || !edge.ContainsVertex(l.vertex)))
                 {
                     l.thickenEdge = null;
                     if (l.thickenMode == ThickenMode.AlongEdgeManual) l.thickenMode = ThickenMode.AlongEdgeAuto;
                     repointed++;
                 }
         }
-        mesh.DeleteMarked();
-        mesh.MarkDirty(MeshDirtyFlags.All);
+        if (repointed > 0) mesh.MarkDirty(MeshDirtyFlags.All);
         return repointed;
+    }
+
+    /// Native Clone assumes triangles/quads and every referenced element is in these
+    /// lists. Face.Validate alone cannot detect a deleted edge lingering in a disk cycle.
+    internal static string? CloneProblem(EditMesh mesh)
+    {
+        var vertices = Enumerable.Range(0, mesh.vertices.Count).Select(i => mesh.vertices[i].Pointer).ToHashSet();
+        var edges = Enumerable.Range(0, mesh.edges.Count).Select(i => mesh.edges[i].Pointer).ToHashSet();
+        var faces = Enumerable.Range(0, mesh.faces.Count).Select(i => mesh.faces[i].Pointer).ToHashSet();
+        var loops = Enumerable.Range(0, mesh.loops.Count).Select(i => mesh.loops[i].Pointer).ToHashSet();
+        if (vertices.Count != mesh.vertices.Count || edges.Count != mesh.edges.Count || faces.Count != mesh.faces.Count || loops.Count != mesh.loops.Count)
+            return "the mesh contains duplicate element references";
+        if (vertices.Count > ushort.MaxValue || edges.Count > ushort.MaxValue || faces.Count > ushort.MaxValue || loops.Count > ushort.MaxValue)
+            return "the mesh exceeds the game's element limit";
+        foreach (var edge in mesh.edges)
+        {
+            if (edge.v0 == null || edge.v1 == null || !vertices.Contains(edge.v0.Pointer) || !vertices.Contains(edge.v1.Pointer))
+                return "an edge references a point no longer in the mesh";
+            foreach (var vertex in new[] { edge.v0, edge.v1 })
+            {
+                var next = edge.GetNextDiskEdge(vertex);
+                var prev = edge.GetPreviousDiskEdge(vertex);
+                if (next == null || prev == null || !edges.Contains(next.Pointer) || !edges.Contains(prev.Pointer) ||
+                    !next.ContainsVertex(vertex) || !prev.ContainsVertex(vertex) ||
+                    next.GetPreviousDiskEdge(vertex)?.Pointer != edge.Pointer || prev.GetNextDiskEdge(vertex)?.Pointer != edge.Pointer)
+                    return "an edge is not correctly linked to its points";
+            }
+            if (edge.loop != null && (!loops.Contains(edge.loop.Pointer) || edge.loop.edge?.Pointer != edge.Pointer))
+                return "an edge references a corner no longer in the mesh";
+        }
+        foreach (var vertex in mesh.vertices)
+            if (vertex.firstEdge != null && (!edges.Contains(vertex.firstEdge.Pointer) || !vertex.firstEdge.ContainsVertex(vertex)))
+                return "a point references an edge no longer in the mesh";
+        var usedLoops = new HashSet<IntPtr>();
+        foreach (var face in mesh.faces)
+        {
+            if (face.vertexCount is < 3 or > 4) return "the game requires every face to have three or four corners";
+            var first = face.firstLoop;
+            var loop = first;
+            for (int k = 0; k < face.vertexCount; k++, loop = loop!.next)
+            {
+                if (loop == null || !loops.Contains(loop.Pointer) || !usedLoops.Add(loop.Pointer) || loop.face?.Pointer != face.Pointer ||
+                    loop.vertex == null || !vertices.Contains(loop.vertex.Pointer) || loop.edge == null || !edges.Contains(loop.edge.Pointer))
+                    return "a face references a missing or shared corner, point or edge";
+                if (loop.next == null || loop.prev == null || loop.next.prev?.Pointer != loop.Pointer || loop.prev.next?.Pointer != loop.Pointer ||
+                    loop.next.vertex == null || !loop.edge.ContainsVertices(loop.vertex, loop.next.vertex))
+                    return "a face's corners are not correctly linked";
+                if (loop.radialNext == null || loop.radialPrev == null || !loops.Contains(loop.radialNext.Pointer) || !loops.Contains(loop.radialPrev.Pointer) ||
+                    loop.radialNext.edge?.Pointer != loop.edge.Pointer || loop.radialPrev.edge?.Pointer != loop.edge.Pointer ||
+                    loop.radialNext.radialPrev?.Pointer != loop.Pointer || loop.radialPrev.radialNext?.Pointer != loop.Pointer)
+                    return "a corner is not correctly linked to its edge";
+                if (loop.thickenEdge != null && (!edges.Contains(loop.thickenEdge.Pointer) || !loop.thickenEdge.ContainsVertex(loop.vertex)))
+                    return "a corner's thickening edge no longer belongs to its point";
+            }
+            if (loop?.Pointer != first?.Pointer) return "a face's corner cycle does not close";
+        }
+        return usedLoops.SetEquals(loops) ? null : "the mesh contains corners outside its faces";
     }
 
     // ---------- the tools ----------
@@ -1681,7 +1801,7 @@ public static class MeshTools
         ui.InfoField("Loop cut: select an edge.\nSplit faces: use Faces mode and select faces.", 2);
         var loopTip = new Tip("Loop cut", "In Edges mode, select an edge. Loop cut runs through adjoining four-sided faces and adds one cut halfway across them. It stops at an open border or a triangle. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Button("Loop cut (T)", Ui.Callback(() => LoopCut(__instance)), loopTip);
-        var splitTip = new Tip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. Cuts stay inside the selected faces. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
+        var splitTip = new Tip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. The strips stay inside the selected faces; neighbouring borders stay joined using triangles and quads. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
         ui.Slider("Split sections", splitSections, 2, 16, Ui.FloatCallback(v => splitSections = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), splitTip);
         ui.Button("Split selected faces", Ui.Callback(() => SplitEdges(__instance)), splitTip);

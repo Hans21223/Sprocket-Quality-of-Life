@@ -1,5 +1,19 @@
-Quality of Life 1.8.4.1 - editor tools for Sprocket 0.2.55.5
+Quality of Life 1.8.5 - editor tools for Sprocket 0.2.55.5
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.8.5
+- Create Hole rejects collapsed rings and selections across several faces before cutting. Surrounding faces
+  must keep every hole edge and cover the remaining plate without overlaps. A failed mirrored cut restores
+  the original shape for undo and redo. Native editor behavior still needs playtesting.
+- Fixed invalid plate thickening references after Merge faces and other mesh edits. Deleted topology is fully
+  unlinked, and surviving corners cannot keep edges removed from the structure.
+- Mesh tools check the whole structure's connections and reject unsupported faces before committing an edit.
+- Split selected faces keeps neighbouring borders connected using loadable triangles and quads.
+
+- Settings > Mod Options > Photos: F8 saves at Screen, 2K, 4K, 6K or 8K (long edge 2560/3840/5760/7680 pixels).
+  Render draws the actual photo camera at the chosen size; Upscale resizes the finished screenshot.
+  The photo keeps its proportions and opaque RGB colours. The window resolution is unchanged.
+  Graphics, overlay and camera output return afterward. Screen remains the default.
 
 NEW IN 1.8.4.1
 - The drawing sheet's top speed uses the same drivetrain maths as the Speed & acceleration panel.

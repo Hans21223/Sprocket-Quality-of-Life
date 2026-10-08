@@ -174,8 +174,7 @@ public static class MergeFaces
             var l = face.firstLoop;
             for (int k = 0; k < face.vertexCount; k++, l = l.next)
             {
-                l.thickenMode = old[Id(l.vertex)].thickenMode;
-                l.thickenEdge = old[Id(l.vertex)].thickenEdge;
+                MeshTools.CopyThickening(l, old[Id(l.vertex)]);
             }
         }
         var (rivetsKept, rivetsLost) = rivets.Place(made.Select(m => m.Face), reach: 0.05f);

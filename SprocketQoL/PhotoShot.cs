@@ -20,6 +20,8 @@ internal static class PhotoShot
     static bool overlayWas, overlayCaptured;
     static int captureId;
     static string file = "";
+    static string resolution = "Screen", method = "Render";
+    static RenderPhoto? activeFrame;
 
     /// While true nothing of the mod draws on screen (it would be in the photo).
     internal static bool Capturing => step >= 0;
@@ -33,6 +35,11 @@ internal static class PhotoShot
             overlay = UnityEngine.Object.FindObjectOfType<PhotomodeOverlay>();
             app = UnityEngine.Object.FindObjectOfType<SprocketApplication>();
             if (overlay == null || app == null) return; // not in photo mode
+            resolution = Plugin.PhotoResolution?.Value ?? "Screen";
+            method = Plugin.PhotoMethod?.Value ?? "Render";
+            var size = PhotoOutput.SizeFor(Screen.width, Screen.height, resolution);
+            if (resolution != "Screen" && method == "Render" && !PhotoOutput.FitsRenderTarget(size, SystemInfo.maxTextureSize))
+                throw new InvalidOperationException("This GPU cannot render the chosen photo size. Choose a smaller resolution or Upscale in Mod Options > Photos.");
             overlayWas = overlay.overlayVisible;
             overlayCaptured = true;
             captureId++;
@@ -46,7 +53,7 @@ internal static class PhotoShot
             overlay.SetOverlayVisible(false);
             app.ApplySettings(max);
             step = 0; frames = 0;
-            Plugin.ModLog.LogInfo($"QOL_PHOTO max settings applied, taking the photo in {SettleFrames} frames");
+            Plugin.ModLog.LogInfo($"QOL_PHOTO {resolution}, {method}; max settings applied, taking the photo in {SettleFrames} frames");
         }
         catch (Exception ex)
         {
@@ -59,6 +66,7 @@ internal static class PhotoShot
     {
         try
         {
+            if (overlay == null || app == null || DesignEditor.Instance == null) { Restore(); return; }
             frames++;
             if (step == 0 && frames >= SettleFrames)
             {
@@ -102,28 +110,113 @@ internal static class PhotoShot
         // later shot's destination, or signal completion for a new capture.
         if (id != captureId || step < 0) yield break;
         Texture2D? shot = null;
+        RenderPhoto? frame = null;
         try
         {
-            shot = ScreenCapture.CaptureScreenshotAsTexture();
-            var pixels = shot.GetPixels32();
-            var rgb = new byte[checked(pixels.Length * 3)];
-            int nonOpaque = 0;
-            for (int p = 0; p < pixels.Length; p++)
+            PhotoOutput.Size size = default;
+            try
             {
-                var pixel = pixels[p];
-                rgb[p * 3] = pixel.r; rgb[p * 3 + 1] = pixel.g; rgb[p * 3 + 2] = pixel.b;
-                if (pixel.a != 255) nonOpaque++;
+                size = PhotoOutput.SizeFor(Screen.width, Screen.height, resolution);
+                if (resolution != "Screen" && method == "Render")
+                    activeFrame = frame = new RenderPhoto(Camera.main ?? throw new InvalidOperationException("No photo camera is active."), size);
             }
-            // HDRP's final RGB already contains smoke blended over the scene, but its alpha may still contain
-            // particle coverage/distortion values. Encoding that alpha makes viewers blend the smoke AGAIN.
-            // Save an opaque RGB photograph without multiplying or compositing its already-finished colours.
-            // GetPixels32 and SavePng both use bottom-up rows, so the original orientation is preserved.
-            Drawing.SavePng(destination, shot.width, shot.height, rgb);
-            Plugin.ModLog.LogInfo($"QOL_PHOTO opaque RGB output; discarded render alpha on {nonOpaque} pixels");
+            catch (Exception ex) { if (id == captureId) shotError = ex; }
+            if (frame != null) yield return new WaitForEndOfFrame(); // HDRP renders the offscreen camera in the next frame.
+            if (id != captureId || step < 0) yield break;
+            try
+            {
+                if (shotError != null) throw shotError;
+                shot = frame != null ? frame.Read() : ScreenCapture.CaptureScreenshotAsTexture();
+                if (shot == null) throw new InvalidOperationException("The photo frame was unavailable.");
+                var pixels = shot.GetPixels32();
+                var rgb = new byte[checked(pixels.Length * 3)];
+                int nonOpaque = 0;
+                for (int p = 0; p < pixels.Length; p++)
+                {
+                    var pixel = pixels[p];
+                    rgb[p * 3] = pixel.r; rgb[p * 3 + 1] = pixel.g; rgb[p * 3 + 2] = pixel.b;
+                    if (pixel.a != 255) nonOpaque++;
+                }
+                // HDRP's final RGB already contains smoke blended over the scene, but its alpha may still contain
+                // particle coverage/distortion values. Encoding that alpha makes viewers blend the smoke AGAIN.
+                // Save an opaque RGB photograph without multiplying or compositing its already-finished colours.
+                // GetPixels32 and SavePng both use bottom-up rows, so the original orientation is preserved.
+                var outputSize = resolution == "Screen" ? new PhotoOutput.Size(shot.width, shot.height) : size;
+                rgb = PhotoOutput.ResizeRgb(rgb, shot.width, shot.height, outputSize);
+                Drawing.SavePng(destination, outputSize.Width, outputSize.Height, rgb);
+                Plugin.ModLog.LogInfo($"QOL_PHOTO {outputSize.Width}x{outputSize.Height}, {method}, opaque RGB output; discarded render alpha on {nonOpaque} pixels");
+            }
+            catch (Exception ex) { if (id == captureId) shotError = ex; }
         }
-        catch (Exception ex) { if (id == captureId) shotError = ex; }
-        finally { if (shot != null) UnityEngine.Object.Destroy(shot); }
+        finally
+        {
+            if (shot != null) UnityEngine.Object.Destroy(shot);
+            frame?.Dispose();
+            if (ReferenceEquals(activeFrame, frame)) activeFrame = null;
+        }
         if (id == captureId) shotDone = true;
+    }
+
+    sealed class RenderPhoto : IDisposable
+    {
+        Camera? camera;
+        RenderTexture? target;
+        RenderTexture? previousTarget;
+        Rect previousRect;
+        float previousAspect;
+        bool previousDynamicResolution;
+        bool ownsCameraState;
+        readonly PhotoOutput.Size size;
+        internal RenderPhoto(Camera source, PhotoOutput.Size size)
+        {
+            this.size = size;
+            try
+            {
+                target = new RenderTexture(size.Width, size.Height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                if (!target.Create()) throw new InvalidOperationException("Could not allocate the high-resolution photo. Choose a smaller size or Upscale.");
+                // Use the actual photo camera, so native vehicle/track rendering and camera-specific effects
+                // run normally. Only its output target changes for one frame; never resize the game window.
+                camera = source;
+                previousTarget = source.targetTexture; previousRect = source.rect; previousAspect = source.aspect;
+                previousDynamicResolution = source.allowDynamicResolution; ownsCameraState = true;
+                camera.targetTexture = target;
+                camera.rect = new Rect(0, 0, 1, 1); camera.aspect = size.Width / (float)size.Height;
+                camera.allowDynamicResolution = false;
+            }
+            catch { Dispose(); throw; }
+        }
+        internal Texture2D Read()
+        {
+            if (target == null) throw new InvalidOperationException("The photo render was cancelled.");
+            if (camera == null || camera.targetTexture != target) throw new InvalidOperationException("The photo camera changed before its frame was ready.");
+            Texture2D? image = null;
+            var previous = RenderTexture.active;
+            try
+            {
+                RenderTexture.active = target;
+                image = new Texture2D(size.Width, size.Height, TextureFormat.RGBA32, 1, false);
+                image.ReadPixelsImpl(new Rect(0, 0, size.Width, size.Height), 0, 0, false);
+                return image;
+            }
+            catch { if (image != null) UnityEngine.Object.Destroy(image); throw; }
+            finally { RenderTexture.active = previous; }
+        }
+        public void Dispose()
+        {
+            if (camera != null && ownsCameraState)
+            {
+                // If another tool took ownership meanwhile, leave its camera target/settings alone.
+                if (camera.targetTexture == target)
+                {
+                    camera.targetTexture = previousTarget; camera.rect = previousRect; camera.aspect = previousAspect;
+                    camera.allowDynamicResolution = previousDynamicResolution;
+                }
+            }
+            ownsCameraState = false;
+            camera = null;
+            if (target != null) { target.Release(); UnityEngine.Object.Destroy(target); }
+            target = null;
+        }
     }
 
     /// Settings back as they were, and the overlay if it was showing.
@@ -131,6 +224,9 @@ internal static class PhotoShot
     {
         step = -1;
         captureId++;
+        try { activeFrame?.Dispose(); }
+        catch (Exception ex) { Plugin.ModLog.LogError($"QOL_PHOTO couldn't release the render target: {ex}"); }
+        activeFrame = null;
         try { if (app != null && before != null) app.ApplySettings(before); }
         catch (Exception ex) { Plugin.ModLog.LogError($"QOL_PHOTO couldn't put the graphics settings back (reopen Settings to fix): {ex}"); }
         try { if (overlay != null && overlayCaptured) overlay.SetOverlayVisible(overlayWas); } catch { }

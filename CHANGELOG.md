@@ -1,3 +1,27 @@
+# Quality of Life 1.8.5
+
+- Fix Create Hole collapsing into a point and leaving crossed or overlapping plates. Reject a collapsed ring
+  or a selection spanning several faces before removing the original face. Check every hole boundary edge
+  and the complete filled area, and restore the original shape if either mirrored cut fails. Undo and redo
+  keep a valid mesh. Hole geometry regressions pass offline; native editor behavior still needs playtesting.
+- Fix plate structures failing to load after Merge faces and other mesh edits. Removed faces and edges now use
+  the game's deletion helpers, which unlink their corner and point connections before compacting the mesh.
+  Surviving corners keep only thickening edges that still belong to their point.
+- Check the whole mesh's connections before editing and after rebuilding, including the game's triangle/quad
+  limit, rather than reporting success from the new faces alone.
+- Split selected faces now rebuilds neighbouring borders as triangles and quads. The previous single expanded
+  neighbour could have five or more corners and fail during the next edit or reload. The split remains local;
+  neighbouring plate shape, shared borders and thickness are preserved.
+
+- **Settings > Mod Options > Photos:** choose Screen, 2K, 4K, 6K or 8K for F8 photographs. The long edge is
+  2560 / 3840 / 5760 / 7680 pixels, keeping the original aspect ratio. Screen remains the default.
+- Choose **Render** to draw the actual photo camera to a target at the chosen resolution for one frame, or
+  **Upscale** to resize the finished screenshot. Native render retains the game's camera-specific vehicle/effect
+  path without changing the window size. Restore its output target, rect, aspect and dynamic-resolution setting.
+- Keep maximum-quality capture, temporary settings/overlay restoration and opaque RGB output. Cancelled and
+  timed-out captures release their render targets. Reject render dimensions above the GPU texture limit before
+  changing settings. Size/aspect/colour regression tests and drawing PNG checks pass; native capture awaits testing.
+
 # Quality of Life 1.8.4.1
 
 - **Drawing sheet top speed** now comes from the same drivetrain maths as the Speed & acceleration panel (forward and reverse). It used to take the rev limit at the wheel's radius, capped by the track panel's speed limit, which read too fast.

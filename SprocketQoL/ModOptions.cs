@@ -86,6 +86,7 @@ internal static class ModOptions
         ui.TabGroup(pick, part, Parts);
         if (part == 2) { Settings(ui); return; }
         if (part == 3) { Compatibility(ui, Redraw); return; }
+        if (part == 4) { Photos(ui, Redraw); return; }
 
         ui.InfoField(capturing != null
             ? $"Press the new key for {Keybinds.All.First(b => b.Id == capturing).Name} (with Ctrl, Shift or Alt if wanted). Esc cancels, Backspace leaves it without a key."
@@ -110,9 +111,32 @@ internal static class ModOptions
     }
 
     static int part;
-    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility" };
+    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos" };
     static readonly HashSet<string> EditingGroups = new() { "View", "Mesh", "Selection", "Add-ons" };
     static readonly List<Il2CppSystem.Action<int>> keepInts = new();
+
+    static void Photos(IGUIElementDrawer ui, Action redraw)
+    {
+        ui.Header("F8 photo resolution");
+        ui.InfoField("Choose the saved photo size. Keeps the camera's proportions: 2K = 2560, 4K = 3840, 6K = 5760, 8K = 7680 pixels on the long edge.", 3);
+        Choice(Plugin.PhotoResolution, PhotoOutput.Resolutions);
+        ui.Header("Capture method");
+        Choice(Plugin.PhotoMethod, PhotoOutput.Methods);
+        ui.InfoField("Render: draws the scene at that resolution for more detail. Upscale: resizes the finished screen photo. Screen keeps the current display resolution.", 3);
+        ui.InfoField($"Use {Keybinds.Shown("photo")} in photo mode. Graphics and the overlay return afterward. Settings are saved at once.", 2);
+
+        void Choice(ConfigEntry<string>? entry, string[] choices)
+        {
+            if (entry == null) return;
+            var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i =>
+            {
+                if (i < 0 || i >= choices.Length) return;
+                entry.Value = choices[i]; redraw();
+            }))!;
+            keepInts.Add(pick);
+            ui.TabGroup(pick, Math.Max(0, Array.IndexOf(choices, entry.Value)), choices);
+        }
+    }
 
     /// What attached to the game (a game update can rename or remove what a hook needs), and QoL's own part panel.
     static void Compatibility(IGUIElementDrawer ui, Action redraw)

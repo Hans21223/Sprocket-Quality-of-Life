@@ -38,6 +38,8 @@ public static class MeshPlans
         foreach (var nf in plan.Add)
         {
             var c = nf.Corners;
+            // Native mesh duplication and blueprint loading allocate only triangle/quad corner arrays.
+            if (c.Length > 4) return "a new face would have more than four corners; it must be split into triangles or quads";
             if (c.Length < 3 || c.Distinct().Count() != c.Length || c.Any(i => i < 0 || i >= at.Count)) return "a new face would repeat a corner";
             var n = Newell(at,c);
             var s = Newell(pos,faces[nf.Source]);
@@ -48,6 +50,7 @@ public static class MeshPlans
         }
         var removed = plan.Remove.ToHashSet();
         var after = faces.Where((_, i) => !removed.Contains(i)).Concat(plan.Add.Select(a => a.Corners)).ToList();
+        if (after.Any(f => f.Length > 4)) return "a face would have more than four corners; it must be split into triangles or quads";
         // Tolerance depends on the edited shape's size, not its distance from the origin.
         var touched = plan.Remove.Concat(plan.Add.Select(f => f.Source)).Distinct().SelectMany(f => faces[f]).Distinct().Select(v => pos[v]).ToList();
         float extent = touched.Count == 0 ? 0 : Vector3.Distance(touched.Aggregate(Vector3.Min), touched.Aggregate(Vector3.Max));

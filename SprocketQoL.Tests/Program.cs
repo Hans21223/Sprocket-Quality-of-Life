@@ -1,10 +1,12 @@
 using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
+if (args.Contains("--photo-only")) { PhotoOutputTests.Run(); return; }
+if (args.Contains("--hole-only")) { CoreAuditTests.Run(); HoleFillTests.Run(); return; }
 if (args.Contains("--obj-only")) { ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run(); return; }
 if (args.Contains("--paint-only")) { PartPaintPersistenceTests.Run(); return; }
 if (args.Contains("--ui-only")) { UiPresentationTests.Run(); return; }
-if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); return; }
+if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); HoleFillTests.Run(); return; }
 if (args.Contains("--core-only")) { CoreAuditTests.Run(); GizmoPickingTests.Run(); return; }
 if (args.Contains("--drive-only")) { DriveSimTests.Run(); return; }
 if (args.Contains("--fillet-only")) { FilletTests.Run(); BevelEdgeTests.Run(); return; }
@@ -15,6 +17,7 @@ if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
 if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
 if (args.Contains("--clipboard-only")) { SprocketQoL.Tests.ClipboardTests.Run(); return; }
 TurretDriveTests.Run();
+PhotoOutputTests.Run();
 ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run();
 PartPaintPersistenceTests.Run();
 GizmoPickingTests.Run();
@@ -22,6 +25,7 @@ BevelEdgeTests.Run();
 SmoothSplitTests.Run();
 FilletTests.Run();
 CoreAuditTests.Run();
+HoleFillTests.Run();
 UiPresentationTests.Run();
 int checks=0, conversions=0;
 void Check(bool ok,string message) { checks++; if(!ok)throw new Exception(message); }
@@ -250,16 +254,16 @@ CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.3f,
 CheckHole(tilted, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.475f, 3f);               // Hole size 300%: still fits the face
 CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.1f, 0.5f);   // Hole size 50%
 {
-    // An L-shaped (concave) face: the hole goes in the arm the game picked, clear of every edge; its middle is
-    // outside the L, so a ring with no safe spot is left as the game made it.
+    // Concave plates keep a valid requested circle clear of every edge. If the mean lies in a gap,
+    // the safe contract searches for a verified interior position instead of trusting a collapsed ring.
     var ell = new[] { new Vector3(0, 0, 0), new Vector3(2, 0, 0), new Vector3(2, 1, 0), new Vector3(1, 1, 0), new Vector3(1, 2, 0), new Vector3(0, 2, 0) };
     var game = Enumerable.Range(0, 16).Select(k => new Vector3(0.5f + 0.2f * MathF.Cos(k * MathF.Tau / 16), 0.5f + 0.2f * MathF.Sin(k * MathF.Tau / 16), 0)).ToArray();
     var ring = HoleRing.Fit(ell, game, new Vector3(0.5f, 0.5f, 0), out var note, 3f);
     Check(ring.All(p => Vector2.Distance(new(p.X, p.Y), new(0.5f, 0.5f)) < 0.5f - 1e-4f), "concave face: big hole stays clear of its edges: " + note);
     var square = new[] { new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(1, 1, 0), new Vector3(0, 1, 0) };
     var hollow = new[] { new Vector3(0, 0, 0), new Vector3(3, 0, 0), new Vector3(3, 3, 0), new Vector3(2, 3, 0), new Vector3(2, 1, 0), new Vector3(1, 1, 0), new Vector3(1, 3, 0), new Vector3(0, 3, 0) };
-    var kept = HoleRing.Fit(hollow, game, new Vector3(1.5f, 2f, 0), out note, 3f); // centre and middle both in the gap
-    Check(kept.SequenceEqual(game), "no safe spot: game's ring left alone: " + note);
+    Check(HoleRing.TryFit(hollow, game, new Vector3(1.5f, 2f, 0), out var relocated, out note, 3f), "concave gap gets a safe interior position: " + note);
+    Check(relocated.All(p => p.X > 0 && p.X < 3 && p.Y > 0 && p.Y < 3 && (p.X < 1 || p.X > 2 || p.Y < 1)), "relocated circle stays inside the concave plate");
     Check(HoleRing.Fit(square, game, new Vector3(0.5f, 0.5f, 0), out _, float.NaN).All(p => MathF.Abs(Vector2.Distance(new(p.X, p.Y), new(0.5f, 0.5f)) - 0.2f) < 1e-4f), "bad size value: game's size");
 }
 {

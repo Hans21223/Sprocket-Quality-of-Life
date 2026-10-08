@@ -55,6 +55,12 @@ static class ToolTests
             "mesh safety rejects the same crack far from the origin");
         var missingSource = duplicate with { Add = new() { new(new[] { 0,1,2 }, 8) } };
         Check(MeshPlans.Check(points,faces,missingSource)!=null,"missing source face is rejected without an index error");
+        var pentagonPoints = Enumerable.Range(0, 5).Select(i => new Vector3(MathF.Cos(i * MathF.Tau / 5), MathF.Sin(i * MathF.Tau / 5), 0)).ToList();
+        var ngon = new MeshPlans.Rebuild(new() { 0 }, new() { new(new[] { 0, 1, 2, 3, 4 }, 0) }, new(), null);
+        Check(MeshPlans.Check(pentagonPoints, faces, ngon, gaps: false)?.Contains("more than four corners") == true,
+            "reject otherwise valid pentagon before native clone/save would fail");
+        Check(MeshPlans.Check(pentagonPoints, new List<int[]> { new[] { 0, 1, 2, 3, 4 } }, new(new(), new(), new(), null), gaps: false) != null,
+            "reject existing n-gon before accessing unsupported native corner arrays");
         Check(MeshPlans.Folds(points,faces,new Dictionary<int,Vector3> { [0] = new(float.PositiveInfinity,0,0) })!=null,"movement rejects non-finite points");
         Check(MeshPlans.Inset(points,faces,new[]{0},float.NaN).Why!=null,"inset rejects a non-finite width");
         Check(MeshPlans.Bevel(cube,shell,new[]{(2,3),(0,7)},.1f).Why!=null,"bevel rejects an invalid mixed selection atomically");

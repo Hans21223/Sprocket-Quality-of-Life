@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.4.1")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.5")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -31,9 +31,16 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<bool>? MirrorMerge;
     internal static ConfigEntry<bool>? RecordDrives;
     internal static ConfigEntry<string>? PanelMode, PanelPosition, ShortcutsPosition;
+    internal static ConfigEntry<string>? PhotoResolution, PhotoMethod;
     public override void Load()
     {
         ModLog = Log;
+        PhotoResolution = Config.Bind("Photo", "Resolution", "Screen", new ConfigDescription(
+            "F8 photo long edge: Screen, 2K (2560), 4K (3840), 6K (5760) or 8K (7680). Keeps the camera aspect ratio.",
+            new AcceptableValueList<string>(PhotoOutput.Resolutions)));
+        PhotoMethod = Config.Bind("Photo", "Capture method", "Render", new ConfigDescription(
+            "Render draws the scene at the selected resolution. Upscale resizes the finished screenshot without adding scene detail.",
+            new AcceptableValueList<string>(PhotoOutput.Methods)));
         DrawingNoWireframe = Config.Bind("Drawing sheet", "No wireframe", false, "Omit the wireframe overlay from F9 colour and see-through exports. The separate lines-only drawing is unchanged.");
         DrawingSeeThroughOutline = Config.Bind("Drawing sheet", "See-through outline only", true, "Use only the vehicle silhouette over the see-through interior, instead of mesh edges. No wireframe disables this outline too.");
         DrawingColourOutline = Config.Bind("Drawing sheet", "Colour outline only", true, "Use clean visible part contours and sharp corners on the colour drawing, without mesh triangulation. No wireframe disables these outlines too.");

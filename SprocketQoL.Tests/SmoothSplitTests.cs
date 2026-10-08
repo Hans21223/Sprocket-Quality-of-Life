@@ -82,10 +82,20 @@ static class SmoothSplitTests
             var coords=p.Concat(local.Points.Select(v=>v.P)).ToArray();
             var newTarget=local.Add.Where(f=>f.Source==target).ToList();
             Check(newTarget.Count==n && newTarget.All(f=>f.Corners.Length==4),"only selected face becomes strips");
-            Check(local.Add.Where(f=>f.Source!=target).GroupBy(f=>f.Source).All(g=>g.Count()==1),"each neighbouring face remains one undivided face");
+            Check(local.Add.All(f => f.Corners.Length is 3 or 4), "local splits and neighbours remain loadable triangles or quads");
+            foreach (var group in local.Add.Where(f => f.Source != target).GroupBy(f => f.Source))
+            {
+                var normal = HoleRing.Normal(faces[group.Key].Select(v => p[v]).ToList());
+                var corner = p[faces[group.Key][0]];
+                Check(group.SelectMany(f => f.Corners).All(v => MathF.Abs(Vector3.Dot(coords[v] - corner, normal)) < 1e-6f),
+                    "neighbour tessellation preserves its original plate plane");
+                Check(MathF.Abs(group.Sum(f => HoleRing.Normal(f.Corners.Select(v => coords[v]).ToList()).Length()) - normal.Length()) < 1e-5f,
+                    "neighbour tessellation preserves area and winding");
+            }
             Check(local.Points.Count==2*(n-1),"only the two selected-face borders gain vertices");
             var result=faces.Where((f,i)=>!local.Remove.Contains(i)).Concat(local.Add.Select(f=>f.Corners)).ToList();
-            Check(result.Count==faces.Count+n-1,"no extra faces outside selection");
+            var changedSides = local.Remove.Where(f => f != target).ToArray();
+            Check(changedSides.All(f => faces[f].Intersect(c).Count() == 2), "only neighbours sharing a split border are rebuilt");
             Check(result.SelectMany(Sides).GroupBy(e=>FaceMerge.Key(e.A,e.B)).All(g=>g.Count()==2 && g.First().A==g.Last().B),"local split shares every border edge with the intact neighbour");
             var saved=newTarget.Select(f=>f.Corners.Select(v=>coords[v]).ToArray()).ToList();
             Check(result.Count(f=>SplitFaceSelection.Matches(f.Select(v=>coords[v]).ToArray(),saved))==n,"select-between finds every strip and no neighbouring face");
@@ -98,6 +108,22 @@ static class SmoothSplitTests
         var mixedP=new List<Vector3>{new(0,0,0),new(1,0,0),new(1,1,0),new(0,1,0),new(2,.5f,0)};
         var mixedF=new List<int[]>{new[]{0,1,2,3},new[]{1,4,2}};
         Valid(mixedP,mixedF,EdgeSubdivision.Split(mixedP,mixedF,new[]{(0,3)},4),false);
+        foreach (int sections in new[] { 2, 4, 16 })
+        {
+            Valid(mixedP, mixedF, EdgeSubdivision.Split(mixedP, mixedF, new[] { (0, 3) }, sections, new HashSet<int> { 0 }), false);
+            var localOrientation = Matrix4x4.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1, 2, 3)), .71f);
+            var placed = p.Select(v => Vector3.Transform(v, localOrientation) + new Vector3(5, -2, 7)).ToList();
+            var reversed = faces.Select(f => f.Reverse().ToArray()).ToList();
+            foreach (var winding in new[] { faces, reversed })
+                foreach (int side in new[] { 0, 1 })
+                    Valid(placed, winding, EdgeSubdivision.Split(placed, winding,
+                        new[] { (winding[0][side], winding[0][side + 1]) }, sections, new HashSet<int> { 0 }), true);
+        }
+        var concavePoints = new List<Vector3> { new(0,0,0), new(1,0,0), new(1,1,0), new(0,1,0), new(2,0,0), new(1.3f,.3f,0) };
+        var concaveFaces = new List<int[]> { new[] { 0,1,2,3 }, new[] { 1,4,5,2 } };
+        foreach (int sections in new[] { 2, 4, 16 })
+            Valid(concavePoints, concaveFaces, EdgeSubdivision.Split(concavePoints, concaveFaces,
+                new[] { (0,3) }, sections, new HashSet<int> { 0 }), false);
         var octaP=new List<Vector3>{Vector3.UnitX,-Vector3.UnitX,Vector3.UnitY,-Vector3.UnitY,Vector3.UnitZ,-Vector3.UnitZ};
         var octaF=new List<int[]>();
         foreach(int a in new[]{0,1}) foreach(int b in new[]{2,3}) foreach(int c in new[]{4,5})
