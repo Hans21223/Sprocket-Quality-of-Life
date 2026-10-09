@@ -41,6 +41,10 @@ internal static class Keybinds
 
     static readonly Dictionary<string, ConfigEntry<string>> entries = new();
     static readonly Dictionary<string, (Key Key, bool Ctrl, bool Shift, bool Alt)> parsed = new();
+    // With the Sprocket Mod API installed: each key's action in its keybinding window (ModApi.cs), and when they were
+    // last compared with the config.
+    static readonly Dictionary<string, object> api = new();
+    static float comparedAt;
 
     internal static void Load(ConfigFile config)
     {
@@ -50,6 +54,37 @@ internal static class Keybinds
                 $"{b.Group}: {b.Name}. A key such as F9, P or Numpad1, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none.");
             parsed[b.Id] = Parse(entries[b.Id].Value);
         }
+        foreach (var b in All)
+        {
+            int where = b.Id == "menu" ? ModApi.Designer | ModApi.Gameplay | ModApi.MainMenu | ModApi.OtherMenu
+                      : b.Id == "photo" ? ModApi.Designer | ModApi.Gameplay : ModApi.Designer;
+            if (ModApi.RegisterKey(Plugin.ModLog, b.Id, b.Name, b.Group, b.Default, where) is not { } handle) continue;
+            api[b.Id] = handle;
+            // A key changed in QoL's window before the API was installed carries over; a key rebound in the API's
+            // window is QoL's from then on.
+            var theirs = ModApi.KeyText(handle);
+            if (theirs == null || Same(theirs, entries[b.Id].Value)) continue;
+            if (Same(theirs, b.Default)) ModApi.SetKeyText(handle, entries[b.Id].Value);
+            else Adopt(b.Id, theirs);
+        }
+        if (api.Count > 0) Plugin.ModLog.LogInfo($"Keys: {api.Count} in the Sprocket Mod API's keybinding window");
+    }
+
+    static bool Same(string? a, string? b) => Parse(a) == Parse(b);
+
+    static void Adopt(string id, string text)
+    {
+        entries[id].Value = text;
+        parsed[id] = Parse(text);
+    }
+
+    /// Keys rebound in the Mod API's window, into the config (once a second): what QoL shows and saves follows them.
+    static void Compare()
+    {
+        if (api.Count == 0 || UnityEngine.Time.unscaledTime - comparedAt < 1) return;
+        comparedAt = UnityEngine.Time.unscaledTime;
+        foreach (var (id, handle) in api)
+            if (ModApi.KeyText(handle) is { } text && !Same(text, entries[id].Value)) Adopt(id, text);
     }
 
     /// "Ctrl+Shift+J" -> J with Ctrl and Shift; an unknown key name -> no key.
@@ -73,6 +108,7 @@ internal static class Keybinds
     /// The key as shown in panels and the hotkeys box ("Numpad 1", "Ctrl+J"), or "(none)".
     internal static string Shown(string id)
     {
+        if (api.TryGetValue(id, out var handle)) return ModApi.KeyShown(handle).Replace("Unbound", "(none)");
         var text = entries.TryGetValue(id, out var e) ? e.Value : All.FirstOrDefault(b => b.Id == id)?.Default ?? "";
         if (string.IsNullOrWhiteSpace(text)) return "(none)";
         return text.Replace("NumpadPlus", "Numpad +").Replace("NumpadMinus", "Numpad -").Replace("Numpad", "Numpad ").Replace("Numpad  ", "Numpad ");
@@ -83,6 +119,7 @@ internal static class Keybinds
         if (!entries.TryGetValue(id, out var e)) return;
         e.Value = text;
         parsed[id] = Parse(text);
+        if (api.TryGetValue(id, out var handle)) ModApi.SetKeyText(handle, text);
     }
 
     internal static void Reset(string id) { if (All.FirstOrDefault(b => b.Id == id) is { } b) Set(id, b.Default); }
@@ -91,6 +128,7 @@ internal static class Keybinds
     /// read Ctrl as "the other way" check it themselves).
     internal static bool Pressed(string id)
     {
+        if (api.TryGetValue(id, out var handle)) { Compare(); return ModApi.KeyPressed(handle); }
         if (!parsed.TryGetValue(id, out var k) || k.Key == Key.None || Keyboard.current is not { } keys) return false;
         try
         {

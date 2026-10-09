@@ -1,5 +1,10 @@
-Quality of Life 1.8.6 - editor tools for Sprocket 0.2.56.0
+Quality of Life 1.8.7 - editor tools for Sprocket 0.2.56.0
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.8.7
+- Works with the Sprocket Mod API (github.com/furryaxw/SprocketModAPI) when it is installed: QoL in its Mod
+  menu (Settings > General > MODS) with its settings, and every QoL key in its keybinding window (Settings >
+  Keymapping > MOD KEYBINDINGS). Keys and settings stay the same in both places. Without the API: no change.
 
 NEW IN 1.8.5
 - Create Hole rejects collapsed rings and selections across several faces before cutting. Surrounding faces
@@ -165,4 +170,5 @@ Found a bug? Open an issue on GitHub with a screenshot and your BepInEx\LogOutpu
 GAME PROFILE
 This binary was built for Sprocket 0.2.56.0.
 1.8.6 rebuilds the engine editor tools against the assembly moved in 0.2.56.0.
+1.8.7 adds the optional Sprocket Mod API bridge (Mod menu settings, keybinding window).
 68 hooks and 51 native routines checked offline. Use loader 1.2.2; gameplay testing pending.
