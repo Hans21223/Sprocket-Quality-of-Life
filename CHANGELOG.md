@@ -1,3 +1,14 @@
+# Quality of Life 1.8.7
+
+- Works with the **Sprocket Mod API** (furryaxw/SprocketModAPI) when it is installed, and exactly as before
+  without it. QoL appears in the API's Mod menu with its name and description, its settings are on its page
+  there (kept in step with the config file both ways), and its 25 keys are in the API's keybinding window.
+- A key changed in QoL's own window carries over to the API's; after that a key rebound in either window is
+  the same key in both. QoL still reads the keys itself, so Ctrl keeps meaning "the other way" (back, left,
+  from below).
+- Mod ID `hans21223.quality-of-life` (saved keys and settings in the API are kept under it).
+- Offline checks pass with and without the API present; gameplay remains unverified.
+
 # Quality of Life 1.8.6
 
 - Rebuild for **Sprocket 0.2.56.0**. The game moved its engine editor types into

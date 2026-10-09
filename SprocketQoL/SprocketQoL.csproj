@@ -2,7 +2,19 @@
   <Import Project="..\SprocketMod.props" />
   <PropertyGroup>
     <AssemblyName>SprocketQoL</AssemblyName>
-    <Version>1.8.6</Version>
+    <Version>1.8.7</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Sprocket Mod API, optional at run time (ModApi.cs): compiled against the copy in lib\, never shipped with the mod. -->
+    <Reference Include="SprocketModAPI"><HintPath>..\lib\SprocketModAPI.dll</HintPath><Private>false</Private></Reference>
+    <!-- What the Mod API's Mod menu (and mod managers) show for this mod; the Id must never change. -->
+    <AssemblyMetadata Include="Sprocket.Mod.Id" Value="hans21223.quality-of-life" />
+    <AssemblyMetadata Include="Sprocket.Mod.DisplayName" Value="Quality of Life" />
+    <AssemblyMetadata Include="Sprocket.Mod.Description" Value="Editor tools: merge faces, Boolean cut, hole quality, merge add-ons, turret to add-on, gear speeds, drawing sheets, OBJ export and import." />
+    <AssemblyMetadata Include="Sprocket.Mod.Authors" Value="Hans21223" />
+    <AssemblyMetadata Include="Sprocket.Mod.Repository" Value="Hans21223/Sprocket-Quality-of-Life" />
+    <AssemblyMetadata Include="Sprocket.Mod.Homepage" Value="https://github.com/Hans21223/Sprocket-Quality-of-Life" />
+    <AssemblyMetadata Include="Sprocket.Mod.License" Value="MIT" />
+  </ItemGroup>
 </Project>

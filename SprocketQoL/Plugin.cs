@@ -10,7 +10,8 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.6")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.7")]
+[BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
@@ -67,6 +68,7 @@ public sealed class Plugin : BasePlugin
         ShortcutsPosition = Config.Bind("Panels", "Shortcuts box position", "", "Where the Shortcuts box was dragged to (left, top in screen pixels), or empty for beside the part panel.");
         Keybinds.Load(Config);
         ModOptions.Register();
+        ShareWithModApi();
         AddComponent<DesignEditor>();
         AddComponent<DriveRecorder>();
         var harmony = new Harmony("local.sprocket.qol");
@@ -77,5 +79,25 @@ public sealed class Plugin : BasePlugin
         if (Hooks.Failures.Any()) Log.LogWarning("Quality of Life: " + Hooks.Summary());
         else Log.LogInfo("Quality of Life: " + Hooks.Summary());
         Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo, Own paint, Bridge, Circle, Fix mirror, Mirror merge, Rotation snap, OBJ export / import (F10).");
+    }
+
+    /// The settings on QoL's page in the Sprocket Mod API's Mod menu, when the API is installed. The keys are in its
+    /// keybinding window (Keybinds); what QoL keeps for itself (positions, folds, gun choices) stays off the page.
+    void ShareWithModApi()
+    {
+        var own = new HashSet<string> { "Panels/Folded sections", "Panels/QoL panel position", "Panels/Shortcuts box position", "Drawing sheet/Hidden gun limits" };
+        ModApi.ShareConfig(Log, Config, "Quality of Life",
+            include: d => d.Section != "Keybinds" && !own.Contains(d.Section + "/" + d.Key),
+            range: d => (d.Section + "/" + d.Key) switch
+            {
+                "Drawing sheet/Wireframe intensity percent" or "Drawing sheet/Grid intensity percent" => (0, 100, 5),
+                "Panels/Exploded view spread" => (0, 5, 0.1),
+                "Panels/Flashlight brightness" => (0, 200, 5),
+                "Panels/Fullbright brightness" => (0, 100, 5),
+                "Editor/Rotation snap (degrees)" => (0, 45, 0.5),
+                "Backups/Backups kept" => (0, 500, 10),
+                _ => null,
+            },
+            choices: d => d.Section == "Panels" && d.Key == "QoL panel" ? new[] { ("Automatic", "Automatic"), ("Always", "Always"), ("Off", "Off") } : null);
     }
 }

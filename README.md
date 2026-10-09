@@ -10,6 +10,10 @@ Settings for its keys and settings. 1.8.3 added an **OBJ export / import** menu 
 save/load failures after mesh edits, rejects collapsed or overlapping hole cuts, and keeps local face splits within
 the game's triangle/quad limit.
 
+**Quality of Life 1.8.7** works with the [Sprocket Mod API](https://github.com/furryaxw/SprocketModAPI) when it is
+installed: QoL's settings appear on its page in the API's Mod menu and its keys in the API's keybinding window,
+in step with QoL's own Mod Options and F11 window. Without the API nothing changes.
+
 **Quality of Life 1.8.6** targets **Sprocket 0.2.56.0**, which moved the engine editor into
 `Sprocket.EngineDesigner.Editor.dll`. This build updates QoL's engine panel assembly reference while keeping
 the 1.8.5 hole, mesh and photo fixes. All 68 hooks match the fresh game assemblies, and 51 relevant native
