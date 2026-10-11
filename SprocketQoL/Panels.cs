@@ -3,12 +3,12 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Sprocket.UI;
 using Sprocket.VehicleDesigner.Access;
 using Sprocket.Vehicles.Cannons.Editor;
-using Sprocket.Vehicles.Engines.Editor;
 using Sprocket.Vehicles.PlateStructures.Design;
 using Sprocket.Vehicles.Transmissions.Editor;
 using Sprocket.Vehicles.Turrets.Editor;
 using UnityEngine;
 using VehicleDesigner.Compartments.Design;
+using EngineEditorBase = Sprocket.VehicleDesigner.Access.Editors.VehicleComponentEditor<Sprocket.Vehicles.Engines.CombustionEngine>;
 
 namespace SprocketQoL;
 
@@ -45,7 +45,8 @@ internal static class PanelSections
         Try("Hotkeys", () => Add<PlateStructureEditor>("Hotkeys", (e, _) => Hotkeys.Seen(e)));
         Try("Gun length", () => Add<CannonEditor>("Gun length", GunLength.Draw));
         Try("Speed (transmission)", () => Add<TransmissionEditor>("Speed & acceleration", GearSpeeds.InTransmission));
-        Try("Speed (engine)", () => Add<CombustionEngineComponentEditor>("Speed & acceleration", GearSpeeds.InEngine));
+        Try("Speed (engine)", () => sections.Add(new("Speed & acceleration", EngineEditor.Type == null ? throw new TypeLoadException($"{EngineEditor.Name} isn't in the game")
+            : EngineEditor.Is, (e, p) => { if (EngineEditor.Is(e)) GearSpeeds.InEngine(new EngineEditorBase(e.Pointer), p); })));
         Try("Own paint", () => Add<PlateStructureEditor>("Own paint", PartPaint.Draw));
         Try("Drawing sheet (structure)", () => Add<PlateStructureEditor>("Drawing sheet", DrawingSettings.Structure));
         Try("Drawing sheet (ring)", () => Add<TurretRingEditor>("Drawing sheet", DrawingSettings.Ring));
@@ -112,6 +113,6 @@ internal static class NativePanels
     [HarmonyPostfix, HarmonyPatch(typeof(TransmissionEditor), nameof(TransmissionEditor.OnGUI))]
     static void Transmission(TransmissionEditor __instance, IGUILayout layout) => Draw(__instance, layout, __instance.RequestRedraw);
 
-    [HarmonyPostfix, HarmonyPatch(typeof(CombustionEngineComponentEditor), nameof(CombustionEngineComponentEditor.OnGUI))]
-    static void Engine(CombustionEngineComponentEditor __instance, IGUILayout layout) => Draw(__instance, layout, __instance.RequestRedraw);
+    // Attached by hand in Plugin to the class EngineEditor finds (the class moved assembly in Sprocket 0.2.56).
+    internal static void Engine(EngineEditorBase __instance, IGUILayout layout) => Draw(__instance, layout, __instance.RequestRedraw);
 }

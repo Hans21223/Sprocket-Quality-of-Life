@@ -30,7 +30,15 @@ internal static class Ui
     /// An exception thrown back into the game's inspector drawing could take the game down; log it instead.
     internal static void Guard(string feature, Action draw)
     {
+        if (missing.Contains(feature)) return;
         try { draw(); }
+        catch (Exception ex) when (ex is FileNotFoundException or TypeLoadException or MissingMemberException)
+        {
+            // Code this Sprocket version doesn't have (QoL built for another version): it never works, so it stops trying
+            // (Speed & acceleration on 0.2.55.5 failed every frame: Sprocket.EngineDesigner.Editor arrived in 0.2.56).
+            missing.Add(feature);
+            Plugin.ModLog.LogWarning($"{feature} is off: this Sprocket version doesn't have what it needs ({ex.GetType().Name}: {ex.Message})");
+        }
         catch (Exception ex)
         {
             // The same error again (a GUI drawn every frame) is counted, not logged again: no wall of red.
@@ -38,7 +46,8 @@ internal static class Ui
             if (lastErrors.TryGetValue(feature, out var last) && last.Text == text)
             {
                 lastErrors[feature] = (text, ++last.Count);
-                if (last.Count % 1000 == 0) Plugin.ModLog.LogError($"{feature}: the same error again, {last.Count} times so far");
+                // Name the error too: the full one scrolled away long ago, and a screenshot only shows this line.
+                if (last.Count % 1000 == 0) Plugin.ModLog.LogError($"{feature}: the same error again, {last.Count} times so far ({ex.GetType().Name}: {ex.Message}; full error at the first time in LogOutput.log)");
                 return;
             }
             lastErrors[feature] = (text, 1);
@@ -47,6 +56,7 @@ internal static class Ui
     }
 
     static readonly Dictionary<string, (string Text, int Count)> lastErrors = new();
+    static readonly HashSet<string> missing = new();
 
     internal static UnityAction Callback(Action action) => DelegateSupport.ConvertDelegate<UnityAction>(action)!;
 

@@ -10,6 +10,9 @@ Settings for its keys and settings. 1.8.3 added an **OBJ export / import** menu 
 save/load failures after mesh edits, rejects collapsed or overlapping hole cuts, and keeps local face splits within
 the game's triangle/quad limit.
 
+**Quality of Life 1.8.8** runs on both **Sprocket 0.2.55.5 and 0.2.56**: it finds the engine panel, which
+0.2.56 moved to another assembly, while the game runs. It also refuses a merge too big for the game to load.
+
 **Quality of Life 1.8.7** works with the [Sprocket Mod API](https://github.com/furryaxw/SprocketModAPI) when it is
 installed: QoL's settings appear on its page in the API's Mod menu and its keys in the API's keybinding window,
 in step with QoL's own Mod Options and F11 window. Without the API nothing changes.
@@ -18,7 +21,7 @@ in step with QoL's own Mod Options and F11 window. Without the API nothing chang
 `Sprocket.EngineDesigner.Editor.dll`. This build updates QoL's engine panel assembly reference while keeping
 the 1.8.5 hole, mesh and photo fixes. All 68 hooks match the fresh game assemblies, and 51 relevant native
 methods retain their instruction logic after address relocation. Compilation and offline checks pass;
-gameplay testing remains pending. Use **QoL 1.8.5** for **Sprocket 0.2.55.5**. The loader needs its separate
+gameplay testing remains pending. On **Sprocket 0.2.55.5** use **QoL 1.8.5**, or 1.8.8 and later. The loader needs its separate
 1.2.2 update for the new game build.
 
 Mesh edits and clipboard operations validate geometry and preserve surrounding edge settings, paint and mirror

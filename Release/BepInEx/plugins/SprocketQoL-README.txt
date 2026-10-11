@@ -1,5 +1,14 @@
-Quality of Life 1.8.7 - editor tools for Sprocket 0.2.56.0
+Quality of Life 1.8.8 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.8.8
+- One build for Sprocket 0.2.55.5 and 0.2.56. QoL finds the engine panel (moved to another file in 0.2.56) while
+  the game runs, so Speed & acceleration works on both, and QoL's panel sections no longer vanish on 0.2.55.5
+  after leaving the editor.
+- Merge add-ons refuses a merge that would give one part more than 65,535 faces, corners, edges or points (the
+  game can't load a part that big) and says so, instead of silently doing nothing.
+- A tool that can't run on this Sprocket version turns itself off with one warning in the log, not an error
+  every frame.
 
 NEW IN 1.8.7
 - Works with the Sprocket Mod API (github.com/furryaxw/SprocketModAPI) when it is installed: QoL in its Mod
@@ -168,7 +177,7 @@ cut are new: save a copy of your tank before using them.
 Found a bug? Open an issue on GitHub with a screenshot and your BepInEx\LogOutput.log.
 
 GAME PROFILE
-This binary was built for Sprocket 0.2.56.0.
-1.8.6 rebuilds the engine editor tools against the assembly moved in 0.2.56.0.
-1.8.7 adds the optional Sprocket Mod API bridge (Mod menu settings, keybinding window).
-68 hooks and 51 native routines checked offline. Use loader 1.2.2; gameplay testing pending.
+This binary runs on Sprocket 0.2.55.5 and 0.2.56 (built against 0.2.56.1).
+1.8.8 finds the engine panel at runtime: every game type and member QoL uses is checked offline against both
+versions' assemblies. 1.8.7 added the optional Sprocket Mod API bridge (Mod menu settings, keybinding window).
+Use Sprocket Mod Loader 1.2.3 or later.

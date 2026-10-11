@@ -1,12 +1,13 @@
+using System.Reflection;
 using System.Text;
 using HarmonyLib;
+using Il2CppInterop.Runtime.InteropTypes;
 using Sprocket.ContinuousTracks;
 using Sprocket.Engines;
 using Sprocket.Powertrains.Transmissions;
 using Sprocket.UI;
 using Sprocket.VehicleDesigner.Powertrains;
 using Sprocket.Vehicles.Engines;
-using Sprocket.Vehicles.Engines.Editor;
 using Sprocket.Vehicles.PhysicsSystems;
 using Sprocket.Vehicles.Powertrains;
 using Sprocket.Vehicles.Tracks;
@@ -15,6 +16,8 @@ using Sprocket.Vehicles.Transmissions.Editor;
 
 using UnityEngine;
 using UnityEngine.InputSystem;
+// The engine panel, as its base class: that one is in Sprocket.VehicleDesigner.Access in every game version.
+using EngineEditorBase = Sprocket.VehicleDesigner.Access.Editors.VehicleComponentEditor<Sprocket.Vehicles.Engines.CombustionEngine>;
 
 namespace SprocketQoL;
 
@@ -25,7 +28,7 @@ public static class GearSpeeds
 {
     const string Title = "Speed & acceleration";
     static string? shown, logged; // last state / inputs written to the log, so each is logged once per change
-    static CombustionEngineComponentEditor? pendingEngineRedraw;
+    static EngineEditorBase? pendingEngineRedraw;
     static TransmissionEditor? pendingGearsRedraw;
     static string? predictionKey, predictionText;
 
@@ -39,8 +42,8 @@ public static class GearSpeeds
         else __instance.RequestRedraw();
     });
 
-    [HarmonyPostfix, HarmonyPatch(typeof(CombustionEngineComponentEditor), nameof(CombustionEngineComponentEditor.OnComponentRebuilt))]
-    static void EngineChanged(CombustionEngineComponentEditor __instance) => Ui.Guard(Title, () =>
+    // Attached by hand in Plugin to the class EngineEditor finds (the class moved assembly in Sprocket 0.2.56).
+    internal static void EngineChanged(EngineEditorBase __instance) => Ui.Guard(Title, () =>
     {
         if (IsDragging()) pendingEngineRedraw = __instance;
         else __instance.RequestRedraw();
@@ -102,11 +105,11 @@ public static class GearSpeeds
             Draw(layout, __instance.Component, null, __instance.Component.Vehicle?.Mass ?? 0);
         });
 
-    internal static void InEngine(CombustionEngineComponentEditor __instance, Panel layout) =>
+    internal static void InEngine(EngineEditorBase __instance, Panel layout) =>
         Ui.Inspector(Title, layout, () =>
         {
             redrawPanel = () => __instance.RequestRedraw();
-            Draw(layout, null, __instance.blueprint, __instance.Component.Vehicle?.Mass ?? 0);
+            Draw(layout, null, EngineEditor.Blueprint(__instance), __instance.Component.Vehicle?.Mass ?? 0);
         });
 
     static void Draw(Panel layout, TransmissionBlock? gearbox, EngineBlueprint? engine, float mass)
@@ -301,4 +304,29 @@ public static class GearSpeeds
         text.Append($"Usable peak power: {power:0} kW / {power * 1.341f:0} hp at {at:0} rpm");
         return text.ToString();
     }
+}
+
+/// The engine panel's class, found by name: Sprocket 0.2.56 moved it from Sprocket.EngineDesigner to
+/// Sprocket.EngineDesigner.Editor, so naming it in the code tied QoL to one game version (1.8.6 and 1.8.7 lost Speed &
+/// acceleration on 0.2.55.5, and leaving the editor stopped QoL's panel sections). QoL holds the panel as its base class.
+internal static class EngineEditor
+{
+    internal const string Name = "Sprocket.Vehicles.Engines.Editor.CombustionEngineComponentEditor";
+    internal static readonly Type? Type = Find();
+    static PropertyInfo? blueprint;
+
+    static Type? Find()
+    {
+        foreach (var assembly in new[] { "Sprocket.EngineDesigner.Editor", "Sprocket.EngineDesigner" })
+            try { if (Assembly.Load(assembly).GetType(Name) is { } type) return type; }
+            catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException) { }
+        return null;
+    }
+
+    internal static bool Is(Il2CppObjectBase editor) => Type != null && editor.TryCast<Il2CppSystem.Object>()?.GetIl2CppType().FullName == Name;
+
+    /// The engine the panel shows: its own field, not on the base class.
+    internal static EngineBlueprint? Blueprint(EngineEditorBase editor) =>
+        Type != null && (blueprint ??= AccessTools.Property(Type, "blueprint")) is { } property
+            ? property.GetValue(Activator.CreateInstance(Type, editor.Pointer)) as EngineBlueprint : null;
 }

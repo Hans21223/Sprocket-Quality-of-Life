@@ -381,10 +381,11 @@ public sealed class DesignEditor : MonoBehaviour
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
             if (wasReady && !ready)
-            {
-                MeshTools.LeftEditor(); ExplodedView.LeftEditor(); GearSpeeds.LeftEditor(); PartPaint.LeftEditor();
-                ObjTransfer.LeftEditor(); QolPanel.Close();
-            }
+                // Each on its own: one that couldn't run (1.8.6-1.8.7's Speed & acceleration on Sprocket 0.2.55.5) stopped
+                // the rest, and QoL's panel sections were gone after the next visit.
+                foreach (var (feature, leave) in new (string, Action)[] { ("Mesh tools", MeshTools.LeftEditor), ("Exploded view", ExplodedView.LeftEditor),
+                             ("Gear speeds", GearSpeeds.LeftEditor), ("Own paint", PartPaint.LeftEditor), ("OBJ menu", ObjTransfer.LeftEditor), ("QoL panel", QolPanel.Close) })
+                    Ui.Guard(feature, leave);
         });
         Ui.Guard("OBJ menu", ObjTransfer.Update);
         if (ready && !busy && !ObjTransfer.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
