@@ -248,6 +248,13 @@ public static class AddonEdits
             }
         }
 
+        // The game counts a shape's points, edges, faces and face corners in 16 bits. A bigger shape doesn't read back:
+        // the design fails to load ("Failed to deserialize JSON"), so the merge silently did nothing (a player's log,
+        // 2026-10-11: 11,200 faces into 14,300 failed every time, into 4,400 it worked).
+        int points = into["vertices"]!.AsArray().Count / 3, edges = into["edges"]!.AsArray().Count / 2, faces = into["faces"]!.AsArray().Count;
+        int corners = into["faces"]!.AsArray().Sum(f => f!["v"]!.AsArray().Count);
+        if (Math.Max(Math.Max(points, edges), Math.Max(faces, corners)) > ushort.MaxValue)
+            throw new Exception($"The merged add-on would have {faces:N0} faces ({corners:N0} corners, {points:N0} points); the game holds at most 65,535 of each in one part. Merge fewer add-ons into this one, or into a smaller one.");
         RemoveParts(b, objects, gone);
         var after = Conversion.WorldMatrices(Conversion.Objects(b));
         foreach (var (id, matrix) in after)

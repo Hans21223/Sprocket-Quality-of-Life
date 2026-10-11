@@ -1,3 +1,17 @@
+# Quality of Life 1.8.8
+
+- One build for **Sprocket 0.2.55.5 and 0.2.56**. 0.2.56 moved the engine panel into
+  `Sprocket.EngineDesigner.Editor.dll`, and 1.8.6/1.8.7 named it there, so on 0.2.55.5 Speed & acceleration
+  failed every frame and QoL's panel sections were gone after leaving the editor once. QoL now finds the engine
+  panel while the game runs, in whichever assembly has it.
+- Leaving the editor tidies up each tool on its own: one that fails no longer stops the rest.
+- A tool that needs something this Sprocket version doesn't have turns itself off for the session with one
+  warning instead of an error every frame. The "same error again" line names the error.
+- Merge add-ons refuses a merge that would give one part more than 65,535 faces, corners, edges or points, and
+  says so. The game can't load a shape that big: the merge used to fail without a word.
+- Every game type and member QoL uses is checked present in both versions' interop assemblies; the offline
+  tests pass. Gameplay on both versions remains unverified.
+
 # Quality of Life 1.8.7
 
 - Works with the **Sprocket Mod API** (furryaxw/SprocketModAPI) when it is installed, and exactly as before

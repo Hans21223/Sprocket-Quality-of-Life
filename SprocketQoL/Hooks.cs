@@ -62,6 +62,22 @@ internal static class Hooks
         }
     }
 
+    /// A postfix on a game class found while the game runs (`type`, null when this game version hasn't got it), on its
+    /// own: for a class that sits in a different assembly in different game versions.
+    internal static void AttachPostfix(Harmony harmony, string feature, Type? type, string typeName, string methodName, MethodInfo postfix)
+    {
+        string hook = $"{typeName}.{methodName} (postfix)";
+        try
+        {
+            var original = (type == null ? null : AccessTools.DeclaredMethod(type, methodName)) ?? throw new MissingMethodException($"{typeName}.{methodName} isn't in the game");
+            var processor = harmony.CreateProcessor(original);
+            processor.AddPostfix(new HarmonyMethod(postfix));
+            processor.Patch();
+            Report.Add(new(feature, hook, null));
+        }
+        catch (Exception ex) { Failed(feature, hook, ex); }
+    }
+
     static MethodBase? Original(HarmonyMethod info)
     {
         if (info.declaringType == null) return null;

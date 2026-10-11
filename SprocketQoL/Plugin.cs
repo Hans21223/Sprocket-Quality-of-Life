@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.7")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.8")]
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
@@ -75,6 +75,9 @@ public sealed class Plugin : BasePlugin
         var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels) };
         // One hook at a time: a game method a game update removed turns off that hook only (Mod Options > Compatibility).
         foreach (var feature in features) Hooks.Attach(harmony, feature);
+        // The engine panel's class moved assembly in Sprocket 0.2.56: found while the game runs (EngineEditor), not named.
+        Hooks.AttachPostfix(harmony, nameof(GearSpeeds), EngineEditor.Type, "CombustionEngineComponentEditor", "OnComponentRebuilt", AccessTools.Method(typeof(GearSpeeds), nameof(GearSpeeds.EngineChanged)));
+        Hooks.AttachPostfix(harmony, nameof(NativePanels), EngineEditor.Type, "CombustionEngineComponentEditor", "OnGUI", AccessTools.Method(typeof(NativePanels), nameof(NativePanels.Engine)));
         PanelSections.Register();
         if (Hooks.Failures.Any()) Log.LogWarning("Quality of Life: " + Hooks.Summary());
         else Log.LogInfo("Quality of Life: " + Hooks.Summary());
