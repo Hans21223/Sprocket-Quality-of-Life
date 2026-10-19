@@ -1,5 +1,22 @@
-Quality of Life 1.8.8 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.9.0 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.9.0
+- Right-click menu: Ctrl + right click (without dragging) in the editor opens a Blender-style menu with what fits
+  the selection: the game's own actions and QoL's tools, each with its key. Settings > Mod Options > Right-click
+  menu: open it with Ctrl, Alt or Shift (or Off), and choose which items it shows.
+- Drape as cloth (add-on panel or menu): the add-on's top becomes a cloth sheet or a camouflage net dropped onto
+  the vehicle until it settles. Spacing, stiffness, net holes, and which parts it lands on. Hatches, periscopes,
+  tracks and other game parts catch it as boxes; edges poking out between its points lift it over them.
+- Scatter add-ons over this: copies of the selected add-ons land at random on a part (faces looking up, or all).
+- Boolean with this add-on: besides the cuts, Keep only the overlap (intersect), Join into one shape (union) and
+  Slice in two.
+- Make the mirror side a real add-on; Set origin to the shape's middle and Parent to active (in the menu).
+- Mirrored turrets: moving one keeps its twin mirrored and centred, each ring on its own traverse drive.
+- Create Hole cuts faces looking straight forward or back (the game's circle collapsed there), and sloped front
+  plates get full-size holes.
+- The transmission's Smooth button spaces the gears for the quickest acceleration, keeping first and top gear.
+- Shorter labels in QoL's panel sections and Mod Options, so text no longer overlaps.
 
 NEW IN 1.8.8
 - One build for Sprocket 0.2.55.5 and 0.2.56. QoL finds the engine panel (moved to another file in 0.2.56) while
@@ -64,12 +81,12 @@ loading the saved plate structure still need in-game testing.
 
 FILLET
 In Edges mode, select edges with two flat adjoining faces on a hand-made structure.
-Set Fillet radius (mm) and Fillet segments (2-16, default 4), then click Fillet.
+Set Radius (mm) and Fillet segments (2-16, default 4), then click Fillet.
 A radius that cannot fit and unsupported junctions are rejected without changing the shape.
 Smooth Edge remains available with its separate cutback-width controls.
 
 SMOOTH EDGE AND SPLITTING
-Smooth Edge uses Smooth width (mm) and Smooth segments to create a curved bevel.
+Smooth Edge uses Smooth (mm) (the width cut back) and Smooth segments to create a curved bevel.
 Split selected edges makes straight cuts through adjoining quads.
 In Faces mode, Split selected faces makes straight strips only on selected faces; choose direction A/B.
 Select between splits selects the new faces inside the last split, excluding neighbours.
@@ -105,7 +122,7 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 - Fix mirror: Mirror only pairs points that match to a fraction of a mm. Fix mirror makes near pairs exact again
   (within 5 mm by default), puts near-middle points on the middle, and selects points with no mirror image (where
   the sides differ: merged, split or filled on one side only).
-- Rotation snap: Mesh tools' Rotation snap (degrees) sets the step turns snap to while the game's rotation snap is
+- Rotation snap: Mesh tools' Rotation snap sets the step turns snap to while the game's rotation snap is
   on (points and whole parts): 7.5 makes a 48-sided circle, 5 a 72-sided one. 0 keeps the game's step.
 - Merge (M) both sides: with Mirror on, merging points merges their mirror images too, in one step (Ctrl+Z undoes
   both). Turn it off in Mirror fixes.
@@ -118,7 +135,7 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   points pulls their neighbours, radius in the panel). Also a 0.5 mm snap grid, and Numpad 5 for an
   orthographic view (spawn pad and ground hidden; Ortho backdrop: plain grey / white / black, no sky or map, or scene; Numpad + / - zoom it; it never cuts into the vehicle; it snaps to front / side / top,
   Numpad 1 / 3 / 7, Ctrl for back / other side / from below, Numpad 9 the opposite view). In a straight view it
-  shows the vehicle's width and height as dimension lines, to the centimetre (Ortho: measurements; antennas not
+  shows the vehicle's width and height as dimension lines, to the centimetre (Measurements; antennas not
   counted). The game's fog is off in orthographic view and the move / turn / scale arrows keep a normal size.
 - Exploded view: F2 pulls the parts apart to see inside, tracks and wheels staying on the ground (F3 / F4 closer /
   further), F2 again puts them back.
@@ -139,15 +156,18 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   over it, and see-through (the armour as glass).
   Colour uses thin clean outlines around visible parts and sharp corners, filtering flat
   triangle seams, shallow facets and isolated speckles. See-through keeps its silhouette-only overlay.
-  In Mesh tools, turn off "Colour: clean outlines" or "See-through: outline only" to restore that export's wireframe.
-  Enable "Drawing: no wireframe" to omit all added lines from both coloured exports.
+  In Drawing sheet, turn off "Clean outlines" or "Silhouette" to restore that export's wireframe.
+  Turn off "Drawing lines" to omit all added lines from both coloured exports.
   These choices are saved between sessions; lines-only stays the same.
 - Own paint: a structure's panel can give the part (and the selected parts) its own paint job ("Own paint 1"
   to "Own paint 9"), with its colours, camo and wear right in the panel. Saved with the design; Ctrl+Z
   undoes each change.
 - Zoom in close: the camera can come within a few centimetres of small parts (Mesh tools, on by default).
 - Turrets can be copied with Alt like other parts, with everything on them (turret body, guns...), and
-  mirrored with Mirror on: the twin gets the body, guns and the rest too (the design reloads once).
+  mirrored with Mirror on: the twin gets the body, guns and the rest too (the design reloads once). Moving one
+  turret of a mirrored pair keeps the other its mirror image.
+- Right-click menu: Ctrl + right click (no drag) for the game's actions and QoL's tools that fit the selection.
+  Settings > Mod Options > Right-click menu: what opens it, and which items show.
 - Hotkeys box beside the panel: the mesh editing keys, including hidden ones like B (box select) and
   C (circle select). x closes it, F1 shows or hides it.
 - Move or scale without height: while moving or scaling, Shift+Z locks to the two flat axes
@@ -162,6 +182,13 @@ ADD-ON TOOLS
   Any closed shape works, and rivets move onto the new faces. Mirrored plates (twin pairs, or one part shown on
   both sides) share one shape, so they're cut on both sides and stay mirrored. The add-on must be a closed shape. The fill around the cut uses the
   fewest points by default (Fill: rectangle box to enclose the cut in a clean rectangular box, or light / smooth fill for faces without long thin slivers).
+  Also Keep only the overlap (intersect), Join into one shape (union) and Slice in two (the inside becomes a new
+  add-on).
+- Drape as cloth: the add-on's top becomes a cloth sheet or net dropped onto the vehicle until it settles (at most
+  4,000 points; a big sheet takes several seconds). Ctrl+Z undoes it.
+- Scatter add-ons over this: select the add-ons to scatter, then the part last; up to 300 copies land at random on
+  it. Restore undoes it.
+- Make the mirror side a real add-on: the copy the game shows on the other side becomes an add-on of its own.
 
 INFO
 - Gun length: L/xx in calibers from the muzzle to the breech face (barrel + chamber holding the whole round),
@@ -177,7 +204,7 @@ cut are new: save a copy of your tank before using them.
 Found a bug? Open an issue on GitHub with a screenshot and your BepInEx\LogOutput.log.
 
 GAME PROFILE
-This binary runs on Sprocket 0.2.55.5 and 0.2.56 (built against 0.2.56.1).
+This binary runs on Sprocket 0.2.55.5 and 0.2.56 (built against 0.2.56.2).
 1.8.8 finds the engine panel at runtime: every game type and member QoL uses is checked offline against both
 versions' assemblies. 1.8.7 added the optional Sprocket Mod API bridge (Mod menu settings, keybinding window).
 Use Sprocket Mod Loader 1.2.3 or later.
