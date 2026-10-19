@@ -26,6 +26,7 @@ public sealed class DesignEditor : MonoBehaviour
     private VehicleBlueprintSerializer? serializer;
     private NativeTask? pending;
     private System.Action? queued;
+    private System.Action? afterEdit; // runs once the requested live edit is done (in place or reloaded)
     private Func<string, EditResult>? edit;
     private Func<string, AddonEdits.EditPlan>? liveEdit;
     private static readonly List<object> alive = new(); // delegates handed to the game's undo history must not be collected
@@ -56,20 +57,28 @@ public sealed class DesignEditor : MonoBehaviour
     {
         if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
-        editName = name; doneMessage = done; edit = change;
+        editName = name; doneMessage = done; edit = change; afterEdit = null;
         busy = true; Say(name + "...", 30);
         queued = RunEdit; // runs from Update, outside the game's inspector drawing
     }
 
     /// An edit applied in place as one of the game's undoable steps (Ctrl+Z), falling back to loading the edited
-    /// design when it can't be (a changed part shares its mesh, or applying in place fails).
-    internal void RequestLiveEdit(string name, string done, Func<string, AddonEdits.EditPlan> change)
+    /// design when it can't be (a changed part shares its mesh, or applying in place fails). `then` runs once it's done.
+    internal void RequestLiveEdit(string name, string done, Func<string, AddonEdits.EditPlan> change, System.Action? then = null)
     {
         if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
-        editName = name; doneMessage = done; liveEdit = change;
+        editName = name; doneMessage = done; liveEdit = change; afterEdit = then;
         busy = true; Say(name + "...", 30);
         queued = RunLiveEdit;
+    }
+
+    private void AfterEdit()
+    {
+        var then = afterEdit;
+        afterEdit = null;
+        try { then?.Invoke(); }
+        catch (Exception ex) { Plugin.ModLog.LogWarning($"After {editName}: {ex.Message}"); }
     }
 
     private Func<string, (string Json, List<List<(int Source, int Added)>> Groups, string Log)>? separate;
@@ -82,7 +91,7 @@ public sealed class DesignEditor : MonoBehaviour
     {
         if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
-        editName = name; doneMessage = done; separate = plan;
+        editName = name; doneMessage = done; separate = plan; afterEdit = null;
         busy = true; Say(editName + "...", 30);
         queued = RunSeparate;
     }
@@ -252,6 +261,83 @@ public sealed class DesignEditor : MonoBehaviour
         }
     }
 
+    private readonly Dictionary<IntPtr, (Vector3 Pos, Quaternion Rot)> turretPoses = new();
+    private IntPtr turretPosesTarget;
+
+    /// Mirrored turrets stay mirrored. The game's turret ring isn't made to be mirrored (QoL allows it,
+    /// TurretCopy.AllowCopy), and moving one of a pair puts its twin off centre and slides the drives off. So after each
+    /// change, the side that was moved (the one selected, else the one that changed) is mirrored onto the other: the ring
+    /// across the vehicle's centre and each linked part on it onto its twin, and parts on the moved side that moved without
+    /// being selected (a drive) go back where they were.
+    private void KeepTurretsMirrored()
+    {
+        if (busy || core?.Editor == null || core.Editor.OperationInProgress || core.Target == null) return;
+        if (turretPosesTarget != core.Target.Pointer) { turretPoses.Clear(); turretPosesTarget = core.Target.Pointer; }
+        HashSet<int>? selected = null;
+        var seen = new HashSet<IntPtr>();
+        foreach (var part in AllParts())
+        {
+            if (part.GUID != Conversion.RingGuid || part.GetComponent<VehicleTransform>() is not { } a || a.Mirror is not { } b
+                || !seen.Add(a.Pointer) || !seen.Add(b.Pointer)) continue;
+            List<VehicleTransform> Below(VehicleTransform top)
+            {
+                var found = new List<VehicleTransform>();
+                for (var queue = new Queue<VehicleTransform>(new[] { top }); queue.Count > 0;)
+                    foreach (var c in Each(queue.Dequeue().Children)) if (c != null) { found.Add(c); queue.Enqueue(c); }
+                return found;
+            }
+            var onB = Below(b).Select(t => t.Pointer).ToHashSet();
+            var pairs = new List<(VehicleTransform A, VehicleTransform B)> { (a, b) };
+            foreach (var x in Below(a)) if (x.Mirror is { } y && onB.Contains(y.Pointer)) pairs.Add((x, y));
+            bool Changed(VehicleTransform t) => turretPoses.TryGetValue(t.Pointer, out var was)
+                && (Vector3.Distance(was.Pos, t.LocalPosition) > 1e-4f || Quaternion.Angle(was.Rot, t.LocalRotation) > 0.01f);
+            void Remember() { foreach (var (x, y) in pairs) { turretPoses[x.Pointer] = (x.LocalPosition, x.LocalRotation); turretPoses[y.Pointer] = (y.LocalPosition, y.LocalRotation); } }
+            bool changedA = pairs.Any(p => Changed(p.A)), changedB = pairs.Any(p => Changed(p.B));
+            if (!changedA && !changedB) { Remember(); continue; }
+            selected ??= SelectedParts().ToHashSet();
+            // A selected part and what it hangs from up to its ring (picking a turret body and dragging moves its ring).
+            var picked = new HashSet<IntPtr>();
+            foreach (var t in pairs.SelectMany(p => new[] { p.A, p.B }).Concat(Below(a)).Concat(Below(b)))
+                if (t.VehicleObject is { } o && selected.Contains((int)o.VUID))
+                    for (var u = t; u != null && picked.Add(u.Pointer) && u.Pointer != a.Pointer && u.Pointer != b.Pointer; u = u.Parent) { }
+            bool Picked(VehicleTransform t) => picked.Contains(t.Pointer);
+            bool pickedA = pairs.Any(p => Picked(p.A)), pickedB = pairs.Any(p => Picked(p.B));
+            bool leadA = pickedA != pickedB ? pickedA : changedA != changedB ? changedA : true;
+            var lead = pairs.Select(p => leadA ? p.A : p.B).ToList();
+            var follow = pairs.Select(p => leadA ? p.B : p.A).ToList();
+            // Moved by hand: what moved on that side without being picked was the game, so it goes back.
+            int restored = 0;
+            if (lead.Any(t => Picked(t) && Changed(t)))
+                foreach (var t in lead.Where(t => !Picked(t) && Changed(t)))
+                {
+                    var was = turretPoses[t.Pointer];
+                    t.SetLocalPositionAndRotation(was.Pos, was.Rot);
+                    restored++;
+                }
+            (System.Numerics.Vector3, System.Numerics.Quaternion)? shared = null;
+            if (a.Parent != null && b.Parent != null && a.Parent.Pointer == b.Parent.Pointer)
+            {
+                var (pp, pq) = (a.Parent.LocalPosition, a.Parent.LocalRotation); // the shared parent placed in the vehicle
+                for (var u = a.Parent.Parent; u != null; u = u.Parent) { pp = u.LocalPosition + u.LocalRotation * pp; pq = u.LocalRotation * pq; }
+                shared = (new(pp.x, pp.y, pp.z), new(pq.x, pq.y, pq.z, pq.w));
+            }
+            else if (a.Parent?.Mirror?.Pointer != b.Parent?.Pointer) { Remember(); continue; } // not on one parent or twin parents
+            int moved = 0;
+            for (int i = 0; i < pairs.Count; i++)
+            {
+                var (pos, rot) = Conversion.MirrorPose(new(lead[i].LocalPosition.x, lead[i].LocalPosition.y, lead[i].LocalPosition.z),
+                    new(lead[i].LocalRotation.x, lead[i].LocalRotation.y, lead[i].LocalRotation.z, lead[i].LocalRotation.w), i == 0 ? shared : null);
+                var want = (P: new Vector3(pos.X, pos.Y, pos.Z), Q: new Quaternion(rot.X, rot.Y, rot.Z, rot.W));
+                if (Vector3.Distance(want.P, follow[i].LocalPosition) <= 1e-4f && Quaternion.Angle(want.Q, follow[i].LocalRotation) <= 0.01f) continue;
+                follow[i].SetLocalPositionAndRotation(want.P, want.Q);
+                moved++;
+            }
+            Remember();
+            if (moved + restored > 0)
+                Plugin.ModLog.LogInfo($"Turret mirror: ring {(int)(lead[0].VehicleObject?.VUID ?? default)} leads; {moved} parts of its twin mirrored, {restored} parts the game shifted on it put back");
+        }
+    }
+
     /// Ctrl+J, as in Blender: the selected add-ons join the last add-on, turret or hull selected (the active one).
     private void JoinHotkey()
     {
@@ -264,6 +350,23 @@ public sealed class DesignEditor : MonoBehaviour
         if (target < 0 || others.Count == 0) { Say($"{Keybinds.Shown("join")}: select add-ons, then last the add-on, turret or hull they join.", 5); return; }
         Plugin.ModLog.LogInfo($"Ctrl+J: joining {string.Join(", ", others)} into {target} (selection order {string.Join(", ", picked)})");
         RequestLiveEdit("Merging add-ons", $"Merged {others.Count} add-on{(others.Count == 1 ? "" : "s")} into the last part selected.", json => AddonEdits.PlanMerge(json, target, others, LiveShapes(json)));
+    }
+
+    /// Attaches `children` to `parent` where they are, with the game's own operation (one undo step), like Blender's
+    /// Parent to active. A child that `parent` hangs from is left out (that would loop).
+    internal void ParentTo(int parent, IReadOnlyCollection<int> children)
+    {
+        if (!ready || busy || core?.Editor?.operations is not { } ops) return;
+        var byId = new Dictionary<int, VehicleObject>();
+        foreach (var o in Each(core.Target.Cast<IVehicleGateway>().ObjectReader.Items)) if (o != null) byId[(int)o.VUID] = o;
+        if (!byId.TryGetValue(parent, out var to)) return;
+        var above = new HashSet<int>(); // `parent` and every part it hangs from
+        for (var t = to.transform; t != null; t = t.parent) if (t.GetComponent<VehicleObject>() is { } up) above.Add((int)up.VUID);
+        var moving = children.Where(c => c != parent && !above.Contains(c) && byId.ContainsKey(c)).Select(c => byId[c]).ToList();
+        if (moving.Count == 0) { Say("Parent to active: select the parts to attach, then last the part they attach to.", 6); return; }
+        ops.SetParent(to.GetReference(), new Il2CppReferenceArray<ISoftVehicleObject>(moving.Select(c => c.GetReference()).ToArray()), ops.GetNewGroupID());
+        Say($"Attached {moving.Count} part{(moving.Count == 1 ? "" : "s")} to part {parent}. Ctrl+Z undoes it.", 6);
+        Plugin.ModLog.LogInfo($"Parent to active: {string.Join(", ", moving.Select(c => (int)c.VUID))} onto {parent}");
     }
 
     internal void RequestRestore()
@@ -346,6 +449,47 @@ public sealed class DesignEditor : MonoBehaviour
         }
     }
 
+    /// Boxes round the parts the design has no shape for (hatches, periscopes, lights, wheels, tracks), by part, where the
+    /// game shows them, in the vehicle's space as LiveShapes: each shown mesh's bounds, turned and placed as its renderer
+    /// is, as triangles facing out. For the cloth to land on (AddonEdits.PlanDrape).
+    internal Dictionary<int, List<(System.Numerics.Vector3 A, System.Numerics.Vector3 B, System.Numerics.Vector3 C)>> PartBoxes()
+    {
+        var boxes = new Dictionary<int, List<(System.Numerics.Vector3 A, System.Numerics.Vector3 B, System.Numerics.Vector3 C)>>();
+        foreach (var part in AllParts())
+        {
+            if (Each(part.Components).Any(c => c?.TryCast<PlateStructure>() != null) || part.GetComponent<VehicleTransform>() is not { } t) continue;
+            var list = new List<(System.Numerics.Vector3 A, System.Numerics.Vector3 B, System.Numerics.Vector3 C)>();
+            foreach (var filter in part.GetComponentsInChildren<MeshFilter>())
+            {
+                if (filter.sharedMesh is not { } mesh || filter.GetComponent<MeshRenderer>() is not { enabled: true } || !filter.gameObject.activeInHierarchy
+                    || filter.GetComponentInParent<VehicleObject>()?.Pointer != part.Pointer) continue; // a part on this one counts for itself
+                var bounds = mesh.bounds;
+                var c = new System.Numerics.Vector3[8]; // corner i: x, y, z from its bits 1, 2, 4
+                for (int i = 0; i < 8; i++)
+                {
+                    var at = t.WorldToVehicleSpace(filter.transform.TransformPoint(new Vector3((i & 1) != 0 ? bounds.max.x : bounds.min.x,
+                        (i & 2) != 0 ? bounds.max.y : bounds.min.y, (i & 4) != 0 ? bounds.max.z : bounds.min.z)));
+                    c[i] = new(at.x, at.y, at.z);
+                }
+                var mid = c.Aggregate(System.Numerics.Vector3.Zero, (s, q) => s + q) / 8;
+                foreach (int axis in new[] { 1, 2, 4 })
+                    foreach (int side in new[] { 0, axis })
+                    {
+                        var (u, v) = axis == 1 ? (2, 4) : axis == 2 ? (1, 4) : (1, 2);
+                        var q = new[] { side, side | u, side | u | v, side | v }.Select(i => c[i]).ToArray();
+                        var normal = System.Numerics.Vector3.Cross(q[1] - q[0], q[2] - q[0]);
+                        var outside = (q[0] + q[1] + q[2] + q[3]) / 4 - mid;
+                        if (outside.LengthSquared() < 1e-12f) outside = side == 0 ? -normal : normal; // a flat mesh: its two faces face apart
+                        if (System.Numerics.Vector3.Dot(normal, outside) < 0) System.Array.Reverse(q);
+                        list.Add((q[0], q[1], q[2]));
+                        list.Add((q[0], q[2], q[3]));
+                    }
+            }
+            if (list.Count > 0) boxes[(int)part.VUID] = list;
+        }
+        return boxes;
+    }
+
     /// Turret rings of every selected turret, whether its ring or its body was clicked.
     internal List<int> SelectedTurretRings()
     {
@@ -383,15 +527,16 @@ public sealed class DesignEditor : MonoBehaviour
             if (wasReady && !ready)
                 // Each on its own: one that couldn't run (1.8.6-1.8.7's Speed & acceleration on Sprocket 0.2.55.5) stopped
                 // the rest, and QoL's panel sections were gone after the next visit.
-                foreach (var (feature, leave) in new (string, Action)[] { ("Mesh tools", MeshTools.LeftEditor), ("Exploded view", ExplodedView.LeftEditor),
+                foreach (var (feature, leave) in new (string, Action)[] { ("Right-click menu", RightClickMenu.Close), ("Mesh tools", MeshTools.LeftEditor), ("Exploded view", ExplodedView.LeftEditor),
                              ("Gear speeds", GearSpeeds.LeftEditor), ("Own paint", PartPaint.LeftEditor), ("OBJ menu", ObjTransfer.LeftEditor), ("QoL panel", QolPanel.Close) })
                     Ui.Guard(feature, leave);
         });
         Ui.Guard("OBJ menu", ObjTransfer.Update);
         if (ready && !busy && !ObjTransfer.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
-        if (ready && !busy && !ObjTransfer.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); }
+        if (ready && !busy && !ObjTransfer.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); }
         if (ready && !ObjTransfer.BlocksInput)
         {
+            if (!busy && !PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Right-click menu", RightClickMenu.Update);
             Ui.Guard("Mesh tools keys", MeshTools.Keys);
             Ui.Guard("Exploded view", ExplodedView.Keys);
             Ui.Guard("Own paint", PartPaint.Tick);
@@ -413,6 +558,7 @@ public sealed class DesignEditor : MonoBehaviour
                     Say(RecoveryBelongsHere ? "The game could not load the result. Your design from before is backed up; use Restore."
                         : "The game could not load the result. Load original.blueprint from SprocketQoLBackups to recover your previous design.", 10);
                     Plugin.ModLog.LogError(task.Exception?.ToString() ?? "Vehicle load cancelled");
+                    afterEdit = null;
                 }
                 else
                 {
@@ -421,6 +567,7 @@ public sealed class DesignEditor : MonoBehaviour
                     recoveryTarget = core?.Target?.Pointer ?? IntPtr.Zero;
                     Say(restoring ? "Design restored." : doneMessage, 8);
                     Plugin.ModLog.LogInfo(restoring ? "QOL_RESTORE_OK" : $"QOL_EDIT_OK: {editName}");
+                    if (restoring) afterEdit = null; else AfterEdit();
                     if (core?.Target != null && recoveryDir != null)
                         File.WriteAllText(Path.Combine(recoveryDir, "loaded-result.blueprint"), Snapshot());
                     if (restoring) LastEditedPart = -1;
@@ -434,7 +581,7 @@ public sealed class DesignEditor : MonoBehaviour
         }
         catch (Exception ex)
         {
-            busy = false; waits = 0;
+            busy = false; waits = 0; afterEdit = null;
             Say("Could not complete: " + ex.Message, 10);
             Plugin.ModLog.LogError(ex);
         }
@@ -519,7 +666,7 @@ public sealed class DesignEditor : MonoBehaviour
         Plugin.ModLog.LogInfo($"QOL_EDIT {editName}: {plan.Summary}; in place={plan.Live}; backup={recoveryDir}");
         if (plan.Live)
         {
-            try { ApplyInPlace(plan, original); busy = false; return; }
+            try { ApplyInPlace(plan, original); busy = false; AfterEdit(); return; }
             catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_LIVE couldn't apply in place, reloading the design instead: {ex}"); }
         }
         SetRecovery(original, plan.Focus);
@@ -700,6 +847,7 @@ public sealed class DesignEditor : MonoBehaviour
         {
             Ui.Guard("Hotkeys", Hotkeys.DrawBox);
             Ui.Guard("Measurements", MeshTools.DrawMeasures);
+            Ui.Guard("Right-click menu", RightClickMenu.Draw);
         }
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;
         float width = Math.Min(620, Screen.width - 40);

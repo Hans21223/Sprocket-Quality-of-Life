@@ -124,10 +124,17 @@ internal static class Keybinds
 
     internal static void Reset(string id) { if (All.FirstOrDefault(b => b.Id == id) is { } b) Set(id, b.Default); }
 
+    static (string Id, int Frame)? pressed; // a press from the right-click menu (ContextMenu), seen as the key next frame
+
+    /// Runs the action as if its key went down: next frame, so whichever tool reads the key sees it however its update
+    /// is ordered against the menu's.
+    internal static void Press(string id) => pressed = (id, UnityEngine.Time.frameCount + 1);
+
     /// The action's key went down this frame, with the modifiers it needs held (others may be held too: tools that
     /// read Ctrl as "the other way" check it themselves).
     internal static bool Pressed(string id)
     {
+        if (pressed is { } p && p.Id == id && p.Frame == UnityEngine.Time.frameCount) return true;
         if (api.TryGetValue(id, out var handle)) { Compare(); return ModApi.KeyPressed(handle); }
         if (!parsed.TryGetValue(id, out var k) || k.Key == Key.None || Keyboard.current is not { } keys) return false;
         try

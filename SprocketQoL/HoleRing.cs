@@ -116,6 +116,24 @@ public static class HoleRing
         return true;
     }
 
+    /// The circle Create Hole asks the game for: `count` points `radius` from `centre`, in the plane facing `normal`, the
+    /// k-th turned k/count of a full turn (backwards with `flipWinding`), starting where the game starts. The game turns
+    /// its forward (+z) about the normal (Unity's AngleAxis: v cos a + (n x v) sin a), so on a face looking forward or
+    /// back every point lands on one spot, and on a face tilted that way its circle shrinks and leaves the face.
+    public static Vector3[] Circle(int count, Vector3 centre, Vector3 normal, float radius, bool flipWinding)
+    {
+        var n = Vector3.Normalize(normal);
+        var start = Vector3.UnitZ - Vector3.Dot(Vector3.UnitZ, n) * n;
+        if (start.LengthSquared() < 1e-6f) start = Vector3.UnitY - Vector3.Dot(Vector3.UnitY, n) * n; // facing forward or back
+        start = Vector3.Normalize(start);
+        var side = Vector3.Cross(n, start);
+        return Enumerable.Range(0, count).Select(k =>
+        {
+            double a = (flipWinding ? -2 : 2) * Math.PI * k / count;
+            return centre + radius * ((float)Math.Cos(a) * start + (float)Math.Sin(a) * side);
+        }).ToArray();
+    }
+
     /// Newell's normal: the side a polygon faces given its corner order (also right for slightly bent faces).
     public static Vector3 Normal(IReadOnlyList<Vector3> corners)
     {

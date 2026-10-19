@@ -117,8 +117,10 @@ public static class MeshCut
         public bool Changed;
     }
 
-    /// `fill`: how the faces around each cut are made (see Fill.Mode); the fewest points by default.
-    public static Result Cut(JsonObject meshData, IReadOnlyList<Solid> shapes, bool pocket, Fill.Mode fill = Fill.Mode.Fewest)
+    /// `fill`: how the faces around each cut are made (see Fill.Mode); the fewest points by default. `keepInside`: the
+    /// opposite cut (an intersect): the pieces inside the shapes stay, everything outside them goes, and the shapes'
+    /// surfaces inside the structure close it, facing out as the shapes do.
+    public static Result Cut(JsonObject meshData, IReadOnlyList<Solid> shapes, bool pocket, Fill.Mode fill = Fill.Mode.Fewest, bool keepInside = false)
     {
         var mesh = meshData["mesh"]!.AsObject();
         var raw = mesh["vertices"]!.AsArray().Select(F).ToArray();
@@ -155,18 +157,18 @@ public static class MeshCut
         var allGrid = new TriGrid(allShapeTris);
         bool InsideShape(Vector3 p) => grids.Any(g => g.Inside(p));
 
-        // 1) Split target faces the shapes pass through, and drop the pieces inside a shape.
+        // 1) Split target faces the shapes pass through, and drop the pieces inside a shape (outside, with keepInside).
         var result = new List<Poly>();
         var replaced = new HashSet<int>();
         foreach (var face in original)
         {
             var (min, max) = Bounds(face.C);
-            if (!Overlaps(min, max, shapeMin, shapeMax)) { result.Add(face); continue; }
+            if (!Overlaps(min, max, shapeMin, shapeMax)) { if (!keepInside) result.Add(face); continue; } // clear of every shape
             var near = allGrid.Near(min, max, Eps);
             var pieces = new List<List<Corner>>();
             Shatter(face.C, near, 0, pieces, verts);
-            var kept = pieces.Where(p => !InsideShape(Centre(p))).ToList();
-            if (pieces.Count == 1 && kept.Count == 1) { result.Add(face); continue; } // clear of every shape
+            var kept = pieces.Where(p => InsideShape(Centre(p)) == keepInside).ToList();
+            if (pieces.Count == 1 && kept.Count == 1) { result.Add(face); continue; } // kept whole
             replaced.Add(face.Source);
             result.AddRange(kept.Select(p => new Poly { C = p, Source = face.Source, Group = face.Source, Changed = true }));
         }
@@ -188,9 +190,10 @@ public static class MeshCut
             if (Flush(original[l[0]], original[l[1]])) groupOf[Find(l[0])] = Find(l[1]);
         foreach (var p in result.Where(p => p.Changed && !p.Pocket)) p.Group = Find(p.Source);
 
-        // 2) Pocket: the shapes' surfaces inside the structure become plates, turned to face out of the structure.
+        // 2) Pocket: the shapes' surfaces inside the structure become plates, turned to face out of the structure. Kept
+        //    as they face with keepInside: they close what's left.
         int pocketFaces = 0;
-        if (pocket && facesCut > 0)
+        if ((pocket || keepInside) && facesCut > 0)
         {
             var targetTris = original.SelectMany(f => FanTris(f.C.Select(c => c.P).ToList())).Where(t => !t.Degenerate).ToList();
             var groups = new List<(Plane Plane, float T, int Id)>();
@@ -200,7 +203,8 @@ public static class MeshCut
                 {
                     var f = shapes[s].Faces[fi];
                     var corners = f.Select((vi, k) => new Corner(shapes[s].Verts[vi], shapes[s].Thickness[fi][k], -1, -1, -1,
-                        shapes[s].Modes[fi][k] == 4 ? (byte)1 : shapes[s].Modes[fi][k], -1, 0, true)).Reverse().ToList(); // reversed: faces into the old solid
+                        shapes[s].Modes[fi][k] == 4 ? (byte)1 : shapes[s].Modes[fi][k], -1, 0, true)).ToList();
+                    if (!keepInside) corners.Reverse(); // a recess's walls face into the old solid
                     var n = HoleRing.Normal(corners.Select(c => c.P).ToList());
                     if (n.LengthSquared() < 1e-14f) continue;
                     var plane = new Plane(Vector3.Normalize(n), 0);
@@ -227,6 +231,7 @@ public static class MeshCut
                 }
         }
         if (facesCut == 0) return new Result(0, 0, 0, 0, 0);
+        if (keepInside && !result.Any(p => !p.Pocket)) return new Result(0, 0, 0, 0, 0); // none of the structure is inside the shapes
 
         // 3) Number the new corners, sharing a vertex where pieces meet (including existing vertices).
         var grid = new Dictionary<(int, int, int), List<int>>();
@@ -462,9 +467,9 @@ public static class MeshCut
                 foreach (var link in new[] { "next", "prev" })
                 {
                     int to = n[link]?.GetValue<int>() ?? -1;
-                    // A rivet line can't run across the hole: break it where it would.
+                    // A rivet line can't run across the hole (or out of what's kept): break it where it would.
                     bool across = to >= 0 && positions[old] is { } a && to < positions.Count && positions[to] is { } b
-                                  && Enumerable.Range(1, 7).Any(s => InsideShape(Vector3.Lerp(a, b, s / 8f)));
+                                  && Enumerable.Range(1, 7).Any(s => InsideShape(Vector3.Lerp(a, b, s / 8f)) != keepInside);
                     n[link] = to >= 0 && !across && index.TryGetValue(to, out int ni) ? ni : -1;
                 }
             rivets!["nodes"] = new JsonArray(keep.Select(k => (JsonNode?)k.Node).ToArray());

@@ -520,7 +520,7 @@ public static class MeshTools
         });
     }
 
-    static void SmoothEdge(PlateStructureEditor e)
+    internal static void SmoothEdge(PlateStructureEditor e)
     {
         if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Smooth Edge: switch to Edges and select edges"); return; }
         bool mirror = e.meshEditor.Symmetry;
@@ -533,7 +533,7 @@ public static class MeshTools
         });
     }
 
-    static void Fillet(PlateStructureEditor e)
+    internal static void Fillet(PlateStructureEditor e)
     {
         if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Fillet: switch to Edges and select edges"); return; }
         bool mirror = e.meshEditor.Symmetry;
@@ -546,7 +546,7 @@ public static class MeshTools
         });
     }
 
-    static void SplitEdges(PlateStructureEditor e)
+    internal static void SplitEdges(PlateStructureEditor e)
     {
         if (e.meshEditor.SelectType != MeshEditType.Face) { e.operations.NotifyError("Split Face: switch to Faces and select the face to split"); return; }
         bool mirror = e.meshEditor.Symmetry; int sections = splitSections, side = splitOtherDirection ? 1 : 0;
@@ -565,7 +565,7 @@ public static class MeshTools
         });
     }
 
-    static void SelectBetweenSplits(PlateStructureEditor e)
+    internal static void SelectBetweenSplits(PlateStructureEditor e)
     {
         Run(e, "Select between splits", mesh =>
         {
@@ -619,7 +619,7 @@ public static class MeshTools
     static Num Image(Num p) => new(-p.X, p.Y, p.Z);
 
     /// Bridge (Blender's Bridge Edge Loops): two chains of selected edges joined by a strip of faces.
-    static void Bridge(PlateStructureEditor e)
+    internal static void Bridge(PlateStructureEditor e)
     {
         if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Bridge: switch to Edges and select two chains of edges"); return; }
         bool mirror = e.meshEditor.Symmetry;
@@ -636,7 +636,7 @@ public static class MeshTools
     }
 
     /// Circle (LoopTools' Circle): the selected points spread evenly round a true circle.
-    static void Circle(PlateStructureEditor e)
+    internal static void Circle(PlateStructureEditor e)
     {
         bool mirror = e.meshEditor.Symmetry;
         Run(e, "Circle", mesh =>
@@ -766,7 +766,7 @@ public static class MeshTools
     /// Fix mirror: points nearly each other's mirror image made exactly so (and near-centre points put on the middle),
     /// so the editor's Mirror finds them again. The points left with no mirror image are selected, to show where the
     /// two sides differ.
-    static void FixMirror(PlateStructureEditor e)
+    internal static void FixMirror(PlateStructureEditor e)
     {
         float tolerance = mirrorMm / 1000;
         var keep = mirrorKeep;
@@ -1789,12 +1789,12 @@ public static class MeshTools
         var bevelTip = new Tip("Bevel", "In Edges mode, select edges with a face on each side. Width is the distance cut back on each side, in millimetres. Bevel adds one flat strip across each corner. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Bevel width (mm)", bevelMm, 1, 500, Ui.FloatCallback(v => bevelMm = MathF.Round(v)));
         ui.Button("Bevel (V)", Ui.Callback(() => Bevel(__instance)), bevelTip);
-        var smoothTip = new Tip("Smooth Edge", "In Edges mode, select edges with a face on each side. Width sets the distance cut back on each side, in millimetres. More segments make the curve smoother. Mirror applies; Ctrl+Z undoes the edit.");
-        ui.Slider("Smooth width (mm)", smoothMm, 1, 500, Ui.FloatCallback(v => smoothMm = MathF.Round(v)));
+        var smoothTip = new Tip("Smooth Edge", "In Edges mode, select edges with a face on each side. Smooth (mm) sets the distance cut back on each side. More segments make the curve smoother. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Slider("Smooth (mm)", smoothMm, 1, 500, Ui.FloatCallback(v => smoothMm = MathF.Round(v)));
         ui.Slider("Smooth segments", smoothSegments, 2, 16, Ui.FloatCallback(v => smoothSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button("Smooth Edge", Ui.Callback(() => SmoothEdge(__instance)), smoothTip);
         var filletTip = new Tip("Fillet", "In Edges mode, select corners between two flat faces. Radius is the size of the circular curve, in millimetres; more segments make it smoother. Reduce the radius if it cannot fit. Mirror applies; Ctrl+Z undoes the edit.");
-        ui.Slider("Fillet radius (mm)", filletRadiusMm, 1, 500, Ui.FloatCallback(v => filletRadiusMm = MathF.Round(v)));
+        ui.Slider("Radius (mm)", filletRadiusMm, 1, 500, Ui.FloatCallback(v => filletRadiusMm = MathF.Round(v)));
         ui.Slider("Fillet segments", filletSegments, 2, 16, Ui.FloatCallback(v => filletSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button("Fillet", Ui.Callback(() => Fillet(__instance)), filletTip);
         Ui.Section(layout, "Subdivision");
@@ -1813,9 +1813,10 @@ public static class MeshTools
         var flatTip = new Tip("Select linked flat", "In Faces mode, select a starting face. Adds connected faces within the angle below. A smaller angle follows flatter surfaces; a larger angle also follows gentle bends. Mirror applies.");
         ui.Slider("Flat angle (°)", flatAngle, 0.5f, 30, Ui.FloatCallback(v => flatAngle = MathF.Round(v * 2) / 2));
         ui.Button("Select linked flat (U)", Ui.Callback(() => SelectFlat(__instance)), flatTip);
-        ui.ToggleField("Proportional (O)", proportional, Ui.BoolCallback(v => proportional = v),
-            "When moving, scaling or rotating selected points, nearby points follow. Influence fades to zero at the radius below. Mirror applies; Ctrl+Z undoes the move.");
-        ui.Slider("Influence radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
+        // Labels fit the game's label column (about 14 characters); the tooltip says the rest.
+        ui.ToggleField("Proportional", proportional, Ui.BoolCallback(v => proportional = v),
+            $"Proportional editing ({Keybinds.Shown("proportional")}): when moving, scaling or rotating selected points, nearby points follow. Influence fades to zero at the radius below. Mirror applies; Ctrl+Z undoes the move.");
+        ui.Slider("Radius (mm)", radiusMm, 10, 5000, Ui.FloatCallback(v => radiusMm = MathF.Round(v)));
         ui.ToggleField("0.5 mm grid", halfGrid, Ui.BoolCallback(v =>
         {
             halfGrid = v;
@@ -1831,7 +1832,7 @@ public static class MeshTools
         ui.InfoField("Bridge: select two open edge chains in Edges mode.\nCircle: select points around a loop.", 2);
         var bridgeTip = new Tip("Bridge", "In Edges mode, select two open edge chains or two loops with the same number of points. Bridge joins them with faces. Cuts adds rows between the chains. Smoothness 0 gives a straight join; 100 follows the adjoining surfaces into a curve. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Bridge cuts", bridgeCuts, 0, 32, Ui.FloatCallback(v => bridgeCuts = (int)Math.Round(v)));
-        ui.Slider("Bridge smoothness (%)", bridgeSmooth, 0, 200, Ui.FloatCallback(v => bridgeSmooth = MathF.Round(v)));
+        ui.Slider("Smoothness (%)", bridgeSmooth, 0, 200, Ui.FloatCallback(v => bridgeSmooth = MathF.Round(v)));
         ui.Button("Bridge selected edges", Ui.Callback(() => Bridge(__instance)), bridgeTip);
         var circleTip = new Tip("Circle", "In Points mode, select at least three points around a loop. Circle spaces them evenly on a flat circle around their centre. To make a smoother circle, add more points with Loop cut first. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Button("Circle selected points", Ui.Callback(() => Circle(__instance)), circleTip);
@@ -1841,14 +1842,14 @@ public static class MeshTools
         var fixTip = new Tip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
             "that near the middle go onto it, so the editor's Mirror moves them together again. Selected points only, or the whole shape if none are selected. " +
             "Points left with no mirror image are selected afterwards: the two sides differ there (merged, split or filled on one side only).");
-        ui.Slider("Pair distance (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
+        ui.Slider("Pair gap (mm)", mirrorMm, 0.5f, 50, Ui.FloatCallback(v => mirrorMm = MathF.Round(v * 2) / 2));
         ui.Button(KeepNames[(int)mirrorKeep], Ui.Callback(() => { mirrorKeep = (MeshPlans.MirrorKeep)(((int)mirrorKeep + 1) % KeepNames.Length); __instance.RequestRedraw(); }), fixTip);
         ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), fixTip);
-        ui.ToggleField("Mirror point merges (M)", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
+        ui.ToggleField("Mirror merges", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
             "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
 
         Ui.Section(layout, "View and lighting");
-        ui.ToggleField("Part mass markers", MassMarkers.PartMarkersShown, Ui.BoolCallback(v =>
+        ui.ToggleField("Mass markers", MassMarkers.PartMarkersShown, Ui.BoolCallback(v =>
         {
             MassMarkers.SetPartMarkersShown(v);
             __instance.RequestRedraw();
@@ -1858,24 +1859,24 @@ public static class MeshTools
         ui.InfoField($"{Keybinds.Shown("ortho")}: orthographic view.\n{Keybinds.Shown("shadows")} shadows, {Keybinds.Shown("flashlight")} flashlight, {Keybinds.Shown("fullbright")} fullbright.", 2);
         ui.ToggleField("Zoom in close", closeZoom, Ui.BoolCallback(v => closeZoom = v),
             "Lets the camera move close to small parts for detailed editing.");
-        ui.ToggleField("Ortho: straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
+        ui.ToggleField("Straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
             $"Orthographic view snaps to front, back, sides or top (orbiting flips between them). {Keybinds.Shown("front")} / {Keybinds.Shown("side")} / {Keybinds.Shown("top")}: front, side, top; " +
             "with Ctrl, back and the other side. Off: orbit freely.");
         ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100));
         var backTip = new Tip("Orthographic backdrop", "Click to cycle backgrounds. Scene keeps the sky and map; grey, white and black show only the vehicle on a plain background. Applies in orthographic view.");
         ui.Button(BackdropNames[backdrop], Ui.Callback(() => { backdrop = (backdrop + 1) % BackdropNames.Length; __instance.RequestRedraw(); }), backTip);
-        ui.ToggleField("Ortho: whole view", orthoWhole, Ui.BoolCallback(v =>
+        ui.ToggleField("Whole view", orthoWhole, Ui.BoolCallback(v =>
         {
             orthoWhole = v;
             if (!v && ortho) { var cam = Camera.main; if (cam != null && orbit != null) cam.transform.position = orbit.AppliedPosition; }
         }), $"Orthographic view ({Keybinds.Shown("ortho")}): the camera steps back so it never cuts into the vehicle when you zoom in close. " +
             "Off: it stays where the game puts it, and zooming in close shows the inside.");
-        ui.ToggleField("Ortho: measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
+        ui.ToggleField("Measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
             "Orthographic view, looking straight from the front, back, side or top: the vehicle's overall size across the screen " +
             "(under it) and up the screen (beside it), to the centimetre. Antennas aren't counted.");
         ui.InfoField("Light strength is relative to the scene's sunlight.", 1);
-        ui.Slider("Flashlight strength (%)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
-        ui.Slider("Fullbright strength (%)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
+        ui.Slider("Flashlight (%)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
+        ui.Slider("Fullbright (%)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
         {
             if (Plugin.FullbrightPercent != null) Plugin.FullbrightPercent.Value = MathF.Round(v);
             FillBrightness();

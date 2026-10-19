@@ -245,8 +245,8 @@ public sealed class DriveSim
     /// Full throttle from a standstill, the way the game's driver does it: first gear engaged at idle, revved to the
     /// operating speed, clutch in; then up a gear each time the engine passes the upshift speed (if the next gear can
     /// still pull), the clutch out at 4/s while the throttle matches the engine to the sprocket in the next gear, and back
-    /// in at 4/s. Stops once the speed settles (or after `seconds`).
-    public static List<Point> Accelerate(Vehicle v, float seconds = 300)
+    /// in at 4/s. Stops once the speed settles, reaches `stopAt` (m/s), or after `seconds`.
+    public static List<Point> Accelerate(Vehicle v, float seconds = 300, float stopAt = float.PositiveInfinity)
     {
         var sim = new DriveSim(v) { Gear = 0, GearState = 0, Throttle = 0.02f };
         var top = v.Gears.Select(r => TopSpeed(v, r).Speed).ToArray();
@@ -298,6 +298,7 @@ public sealed class DriveSim
             float before = sim.Speed;
             sim.Step(clutch, clutchSpeed);
             points.Add(new(sim.Time, sim.Speed, sim.EngineSpeed, sim.ActiveGear));
+            if (sim.Speed >= stopAt) break;
             // Settled: in drive, gaining less than 0.01 km/h a second for 2 s.
             settledFor = phase == "drive" && (sim.Speed - before) / dt < 0.01f / 3.6f ? settledFor + dt : 0;
             if (settledFor >= 2 || (phase == "drive" && sim.Time > 5 && sim.Speed < 0.01f)) break;

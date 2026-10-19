@@ -48,9 +48,13 @@ public static class Hotkeys
     static IntPtr planeFor;          // the move or scale that Shift + axis locked to two axes
     static ConstraintMode planeMode;
 
+    /// The last frame a move, turn or scale ran (the right-click menu doesn't open over one).
+    internal static int TransformFrame = -10;
+
     [HarmonyPostfix, HarmonyPatch(typeof(Transformation), nameof(Transformation.Update))]
     static void PlaneLock(Transformation __instance) => Ui.Guard("Axis lock", () =>
     {
+        TransformFrame = Time.frameCount;
         EnsureControls();
         if (controls == null || __instance.input?.TryCast<WindingInput>() != null) return; // rotating: two axes mean nothing
         // The game's three axis keys, looked up once (this runs every frame of a move).
@@ -226,6 +230,15 @@ public static class Hotkeys
         found.Add($"Capture: {K("photo")}  Photo (photo mode)   |   {K("drawing")}  Drawing sheet");
         found.Add($"Models: {K("obj")}  OBJ export / import menu   |   {K("menu")}  QoL settings and keys");
         return found;
+    }
+
+    /// The game's key for one of its designer actions ("Core/Duplicate"), as its hint bar shows it, or "".
+    internal static string GameKey(string action)
+    {
+        EnsureControls();
+        return controls?.FindAction(action, false) is { } found
+               && InputActionRebindingExtensions.GetBindingDisplayString(found, default(InputBinding.DisplayStringOptions), (string?)null) is { Length: > 0 } key
+            ? key.Replace("Control", "Ctrl") : "";
     }
 
     /// The editor's control set (the game builds it from its DesignerControls layout).

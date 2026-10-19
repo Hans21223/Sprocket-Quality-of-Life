@@ -76,12 +76,12 @@ static class CutTests
     static readonly Matrix4x4 Side = Matrix4x4.CreateRotationZ(1.2f) * Matrix4x4.CreateTranslation(0.45f, 0.5f, 0.1f);
 
     /// A 1 m tall box (20 mm plate) cut by `tool`; returns the box's mesh data, the result and the plate area removed.
-    static (JsonObject Box, MeshCut.Result Result, double Removed) CutBox(string what, MeshCut.Solid tool, bool pocket, Action<JsonObject>? prepare = null, Fill.Mode fill = Fill.Mode.Fewest)
+    static (JsonObject Box, MeshCut.Result Result, double Removed) CutBox(string what, MeshCut.Solid tool, bool pocket, Action<JsonObject>? prepare = null, Fill.Mode fill = Fill.Mode.Fewest, bool keepInside = false)
     {
         var (box, _) = AddonEdits.Cylinder(0.5f, 1f, 4, 20);
         prepare?.Invoke(box);
         double before = MeshArea(box["mesh"]!.AsObject());
-        var result = MeshCut.Cut(box, new[] { tool }, pocket, fill);
+        var result = MeshCut.Cut(box, new[] { tool }, pocket, fill, keepInside);
         CheckMesh(box["mesh"]!.AsObject(), what, 0);
         return (box, result, before - MeshArea(box["mesh"]!.AsObject()));
     }
@@ -125,6 +125,27 @@ static class CutTests
         double expect = -2 * Hole16 * 20 / 1000.0 * (floors == 1 ? 0.5 : 1) + (Rim16 * depth + (floors == 1 ? Hole16 : 0)) * 7 / 1000.0;
         Check(Math.Abs(result.ArmourChange - expect) < 1e-5, $"{what}: armour volume counts the new walls ({result.ArmourChange:0.000000} vs {expect:0.000000})");
         Console.WriteLine($"  {what}: {result.PocketFaces} pocket plates, {MeshFaces(mesh).Count(f => f.Length == 4)} quads, {MeshFaces(mesh).Count(f => f.Length == 3)} triangles");
+    }
+
+    /// Keep only the overlap (the opposite cut): the box keeps just the piece inside the add-on, closed by the add-on's
+    /// surface with the add-on's armour; an add-on that misses the box changes nothing.
+    static void CheckOverlap()
+    {
+        var (fresh, _) = AddonEdits.Cylinder(0.5f, 1f, 4, 20);
+        double boxArea = MeshArea(fresh["mesh"]!.AsObject());
+        var (box, result, _) = CutBox("keep the overlap", SolidOf(Tool16, p => Vector3.Transform(p, Top), thickness: 7), false, keepInside: true);
+        var mesh = box["mesh"]!.AsObject();
+        var directed = new HashSet<(int, int)>();
+        foreach (var f in MeshFaces(mesh)) for (int k = 0; k < f.Length; k++) Check(directed.Add((f[k], f[(k + 1) % f.Length])), "keep the overlap: faces agree which way they face");
+        Check(directed.All(d => directed.Contains((d.Item2, d.Item1))), "keep the overlap: what's left is closed (no gaps, no cracks)");
+        Check(Math.Abs(Volume(mesh) - Hole16 * 0.2) < 1e-4, $"keep the overlap: exactly the overlap's volume is left ({Volume(mesh):0.00000} vs {Hole16 * 0.2:0.00000})");
+        Check(MeshVerts(mesh).All(p => Vector3.Distance(new Vector3(p.X, 0, p.Z), new Vector3(0.05f, 0, 0.02f)) < 0.1f + 1e-4f && p.Y > 0.8f - 1e-4f && p.Y < 1 + 1e-4f),
+              "keep the overlap: nothing is left outside the add-on");
+        double expect = (Hole16 * 20 + (Rim16 * 0.2 + Hole16) * 7) / 1000.0 - boxArea * 20 / 1000.0;
+        Check(result.PocketFaces > 0 && Math.Abs(result.ArmourChange - expect) < 1e-5, $"keep the overlap: the add-on's surface closes it with its armour ({result.ArmourChange:0.000000} vs {expect:0.000000})");
+        var (_, missed, _) = CutBox("keep the overlap, add-on elsewhere", SolidOf(Tool16, p => p + new Vector3(5, 5, 5)), false, keepInside: true);
+        Check(missed.FacesCut == 0, "keep the overlap: an add-on that misses the box changes nothing");
+        Console.WriteLine($"  keep the overlap: {result.FacesCut} faces changed, {result.PocketFaces} plates from the add-on, {MeshFaces(mesh).Count} faces left");
     }
 
     /// The fill on its own: a square with a round hole, and a many-sided polygon. Faces must exactly cover the region.
@@ -370,7 +391,7 @@ static class CutTests
         {
             if (o["structureBlueprintVuid"] is not JsonValue id) continue;
             var md = AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), id.GetValue<int>())["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!;
-            var m = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world[v] : world[v];
+            var m = AddonEdits.Shape(o, world[v]);
             var vs = MeshVerts(md["mesh"]!.AsObject());
             var faces = MeshFaces(md["mesh"]!.AsObject());
             // A part saved once and shown twice (mirrored mark, no twin part) shows its image too, across the centre.
@@ -459,7 +480,7 @@ static class CutTests
             var o = Conversion.Objects(b)[v];
             var w = Conversion.WorldMatrices(Conversion.Objects(b))[v];
             var md = AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), o["structureBlueprintVuid"]!.GetValue<int>())["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!;
-            var m = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * w : w;
+            var m = AddonEdits.Shape(o, w);
             return MeshVerts(md["mesh"]!.AsObject()).Select(p => Vector3.Transform(p, m)).ToList();
         }
         bool HoleAt(string json, int part, int cutterPart)
@@ -476,6 +497,164 @@ static class CutTests
             Check(Mirror(cut.DesignJson, 2) == 3 && cut.Remove.OrderBy(x => x).SequenceEqual(new[] { 9, 10 }), "mirrored cut: the pair stays linked, both cutters go");
             Check(HoleAt(cut.DesignJson, 2, 9) && HoleAt(cut.DesignJson, 3, 10), "mirrored cut: each side has its hole where its cutter was");
             Check(SamePoints(Mirrored(Shown(cut.DesignJson, 2)), Shown(cut.DesignJson, 3)), "mirrored cut: the sides are mirror images");
+        }
+        {
+            // Set origin (Blender's Origin to Geometry) on a mirror pair: the origin goes to the middle of the shared shape;
+            // no shape and no part moves.
+            var origin = AddonEdits.PlanOrigin(design, 2);
+            Check(SamePoints(WorldPoints(design), WorldPoints(origin.DesignJson)), $"set origin: every shape shows where it did ({origin.Summary})");
+            var after = Conversion.Parse(origin.DesignJson);
+            var verts = MeshVerts(AddonEdits.MeshOf(after["meshes"]!.AsArray(), AddonEdits.MeshIdOf(origin.DesignJson, 2))!["mesh"]!.AsObject());
+            Check(((verts.Aggregate(Vector3.Min) + verts.Aggregate(Vector3.Max)) / 2).Length() < 1e-4f && origin.MeshIds.Keys.OrderBy(x => x).SequenceEqual(new[] { 2, 3 }),
+                  "set origin: the shape's middle is the origin now, for both twins");
+            Check(Mirror(origin.DesignJson, 2) == 3, "set origin: the pair stays linked");
+
+            // A Flipped add-on of its own (11, no twin; its box is off its centre) shows as saved, not mirrored: its origin
+            // moves without the shape moving (read as mirrored, the shape jumped twice the box's offset).
+            var flipped = Conversion.Parse(design);
+            Conversion.Objects(flipped)[11]["flags"] = 3;
+            string alone = flipped.ToJsonString();
+            var originAlone = AddonEdits.PlanOrigin(alone, 11);
+            Check(SamePoints(WorldPoints(alone), WorldPoints(originAlone.DesignJson)), $"set origin on a Flipped add-on of its own: its shape stays put ({originAlone.Summary})");
+        }
+        {
+            // Drape as cloth: the mirrored add-on pair becomes one sheet of cloth (shared by the twins), a valid mesh that
+            // starts at the add-on's top and settles no lower than the lowest plate; nothing else moves.
+            var cloth = AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f));
+            var after = Conversion.Parse(cloth.DesignJson);
+            var mesh = AddonEdits.MeshOf(after["meshes"]!.AsArray(), AddonEdits.MeshIdOf(cloth.DesignJson, 9))!["mesh"]!.AsObject();
+            CheckMesh(mesh, "drape as cloth", 0);
+            Check(cloth.MeshIds.Keys.OrderBy(x => x).SequenceEqual(new[] { 9, 10 }) && MeshFaces(mesh).All(f => f.Length == 4) && MeshFaces(mesh).Count >= 4,
+                  $"drape as cloth: the twins share one sheet of quads ({cloth.Summary})");
+            var lowest = Conversion.Objects(Conversion.Parse(design)).Keys.Where(v => v is not 9 and not 10).SelectMany(v => { try { return Shown(design, v); } catch { return new List<Vector3>(); } }).Min(q => q.Y);
+            Check(Shown(cloth.DesignJson, 9).All(q => float.IsFinite(q.X) && q.Y >= lowest - 1e-3f) && Shown(cloth.DesignJson, 9).Max(q => q.Y) <= Shown(design, 9).Max(q => q.Y) + 1e-3f,
+                  "drape as cloth: it falls from the add-on's top and stops at the lowest plate");
+            var unmoved = Conversion.Objects(Conversion.Parse(design)).Keys.Where(v => v is not 9 and not 10).ToList();
+            Check(unmoved.All(v => { try { return SamePoints(Shown(design, v), Shown(cloth.DesignJson, v)); } catch { return true; } }), "drape as cloth: no other shape changes");
+
+            // As a net: each cell is 4 quads round a hole 60% as wide, so about 1 - 0.6² of the cloth's area is left.
+            JsonObject SheetOf(AddonEdits.EditPlan p) => AddonEdits.MeshOf(Conversion.Parse(p.DesignJson)["meshes"]!.AsArray(), AddonEdits.MeshIdOf(p.DesignJson, 9))!["mesh"]!.AsObject();
+            var net = AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f, Hole: 0.6f));
+            CheckMesh(SheetOf(net), "drape as a net", 0);
+            double share = MeshArea(SheetOf(net)) / MeshArea(mesh);
+            Check(MeshFaces(SheetOf(net)).Count == 4 * MeshFaces(mesh).Count && MeshFaces(SheetOf(net)).All(f => f.Length == 4) && share > 0.55 && share < 0.72,
+                  $"drape as a net: 4 quads a cell, {share:P0} of the cloth's area ({net.Summary})");
+
+            // Lands on: only pair 2/3 (named by 2: twins count together) or everything but it. Below 2 there's nothing
+            // but the floor, so without 2 the cloth falls to the lowest plate left.
+            var lowOf2 = Shown(design, 2).Min(q => q.Y);
+            var only = AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f, LandsOn: AddonEdits.LandsOn.Only, Parts: new[] { 2 }));
+            var allBut = AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f, LandsOn: AddonEdits.LandsOn.AllBut, Parts: new[] { 2 }));
+            Check(Shown(only.DesignJson, 9).Min(q => q.Y) >= lowOf2 - 1e-3f && Shown(allBut.DesignJson, 9).Max(q => q.Y) < lowOf2,
+                  $"drape lands on: only part 2 holds it above 2's bottom ({Shown(only.DesignJson, 9).Min(q => q.Y):0.000} >= {lowOf2:0.000}), all but 2 lets it fall past ({Shown(allBut.DesignJson, 9).Max(q => q.Y):0.000})");
+
+            // A part the design has no shape for (a hatch, a track) catches it as the box the game shows it in: a wide slab
+            // under the add-on's top holds every point above it.
+            float slabTop = (lowest + Shown(design, 9).Max(q => q.Y)) / 2;
+            var s = new[] { new Vector3(-10, slabTop - .1f, -10), new Vector3(10, slabTop - .1f, -10), new Vector3(10, slabTop - .1f, 10), new Vector3(-10, slabTop - .1f, 10),
+                            new Vector3(-10, slabTop, -10), new Vector3(10, slabTop, -10), new Vector3(10, slabTop, 10), new Vector3(-10, slabTop, 10) };
+            var slab = new[] { (4, 7, 6, 5), (0, 1, 2, 3), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0) }
+                .SelectMany(q => new[] { (s[q.Item1], s[q.Item2], s[q.Item3]), (s[q.Item1], s[q.Item3], s[q.Item4]) }).ToList();
+            var onBox = AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f), boxes: new Dictionary<int, List<(Vector3, Vector3, Vector3)>> { [999] = slab });
+            Check(Shown(onBox.DesignJson, 9).Min(q => q.Y) >= slabTop - 1e-3f, $"drape: a game part's box holds the cloth up ({Shown(onBox.DesignJson, 9).Min(q => q.Y):0.000} >= {slabTop:0.000})");
+            bool refused = false;
+            try { AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(LandsOn: AddonEdits.LandsOn.Only)); } catch (Exception ex) { refused = ex.Message.StartsWith("None of the selected parts"); }
+            Check(refused, "drape lands on only the selected parts, none selected: refused");
+            refused = false;
+            try { AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.001f)); } catch (Exception ex) { refused = ex.Message.Contains("points; at most"); }
+            Check(refused, $"a sheet over {AddonEdits.MaxClothPoints} points is refused before the game would stop for long");
+        }
+        {
+            // The mirror side made real. Part 13 is shown twice (no twin): its image becomes an add-on of its own with its
+            // own copy of the shape, the points mirrored (a part of its own isn't shown mirrored, Flipped or not), and so
+            // does the image of 14 (shown twice, on 13), attached to the new one; 13 and 14 are shown once, plain 15 is
+            // left alone. The shapes are off-centre, so every shape showing where it did means none is mirrored wrongly.
+            var real = AddonEdits.PlanRealMirror(design, 13);
+            int added = real.Focus;
+            var onAdded = Conversion.Objects(Conversion.Parse(real.DesignJson)).Where(kv => kv.Value["pvuid"]!.GetValue<int>() == added).Select(kv => kv.Key).ToList();
+            Check(added > 15 && SamePoints(WorldPoints(design), WorldPoints(real.DesignJson)) && !real.Live, $"mirror side made real: nothing moves ({real.Summary})");
+            Check(Flags(real.DesignJson, 13) == 2 && Flags(real.DesignJson, added) == 2 && Mirror(real.DesignJson, added) == -1 && Obj(real.DesignJson, added)["pvuid"]!.GetValue<int>() == 1
+                  && AddonEdits.MeshIdOf(real.DesignJson, added) != AddonEdits.MeshIdOf(real.DesignJson, 13), "mirror side made real: an unflipped add-on of its own, on the same parent, its own mirrored shape");
+            Check(onAdded.Count == 1 && Flags(real.DesignJson, 14) == 2 && Flags(real.DesignJson, onAdded[0]) == 2 && Flags(real.DesignJson, 15) == 2
+                  && Conversion.Objects(Conversion.Parse(real.DesignJson)).Count == Conversion.Objects(Conversion.Parse(design)).Count + 2,
+                  "mirror side made real: the image of the add-on on it comes along, attached to the new add-on");
+            // Twins 2/3: no longer a pair, each its own shape; flipped 3 (shown mirrored as a twin) gets its points mirrored
+            // and loses the mark. Nothing moves.
+            var pair = AddonEdits.PlanRealMirror(design, 2);
+            Check(SamePoints(WorldPoints(design), WorldPoints(pair.DesignJson)) && Mirror(pair.DesignJson, 2) == -1 && Mirror(pair.DesignJson, 3) == -1
+                  && Flags(pair.DesignJson, 2) == 2 && Flags(pair.DesignJson, 3) == 2 && AddonEdits.MeshIdOf(pair.DesignJson, 2) != AddonEdits.MeshIdOf(pair.DesignJson, 3),
+                  $"mirror twins made real: unlinked, each its own shape, nothing moves ({pair.Summary})");
+            bool refused = false;
+            try { AddonEdits.PlanRealMirror(design, 8); } catch { refused = true; }
+            Check(refused, "mirror side made real: an add-on that isn't mirrored is refused");
+        }
+        {
+            // Scatter add-ons 8 and 12 (12 is shown twice) over the hull's top: copies on the hull, each standing on the top
+            // face (the types stand upright: lowest point 10 mm plates + 1 mm above it), inside its outline, once each.
+            var scatter = AddonEdits.PlanScatter(design, 1, new[] { 8, 12 }, 30, 1, upOnly: true);
+            var b = Conversion.Parse(scatter.DesignJson);
+            var copies = Conversion.Objects(b).Where(kv => kv.Key > 15).Select(kv => kv.Key).ToList();
+            var world = Conversion.WorldMatrices(Conversion.Objects(b));
+            Check(copies.Count == 30 && copies.All(v => Obj(scatter.DesignJson, v)["pvuid"]!.GetValue<int>() == 1 && (Flags(scatter.DesignJson, v) & 4) == 0 && Mirror(scatter.DesignJson, v) == -1)
+                  && copies.Select(v => Obj(scatter.DesignJson, v)["structureBlueprintVuid"]!.GetValue<int>()).Distinct().OrderBy(x => x).SequenceEqual(new[] { 13, 15 }),
+                  $"scatter: 30 copies of both types on the hull, each shown once ({scatter.Summary})");
+            Check(copies.All(v => Math.Abs(Shown(scatter.DesignJson, v).Min(q => q.Y) - 0.211f) < 1e-3f
+                                  && Vector2.Distance(new(world[v].Translation.X, world[v].Translation.Z), new(0.15f, 0)) <= 0.8f + 1e-3f),
+                  "scatter: every copy stands on the hull's top, inside its outline");
+            Check(AddonEdits.PlanScatter(design, 1, new[] { 8, 12 }, 30, 1, upOnly: true).DesignJson == scatter.DesignJson
+                  && AddonEdits.PlanScatter(design, 1, new[] { 8, 12 }, 30, 2, upOnly: true).DesignJson != scatter.DesignJson, "scatter: the same seed spreads them the same way, another seed differently");
+            var anywhere = AddonEdits.PlanScatter(design, 1, new[] { 8 }, 60, 3, upOnly: false);
+            var spread = Conversion.Objects(Conversion.Parse(anywhere.DesignJson)).Keys.Where(v => v > 15).ToList();
+            Check(spread.Any(v => Shown(anywhere.DesignJson, v).Min(q => q.Y) < 0.2f), "scatter on every face: some copies land on the sides or underneath");
+            bool refused = false;
+            try { AddonEdits.PlanScatter(design, 1, new[] { 1 }, 5, 1, true); } catch { refused = true; }
+            Check(refused, "scatter with no add-ons to copy: refused");
+            foreach (var n in new[] { Vector3.UnitY, -Vector3.UnitY, Vector3.UnitX, Vector3.Normalize(new Vector3(1, 2, -3)) })
+                Check(Vector3.Distance(Vector3.TransformNormal(Vector3.UnitY, AddonEdits.Upright(n)), n) < 1e-4f, $"scatter: up turns to {n}");
+        }
+        {
+            // Union: cutter pair 9/10 joins pair 2/3. Each side becomes one closed shape, the outside of both: 2's volume
+            // plus 9's less their overlap (what keep-the-overlap leaves), its seam joined. The pair stays a pair.
+            JsonObject ShapeMesh(string json, int v) => AddonEdits.MeshOf(Conversion.Parse(json)["meshes"]!.AsArray(), AddonEdits.MeshIdOf(json, v))!["mesh"]!.AsObject();
+            var overlap = AddonEdits.PlanCut(design, 9, new[] { 2 }, false, false, keepInside: true);
+            double expected = Volume(ShapeMesh(design, 2)) + Volume(ShapeMesh(design, 9)) - Volume(ShapeMesh(overlap.DesignJson, 2));
+            var union = AddonEdits.PlanUnion(design, 9, new[] { 2 });
+            var joined = ShapeMesh(union.DesignJson, 2);
+            CheckMesh(joined, "union", 0);
+            Check(Math.Abs(Volume(joined) - expected) < 0.01 * expected && union.Remove.OrderBy(x => x).SequenceEqual(new[] { 9, 10 })
+                  && Mirror(union.DesignJson, 2) == 3 && AddonEdits.MeshIdOf(union.DesignJson, 3) == AddonEdits.MeshIdOf(union.DesignJson, 2),
+                  $"union: one shape for the pair, volume {Volume(joined):0.000000} = 2 + 9 - overlap {expected:0.000000} ({union.Summary})");
+            var sideList = MeshFaces(joined).SelectMany(f => f.Select((v, k) => (v, f[(k + 1) % f.Length]))).ToHashSet();
+            int unwelded = sideList.Count(s => !sideList.Contains((s.Item2, s.Item1)));
+            Check(AddonEdits.OpenEdges(MeshVerts(joined), MeshFaces(joined)) == 0 && unwelded == 0,
+                  $"union: closed, the seam welded ({AddonEdits.OpenEdges(MeshVerts(joined), MeshFaces(joined))} open, {unwelded} sides without a partner by point number)");
+            Check(union.OldFaces[2] == AddonEdits.FaceCounts(design)[2], "union: in place checks the faces the running game still has");
+
+            // Slice in two: 2/3 keep what's outside 9/10 (a recess), a new mirror pair gets the inside; together they are 2.
+            var slice = AddonEdits.PlanSlice(design, 9, new[] { 2 }, removeCutter: true);
+            int piece = slice.Focus;
+            var outsideMesh = ShapeMesh(slice.DesignJson, 2);
+            var insideMesh = ShapeMesh(slice.DesignJson, piece);
+            CheckMesh(outsideMesh, "slice: outside", 0);
+            CheckMesh(insideMesh, "slice: inside", 0);
+            double whole = Volume(ShapeMesh(design, 2));
+            int pieceTwin = Mirror(slice.DesignJson, piece);
+            Check(Math.Abs(Volume(outsideMesh) + Volume(insideMesh) - whole) < 0.01 * whole && Volume(insideMesh) > 0.001 * whole
+                  && pieceTwin > 15 && Mirror(slice.DesignJson, pieceTwin) == piece && !slice.Live && !Conversion.Objects(Conversion.Parse(slice.DesignJson)).ContainsKey(9),
+                  $"slice: outside {Volume(outsideMesh):0.000000} + inside {Volume(insideMesh):0.000000} = {whole:0.000000}, the piece a mirror pair, the cutter gone ({slice.Summary})");
+            bool refused = false;
+            try { AddonEdits.PlanUnion(design, 9, new[] { 2, 8 }); } catch (Exception ex) { refused = ex.Message.StartsWith("Select only one"); }
+            Check(refused, "union with two other shapes selected: refused");
+        }
+        {
+            // Keep only the overlap with the same mirrored cutters: each side keeps only what's inside its cutter.
+            var kept = AddonEdits.PlanCut(design, 9, System.Array.Empty<int>(), true, false, keepInside: true);
+            Check(kept.MeshIds.Keys.OrderBy(x => x).SequenceEqual(new[] { 2, 3 }) && kept.Live && kept.Summary.StartsWith("Kept only the overlap"), $"mirrored overlap: the pair changes once, in place ({kept.Summary})");
+            Check(SamePoints(Mirrored(Shown(kept.DesignJson, 2)), Shown(kept.DesignJson, 3)), "mirrored overlap: the sides are mirror images");
+            var reach = Shown(design, 9);
+            Vector3 min = reach.Aggregate(Vector3.Min) - new Vector3(1e-3f), max = reach.Aggregate(Vector3.Max) + new Vector3(1e-3f);
+            Check(Shown(kept.DesignJson, 2).All(p => p.X >= min.X && p.Y >= min.Y && p.Z >= min.Z && p.X <= max.X && p.Y <= max.Y && p.Z <= max.Z),
+                  "mirrored overlap: nothing of the part is left outside its cutter");
         }
         {
             // One cutter on the flipped side of a pair: the shared shape is cut, so both sides show it; marks untouched.
@@ -502,9 +681,11 @@ static class CutTests
             var design2 = Conversion.Parse(design);
             var c15 = Conversion.Objects(design2)[15];
             var flip = Matrix4x4.CreateScale(-1, 1, 1);
-            c15["pvuid"] = 1; // on the hull, flipped, its shape the mirror image of where it was
-            Conversion.WriteTransform(c15["transform"]!.AsObject(), flip * Conversion.WorldMatrices(Conversion.Objects(Conversion.Parse(design)))[15] * flip);
-            c15["flags"] = 3;
+            // On the hull, its shape the mirror image of where it was. A part of its own isn't shown mirrored for Flipped, so
+            // the prism is turned onto its mirror image instead: it's symmetric across its own z = 0 (a corner on that line).
+            c15["pvuid"] = 1;
+            Conversion.WriteTransform(c15["transform"]!.AsObject(), Matrix4x4.CreateScale(1, 1, -1) * Conversion.WorldMatrices(Conversion.Objects(Conversion.Parse(design)))[15] * flip);
+            c15["flags"] = 2;
             var viaImage = AddonEdits.PlanCut(design2.ToJsonString(), 15, new[] { 13 }, true, false);
             Check(viaImage.MeshIds.Keys.SequenceEqual(new[] { 13 }) && Flags(viaImage.DesignJson, 13) == 6 && Shown(viaImage.DesignJson, 13).Count > Shown(design, 13).Count,
                   "a cutter where the image shows cuts the shared shape too");
@@ -599,9 +780,54 @@ static class CutTests
         throw new Exception("found no turret to mirror in the saved designs");
     }
 
+    /// Real tanks: every add-on one shows twice (flipped, rotated and nested ones) and 20 mirror twin pairs of another
+    /// made real, and add-ons scattered over each hull. Each plan checks that nothing moves and the new parts show where
+    /// planned; here the designs must also keep every reference sound.
+    static void CheckRealMirrorScatter(Action<JsonObject, string> checkRefs)
+    {
+        if (Backup("20260925-085555-09f0f542") is not { } shownTwice || Backup("20260926-135837-0f046d78") is not { } twins)
+        {
+            Console.WriteLine("  (real mirror side and scatter skipped: set SPROCKET_QOL_BACKUPS)");
+            return;
+        }
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        int images = 0, pairs = 0;
+        foreach (var (file, wantImage, most) in new[] { (shownTwice, true, int.MaxValue), (twins, false, 20) })
+        {
+            string json = File.ReadAllText(file.FullName);
+            var objects = Conversion.Objects(Conversion.Parse(json));
+            bool Linked(JsonObject o) => o["transform"]!["mirrorVuid"]!.GetValue<int>() is int t && t != o["vuid"]!.GetValue<int>() && objects.ContainsKey(t);
+            var picks = objects.Where(kv => Conversion.GuidOf(kv.Value) == Conversion.AddonGuid && (wantImage ? (kv.Value["flags"]!.GetValue<int>() & 4) != 0 && !Linked(kv.Value) : Linked(kv.Value)))
+                               .Select(kv => kv.Key).Take(most).ToList();
+            Check(picks.Count > 0, $"real mirror side: {file.Directory!.Name} has mirrored add-ons");
+            foreach (int v in picks)
+            {
+                var plan = AddonEdits.PlanRealMirror(json, v);
+                checkRefs(Conversion.Parse(plan.DesignJson), $"real mirror side of {v}");
+                if (wantImage) images++; else pairs++;
+            }
+            // The first tank's hull is one floor plate facing down (nothing looks up), so its copies go on every face.
+            var hull = objects.Single(kv => kv.Value["pvuid"]!.GetValue<int>() < 0).Key;
+            var scatter = AddonEdits.PlanScatter(json, hull, picks.Take(2), 100, 7, upOnly: !wantImage);
+            var after = Conversion.Parse(scatter.DesignJson);
+            checkRefs(after, "real scatter");
+            Check(Conversion.Objects(after).Count == objects.Count + 100, $"real scatter: 100 copies on {file.Directory!.Name} ({scatter.Summary})");
+        }
+        Console.WriteLine($"  real mirror side: {images} images and {pairs} twin pairs made real, 2 scatters, {clock.ElapsedMilliseconds} ms");
+    }
+
     static void CheckRealPocket(Action<JsonObject, string> checkRefs)
     {
         if (Backup("20260925-022900-c003bd4d") is not { } backup) { Console.WriteLine("  (real pocket replay skipped: set SPROCKET_QOL_BACKUPS)"); return; }
+        {
+            // The same tank's add-on 432 draped as cloth over the real hull: a valid sheet, in a time the editor can wait for.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var cloth = AddonEdits.PlanDrape(File.ReadAllText(backup.FullName), 432);
+            var sheet = AddonEdits.MeshOf(Conversion.Parse(cloth.DesignJson)["meshes"]!.AsArray(), AddonEdits.MeshIdOf(cloth.DesignJson, 432))!["mesh"]!.AsObject();
+            CheckMesh(sheet, "real drape", 0);
+            checkRefs(Conversion.Parse(cloth.DesignJson), "real drape");
+            Console.WriteLine($"  real drape: {cloth.Summary} {clock.ElapsedMilliseconds} ms");
+        }
         Fill.Paths.Clear();
         var plan = AddonEdits.PlanCut(File.ReadAllText(backup.FullName), 432, Array.Empty<int>(), true, true);
         Console.WriteLine($"  real pocket replay fills: {string.Join(", ", Fill.Paths)}");
@@ -981,7 +1207,14 @@ static class CutTests
             int block = Conversion.Objects(b)[601]["structureBlueprintVuid"]!.GetValue<int>();
             return MeshVerts(AddonEdits.MeshOf(b["meshes"]!.AsArray(), AddonEdits.Block(b["blueprints"]!.AsArray(), block)["blueprint"]!["bodyMeshVuid"]!.GetValue<int>())!["mesh"]!.AsObject());
         }
-        var plan = AddonEdits.PlanCut(json, 511, Array.Empty<int>(), false, false);
+        // The placement the cut ran with when this backup was made (the skirt mirrored along its own x), handed over as the
+        // game hands its placements to a cut: what's checked is that the marks stay and the cut stays on the skirt.
+        var objects = Conversion.Objects(Conversion.Parse(json));
+        var world = Conversion.WorldMatrices(objects);
+        var flip = Matrix4x4.CreateScale(-1, 1, 1);
+        var placed = new AddonEdits.LiveShapes(new Dictionary<int, Matrix4x4> { [601] = flip * world[601], [511] = world[511] },
+                                               new Dictionary<int, Matrix4x4> { [601] = flip * world[601] * flip });
+        var plan = AddonEdits.PlanCut(json, 511, Array.Empty<int>(), false, false, Fill.Mode.Fewest, placed);
         checkRefs(Conversion.Parse(plan.DesignJson), "real skirt replay");
         var flags = Conversion.Objects(Conversion.Parse(plan.DesignJson))[601]["flags"]!.GetValue<int>();
         Check(flags == 7 && plan.Live && plan.MeshIds.Keys.SequenceEqual(new[] { 601 }), $"real skirt: cut in place, still flipped and shown twice (flags {flags}, {plan.Summary})");
@@ -1071,6 +1304,7 @@ static class CutTests
         CheckMergeFaces();
         CheckFill();
         CheckRealPocket(checkRefs);
+        CheckRealMirrorScatter(checkRefs);
         CheckRealMerge();
         CheckMirrorMerge();
         CheckMirrorTurret(factions, checkRefs);
@@ -1108,6 +1342,7 @@ static class CutTests
         }
         CheckPocket("pocket in the top", Top, 0.2, 1);
         CheckPocket("tunnel right through", Through, 1.0, 2);
+        CheckOverlap();
         {
             // Rivets: one near a corner of the cut face moves onto a new face and stays put; one where the hole goes is
             // removed, and the rivet line between them is broken. (Side face 0 is (0.5,0,0) (0.5,1,0) (0,1,0.5) (0,0,0.5).)
@@ -1180,6 +1415,7 @@ static class CutTests
         CheckHole("fixture: hole in the top",Top,1);
         CheckHole("fixture: hole through the shell",Through,2);
         CheckPocket("fixture: pocket in the top",Top,.2,1);
+        CheckOverlap();
         Console.WriteLine($"CUT_GEOMETRY_TESTS_OK: {checks} checks");
     }
 }

@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.8.8")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.9.0")]
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
@@ -33,6 +33,7 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<bool>? RecordDrives;
     internal static ConfigEntry<string>? PanelMode, PanelPosition, ShortcutsPosition;
     internal static ConfigEntry<string>? PhotoResolution, PhotoMethod;
+    internal static ConfigEntry<string>? MenuOpens, MenuHidden;
     public override void Load()
     {
         ModLog = Log;
@@ -66,13 +67,17 @@ public sealed class Plugin : BasePlugin
         PanelMode = Config.Bind("Panels", "QoL panel", "Automatic", "Quality of Life's own part panel: Automatic (only when the game's part panels can't be drawn into, after a game update), Always, or Off.");
         PanelPosition = Config.Bind("Panels", "QoL panel position", "", "Where the QoL panel was dragged to (left, top), or empty for the right side.");
         ShortcutsPosition = Config.Bind("Panels", "Shortcuts box position", "", "Where the Shortcuts box was dragged to (left, top in screen pixels), or empty for beside the part panel.");
+        MenuOpens = Config.Bind("Right-click menu", "Opens with", "Ctrl", new ConfigDescription(
+            "Held with a right click that doesn't drag, opens the editor's right-click menu: Ctrl, Alt, Shift, or Off for no menu.",
+            new AcceptableValueList<string>(RightClickMenu.Holds)));
+        MenuHidden = Config.Bind("Right-click menu", "Hidden items", "", "Items left out of the right-click menu, as Section/Item, separated by |");
         Keybinds.Load(Config);
         ModOptions.Register();
         ShareWithModApi();
         AddComponent<DesignEditor>();
         AddComponent<DriveRecorder>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels) };
+        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels), typeof(RightClickMenu) };
         // One hook at a time: a game method a game update removed turns off that hook only (Mod Options > Compatibility).
         foreach (var feature in features) Hooks.Attach(harmony, feature);
         // The engine panel's class moved assembly in Sprocket 0.2.56: found while the game runs (EngineEditor), not named.
