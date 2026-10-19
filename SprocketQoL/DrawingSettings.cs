@@ -30,7 +30,8 @@ public static class DrawingSettings
         ui.InfoField($"Press {Keybinds.Shown("drawing")} to save drawing sheets to Photos. These settings are remembered.", 2);
 
         bool lines = !(Plugin.DrawingNoWireframe?.Value ?? false);
-        Toggle("Show drawing lines", lines,
+        // Labels fit the game's label column (about 14 characters); the tooltip says the rest.
+        Toggle("Drawing lines", lines,
             v => { if (Plugin.DrawingNoWireframe != null) Plugin.DrawingNoWireframe.Value = !v; },
             "Adds outlines or wireframe to colour and see-through drawings. Off: exports those views without added lines. The separate lines-only sheet and blue blueprint keep their lines.");
         ui.Slider("Line strength (%)", Plugin.DrawingIntensity?.Value ?? 100, 0, 100,
@@ -38,21 +39,21 @@ public static class DrawingSettings
         if (!lines) ui.InfoField("Line strength still applies to lines-only and blue blueprint sheets.", 1);
         if (lines)
         {
-            Toggle("Colour: clean outlines", Plugin.DrawingColourOutline?.Value ?? true,
+            Toggle("Clean outlines", Plugin.DrawingColourOutline?.Value ?? true,
                 v => { if (Plugin.DrawingColourOutline != null) Plugin.DrawingColourOutline.Value = v; },
-                "On: outlines visible parts and sharp corners, hiding triangle seams and shallow facets. Off: draws the full wireframe on the colour sheet.");
-            Toggle("Interior: silhouette", Plugin.DrawingSeeThroughOutline?.Value ?? true,
+                "Colour sheet. On: outlines visible parts and sharp corners, hiding triangle seams and shallow facets. Off: draws the full wireframe on the colour sheet.");
+            Toggle("Silhouette", Plugin.DrawingSeeThroughOutline?.Value ?? true,
                 v => { if (Plugin.DrawingSeeThroughOutline != null) Plugin.DrawingSeeThroughOutline.Value = v; },
-                "On: adds only the vehicle's outer silhouette over the visible interior. Off: draws the full wireframe on the see-through sheet.");
+                "See-through sheet. On: adds only the vehicle's outer silhouette over the visible interior. Off: draws the full wireframe on the see-through sheet.");
         }
 
-        Toggle("Show gun elevation", Plugin.DrawingElevation?.Value ?? false,
+        Toggle("Gun elevation", Plugin.DrawingElevation?.Value ?? false,
             v => { if (Plugin.DrawingElevation != null) Plugin.DrawingElevation.Value = v; },
             "Side view: dashed gun positions and angle labels at the gun's elevation and depression limits, from its laying drive. Does not cut away the tank.");
-        Toggle("Show gun side traverse", Plugin.DrawingTraverse?.Value ?? false,
+        Toggle("Gun traverse", Plugin.DrawingTraverse?.Value ?? false,
             v => { if (Plugin.DrawingTraverse != null) Plugin.DrawingTraverse.Value = v; },
             "Top view: shows independent left/right gun movement from its laying drive, useful for casemates. This does not include turret rotation.");
-        Toggle("Show turret rotation", Plugin.DrawingTurretTraverse?.Value ?? false,
+        Toggle("Turret arc", Plugin.DrawingTurretTraverse?.Value ?? false,
             v => { if (Plugin.DrawingTurretTraverse != null) Plugin.DrawingTurretTraverse.Value = v; },
             "Top view: shows turret movement using the traverse motor's Min and Max limits. An unrestricted turret gets one 360-degree arc.");
         if (gun != null)
@@ -61,7 +62,7 @@ public static class DrawingSettings
             if (cachedLimits != stored) { gunLimits = new(stored); cachedLimits = stored; }
             string key = GunKey(gun);
             if (key.Length > 0)
-                Toggle("Include this gun", gunLimits.Shows(key), show =>
+                Toggle("Include gun", gunLimits.Shows(key), show =>
                 {
                     // Re-read here so a delayed inspector callback cannot overwrite another gun's choice.
                     var choices = new GunAnnotationPreferences(Plugin.DrawingHiddenGunLimits?.Value);
@@ -71,13 +72,13 @@ public static class DrawingSettings
         }
 
         bool blue = Plugin.DrawingBlue?.Value ?? false;
-        Toggle("Save blue blueprint", blue,
+        Toggle("Blue blueprint", blue,
             v => { if (Plugin.DrawingBlue != null) Plugin.DrawingBlue.Value = v; },
             "Saves an additional white-on-blue blueprint alongside the standard drawing sheets.");
         if (blue)
         {
             bool grid = Plugin.DrawingGrid?.Value ?? false;
-            Toggle("Background grid", grid,
+            Toggle("Blueprint grid", grid,
                 v => { if (Plugin.DrawingGrid != null) Plugin.DrawingGrid.Value = v; },
                 "Adds faint square grid lines behind the blue sheet. Each square is 0.25 m at drawing scale; every metre has a stronger line.");
             if (grid)

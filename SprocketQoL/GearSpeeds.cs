@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Sprocket.ContinuousTracks;
 using Sprocket.Engines;
 using Sprocket.Powertrains.Transmissions;
@@ -81,6 +82,65 @@ public static class GearSpeeds
         accelKey = accelText = null;
         accelTask = null;
         redrawPanel = null;
+        transmissionPanel = null;
+        smoothed = null;
+    }
+
+    static TransmissionEditor? transmissionPanel; // the transmission panel last drawn: the one whose Smooth gets pressed
+    static (float[] Gears, string Note)? smoothed; // the drive ratios Smooth gave, and what it says while they last
+    static (float First, float Top, int Count, float[] Gears)? pendingSmooth; // the spacing while the game's Smooth runs
+
+    /// The drive gears' Smooth button: first and top gear stay, and the gears between them go where this vehicle gets to
+    /// 90% of its top speed soonest (GearSpacing) instead of the game's equal steps. The game's ApplySmooth (its own body:
+    /// the private ExecuteSmooth is compiled into it) still writes them in its one undo step; QoL only hands it the
+    /// spacing through ComputeIdealRatios. Equal steps for the reverse gears, when they are quickest, and whenever the drive
+    /// can't be worked out.
+    [HarmonyPrefix, HarmonyPatch(typeof(GearAssemblyProperties), nameof(GearAssemblyProperties.ApplySmooth))]
+    static void Smooth(GearAssemblyProperties __instance)
+    {
+        pendingSmooth = null;
+        try
+        {
+            var panel = transmissionPanel;
+            var ratios = __instance.ratios;
+            if (ratios == null || ratios.Length <= 2) return;
+            if (panel?.properties?.drive?.Pointer != __instance.Pointer)
+            {
+                Plugin.ModLog.LogInfo($"{Title}: Smooth on gears that aren't the open transmission's drive gears: the game's equal steps");
+                return;
+            }
+            var gearbox = panel.Component;
+            var (engine, _, tracks) = Drivetrain(gearbox, null);
+            if (VehicleOf(engine, gearbox, tracks, gearbox.Vehicle?.Mass ?? 0, out _, out var problem) is not { } vehicle)
+            {
+                Plugin.ModLog.LogInfo($"{Title}: Smooth used the game's equal steps ({problem})");
+                return;
+            }
+            float first = ratios[0].Value, top = ratios[^1].Value, auxiliary = gearbox.Blueprint.AuxiliaryGearRatio;
+            if (GearSpacing.Fastest(vehicle, first, top, ratios.Length, auxiliary) is not { } choice) return;
+            string To(float seconds) => $"0-{choice.Target * 3.6f:0} km/h in {(seconds < 10 ? seconds.ToString("0.0") : seconds.ToString("0"))} s";
+            string note = choice.Exponent == 1 ? $"Smooth: equal steps are the quickest spacing here ({To(choice.Seconds)})."
+                : $"Smooth: gears spaced for the quickest run, {To(choice.Seconds)} (equal steps: {To(choice.EvenSeconds)}).";
+            smoothed = (GearSpacing.Resulting(choice.Gears, auxiliary), note);
+            Plugin.ModLog.LogInfo($"{Title}: {note} Gears {string.Join("/", choice.Gears.Select(g => g.ToString("0.###")))}, exponent {choice.Exponent}");
+            if (choice.Exponent != 1) pendingSmooth = (first, top, ratios.Length, choice.Gears);
+        }
+        catch (Exception ex)
+        {
+            Plugin.ModLog.LogWarning($"{Title}: Smooth used the game's equal steps: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    [HarmonyPostfix, HarmonyPatch(typeof(GearAssemblyProperties), nameof(GearAssemblyProperties.ApplySmooth))]
+    static void Smoothed() => pendingSmooth = null;
+
+    /// QoL's spacing in place of the game's equal steps, only while the drive gears' Smooth runs, for the same gears.
+    [HarmonyPrefix, HarmonyPatch(typeof(TransmissionRules), nameof(TransmissionRules.ComputeIdealRatios))]
+    static bool IdealRatios(float __0, float __1, int __2, ref Il2CppStructArray<float> __result)
+    {
+        if (pendingSmooth is not { } p || p.First != __0 || p.Top != __1 || p.Count != __2) return true;
+        __result = new Il2CppStructArray<float>(p.Gears);
+        return false;
     }
 
     static bool IsDragging()
@@ -101,6 +161,7 @@ public static class GearSpeeds
     internal static void InTransmission(TransmissionEditor __instance, Panel layout) =>
         Ui.Inspector(Title, layout, () =>
         {
+            transmissionPanel = __instance;
             redrawPanel = () => __instance.RequestRedraw();
             Draw(layout, __instance.Component, null, __instance.Component.Vehicle?.Mass ?? 0);
         });
@@ -231,12 +292,7 @@ public static class GearSpeeds
     /// the rev limit, and the acceleration from a standstill (DriveSim.Accelerate, in the background).
     static string Describe(TransmissionBlock? gearbox, EngineBlueprint? engine, float mass)
     {
-        var parts = DesignEditor.Instance?.AllComponents().ToList() ?? new();
-        var engines = parts.Select(c => c.TryCast<CombustionEngine>()).Where(e => e?.Blueprint != null).ToList();
-        engine ??= (engines.FirstOrDefault(e => e!.SelectedInPowertrain) ?? engines.FirstOrDefault())?.Blueprint;
-        var gearboxes = parts.Select(c => c.TryCast<TransmissionBlock>()).Where(t => t != null).ToList();
-        gearbox ??= gearboxes.FirstOrDefault(t => t!.SelectedInPowertrain) ?? gearboxes.FirstOrDefault();
-        var tracks = parts.Select(c => c.TryCast<TrackAssembly>()).Where(t => t?.BlueprintSlot?.HasBlueprint == true).Select(t => t!).ToList();
+        (engine, gearbox, var tracks) = Drivetrain(gearbox, engine);
         if (VehicleOf(engine, gearbox, tracks, mass, out var reverse, out var problem) is not { } vehicle) return problem;
         string key = Inputs(vehicle, reverse);
         if (key != predictionKey || predictionText == null)
@@ -245,8 +301,22 @@ public static class GearSpeeds
             predictionKey = key;
             predictionText = Speeds(vehicle, reverse, out topSpeed);
         }
+        bool fromSmooth = smoothed is { } s && s.Gears.Length == vehicle.Gears.Length
+                          && s.Gears.Zip(vehicle.Gears).All(p => MathF.Abs(p.First / p.Second - 1) < 1e-4f);
         return predictionText + "\n" + (topSpeed > 0 ? Acceleration(vehicle, key, topSpeed) : "Can't get moving in any gear.") +
+               (fromSmooth ? "\n" + smoothed!.Value.Note : "") +
                "\nLevel ground, full throttle, automatic gears: the game's own drivetrain maths for this design, step by step.";
+    }
+
+    /// This design's engine, gearbox and tracks: the given engine and gearbox, else the ones selected in the powertrain.
+    static (EngineBlueprint? Engine, TransmissionBlock? Gearbox, List<TrackAssembly> Tracks) Drivetrain(TransmissionBlock? gearbox, EngineBlueprint? engine)
+    {
+        var parts = DesignEditor.Instance?.AllComponents().ToList() ?? new();
+        var engines = parts.Select(c => c.TryCast<CombustionEngine>()).Where(e => e?.Blueprint != null).ToList();
+        engine ??= (engines.FirstOrDefault(e => e!.SelectedInPowertrain) ?? engines.FirstOrDefault())?.Blueprint;
+        var gearboxes = parts.Select(c => c.TryCast<TransmissionBlock>()).Where(t => t != null).ToList();
+        gearbox ??= gearboxes.FirstOrDefault(t => t!.SelectedInPowertrain) ?? gearboxes.FirstOrDefault();
+        return (engine, gearbox, parts.Select(c => c.TryCast<TrackAssembly>()).Where(t => t?.BlueprintSlot?.HasBlueprint == true).Select(t => t!).ToList());
     }
 
     static float topSpeed;

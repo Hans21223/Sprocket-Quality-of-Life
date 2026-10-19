@@ -31,6 +31,8 @@
     <Compile Include="..\SprocketQoL\GunAnnotationPreferences.cs" Link="GunAnnotationPreferences.cs" />
     <Compile Include="..\SprocketQoL\DrawingMounts.cs" Link="DrawingMounts.cs" />
     <Compile Include="..\SprocketQoL\DriveSim.cs" Link="DriveSim.cs" />
+    <Compile Include="..\SprocketQoL\GearSpacing.cs" Link="GearSpacing.cs" />
+    <Compile Include="..\SprocketQoL\Cloth.cs" Link="Cloth.cs" />
     <Compile Include="..\SprocketQoL\GizmoPicking.cs" Link="GizmoPicking.cs" />
     <Compile Include="..\SprocketQoL\BevelEdges.cs" Link="BevelEdges.cs" />
     <Compile Include="..\SprocketQoL\BlueprintClipboard.cs" Link="BlueprintClipboard.cs" />

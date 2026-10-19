@@ -159,6 +159,22 @@ static class TurretDriveTests
             string original = b.ToJsonString(); var result = Conversion.RepairMirroredTurretDrives(original);
             Check(result.Repaired == 0 && result.Json == original, kind + " left untouched");
         }
+
+        // The twin's place as the turret mirror keeper sets it: on twin parents mirrored in the parent's frame; beside its
+        // partner on one parent (rings on an off-centre, tilted add-on), the vehicle-space mirror of the partner.
+        var rot = System.Numerics.Quaternion.Normalize(new(0.1f, 0.3f, -0.2f, 0.9f));
+        var (p1, q1) = Conversion.MirrorPose(new(0.4f, 1, -2), rot);
+        Check(p1 == new System.Numerics.Vector3(-0.4f, 1, -2) && q1 == new System.Numerics.Quaternion(rot.X, -rot.Y, -rot.Z, rot.W), "mirrored on twin parents: x and the turn's y, z change sign");
+        var parent = (Pos: new System.Numerics.Vector3(0.666f, 0.71f, -0.28f), Rot: System.Numerics.Quaternion.CreateFromYawPitchRoll(0.02f, 0.09f, 0.01f));
+        var leaderPos = new System.Numerics.Vector3(-0.124f, 0.013f, -0.06f);
+        var (fp, fq) = Conversion.MirrorPose(leaderPos, rot, parent);
+        var leaderWorld = parent.Pos + System.Numerics.Vector3.Transform(leaderPos, parent.Rot);
+        var followerWorld = parent.Pos + System.Numerics.Vector3.Transform(fp, parent.Rot);
+        var leaderTurn = parent.Rot * rot; var followerTurn = parent.Rot * fq;
+        Check(System.Numerics.Vector3.Distance(followerWorld, new(-leaderWorld.X, leaderWorld.Y, leaderWorld.Z)) < 1e-5f, "on one parent: the twin is at the mirror of its partner across the vehicle's centre");
+        Check(Math.Abs(System.Numerics.Quaternion.Dot(followerTurn, new(leaderTurn.X, -leaderTurn.Y, -leaderTurn.Z, leaderTurn.W))) > 0.99999f, "on one parent: the twin is turned as the mirror of its partner");
+        var (bp, bq) = Conversion.MirrorPose(fp, fq, parent);
+        Check(System.Numerics.Vector3.Distance(bp, leaderPos) < 1e-5f && Math.Abs(System.Numerics.Quaternion.Dot(bq, rot)) > 0.99999f, "mirroring the twin back gives the partner");
         Console.WriteLine($"TURRET_DRIVE_TESTS_OK: {checks} checks");
     }
 }

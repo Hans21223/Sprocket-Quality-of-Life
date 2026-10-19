@@ -102,6 +102,30 @@ static class CoreAuditTests
         Check(concaveRing.All(p => p.X >= 0 && p.Y >= 0 && (p.X <= .2f || p.Y <= .2f)),
             "the concave fallback circle stays inside the authored outline");
 
+        // The game's hole circle turns +z about the face's normal (Unity's AngleAxis: v cos a + (n x v) sin a). Where that
+        // works (faces square to +z) HoleRing.Circle is the same circle point for point; facing forward or back the game's
+        // collapses to one point, and HoleRing.Circle is a real circle in the face, which TryFit accepts.
+        var at = new Vector3(1, 2, 3);
+        foreach (var n in new[] { Vector3.UnitY, -Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitZ, Vector3.Normalize(new Vector3(0, 1, -2)) })
+            foreach (bool flip in new[] { false, true })
+            {
+                var circle = HoleRing.Circle(32, at, n, .1f, flip);
+                Check(circle.All(p => Math.Abs(Vector3.Distance(p, at) - .1f) < 1e-5f && Math.Abs(Vector3.Dot(p - at, n)) < 1e-5f)
+                      && circle.Distinct().Count() == 32, $"hole circle facing {n}: a real circle in the face");
+                var game = Enumerable.Range(0, 32).Select(k =>
+                {
+                    float a = (flip ? -1 : 1) * MathF.Tau * k / 32;
+                    return at + .1f * (Vector3.UnitZ * MathF.Cos(a) + Vector3.Cross(n, Vector3.UnitZ) * MathF.Sin(a) + n * Vector3.Dot(n, Vector3.UnitZ) * (1 - MathF.Cos(a)));
+                }).ToArray();
+                if (Math.Abs(Vector3.Dot(n, Vector3.UnitZ)) < 1e-6f)
+                    Check(circle.Zip(game).All(q => Vector3.Distance(q.First, q.Second) < 1e-5f), $"hole circle facing {n}: the game's own where it works");
+                else if (Math.Abs(Vector3.Dot(n, Vector3.UnitZ)) > 0.999f)
+                    Check(game.Distinct().Count() == 1, $"hole circle facing {n}: the game's own collapses (the bug fixed)");
+            }
+        var back = new[] { new Vector3(1, 0, 0), Vector3.Zero, new Vector3(0, 1, 0), new Vector3(1, 1, 0) }; // a face looking back (-z)
+        Check(HoleRing.TryFit(back, HoleRing.Circle(32, new Vector3(.5f, .5f, 0), Vector3.Normalize(HoleRing.Normal(back)), .2f, false), new Vector3(.5f, .5f, 0), out _, out _),
+            "a face looking back gets its hole");
+
         foreach (bool reflected in new[] { false, true })
         foreach (bool reversed in new[] { false, true })
         {

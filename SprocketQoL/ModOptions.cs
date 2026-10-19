@@ -87,6 +87,7 @@ internal static class ModOptions
         if (part == 2) { Settings(ui); return; }
         if (part == 3) { Compatibility(ui, Redraw); return; }
         if (part == 4) { Photos(ui, Redraw); return; }
+        if (part == 5) { RightClick(ui, Redraw); return; }
 
         ui.InfoField(capturing != null
             ? $"Press the new key for {Keybinds.All.First(b => b.Id == capturing).Name} (with Ctrl, Shift or Alt if wanted). Esc cancels, Backspace leaves it without a key."
@@ -111,7 +112,7 @@ internal static class ModOptions
     }
 
     static int part;
-    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos" };
+    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos", "Right-click menu" };
     static readonly HashSet<string> EditingGroups = new() { "View", "Mesh", "Selection", "Add-ons" };
     static readonly List<Il2CppSystem.Action<int>> keepInts = new();
 
@@ -119,23 +120,55 @@ internal static class ModOptions
     {
         ui.Header("F8 photo resolution");
         ui.InfoField("Choose the saved photo size. Keeps the camera's proportions: 2K = 2560, 4K = 3840, 6K = 5760, 8K = 7680 pixels on the long edge.", 3);
-        Choice(Plugin.PhotoResolution, PhotoOutput.Resolutions);
+        Choice(ui, redraw, Plugin.PhotoResolution, PhotoOutput.Resolutions);
         ui.Header("Capture method");
-        Choice(Plugin.PhotoMethod, PhotoOutput.Methods);
+        Choice(ui, redraw, Plugin.PhotoMethod, PhotoOutput.Methods);
         ui.InfoField("Render: draws the scene at that resolution for more detail. Upscale: resizes the finished screen photo. Screen keeps the current display resolution.", 3);
         ui.InfoField($"Use {Keybinds.Shown("photo")} in photo mode. Graphics and the overlay return afterward. Settings are saved at once.", 2);
+    }
 
-        void Choice(ConfigEntry<string>? entry, string[] choices)
+    static void Choice(IGUIElementDrawer ui, Action redraw, ConfigEntry<string>? entry, string[] choices)
+    {
+        if (entry == null) return;
+        var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i =>
         {
-            if (entry == null) return;
-            var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i =>
-            {
-                if (i < 0 || i >= choices.Length) return;
-                entry.Value = choices[i]; redraw();
-            }))!;
-            keepInts.Add(pick);
-            ui.TabGroup(pick, Math.Max(0, Array.IndexOf(choices, entry.Value)), choices);
+            if (i < 0 || i >= choices.Length) return;
+            entry.Value = choices[i]; redraw();
+        }))!;
+        keepInts.Add(pick);
+        ui.TabGroup(pick, Math.Max(0, Array.IndexOf(choices, entry.Value)), choices);
+    }
+
+    static int menuSection;
+
+    /// The editor's right-click menu: what's held to open it, and which of its items show, a section at a time.
+    static void RightClick(IGUIElementDrawer ui, Action redraw)
+    {
+        ui.Header("Opens with");
+        ui.InfoField("Hold this and right-click without dragging (a drag turns the camera). Off: no menu. In the mesh editor the game's own selection also uses Ctrl, Alt and Shift with a right click.", 2);
+        Choice(ui, redraw, Plugin.MenuOpens, RightClickMenu.Holds);
+        var sections = RightClickMenu.Sections.ToList();
+        ui.Header("Items shown");
+        var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i => { menuSection = i; redraw(); }))!;
+        keepInts.Add(pick);
+        menuSection = Math.Clamp(menuSection, 0, sections.Count - 1);
+        ui.TabGroup(pick, menuSection, sections.Select(s => s.Key).ToArray());
+        // Buttons, not checkboxes: the items' names are longer than a checkbox's label column.
+        ui.ColumnCount = 2;
+        foreach (var label in sections[menuSection])
+        {
+            string section = sections[menuSection].Key;
+            bool shown = RightClickMenu.Shows(section, label);
+            var flip = Ui.Callback(() => { RightClickMenu.Show(section, label, !shown); redraw(); });
+            keep.Add(flip);
+            var itemTip = new UITooltip(label, "Click to show or hide it in the menu. A shown item appears when it fits what's selected. Saved at once.");
+            ui.Button($"{label}: {(shown ? "shown" : "hidden")}", flip, ref itemTip);
         }
+        ui.ColumnCount = 1;
+        var all = Ui.Callback(() => { if (Plugin.MenuHidden != null) Plugin.MenuHidden.Value = ""; redraw(); });
+        keep.Add(all);
+        var tip = new UITooltip("Show every item", "Puts every item back in the right-click menu.");
+        ui.Button("Show every item", all, ref tip);
     }
 
     /// What attached to the game (a game update can rename or remove what a hook needs), and QoL's own part panel.
@@ -169,20 +202,22 @@ internal static class ModOptions
             if (Plugin.ShortcutsPosition != null) Plugin.ShortcutsPosition.Value = "";
             QolPanel.Close();
         }), ref placeTip);
-        Toggle(ui, Plugin.ShowHotkeys, "Hotkeys box beside hand-made structures", "The box listing the editing keys (its key toggles it too).");
-        Toggle(ui, Plugin.PartMassMarkers, "Part mass markers", "Each part's blue mass marker while the editor's COM view filter is on.");
+        // Labels fit the game's label column (about 14 characters for a toggle, 17 for a slider); tooltips say the rest.
+        Toggle(ui, Plugin.ShowHotkeys, "Hotkeys box", "The box listing the editing keys, beside a hand-made structure's panel (its key toggles it too).");
+        Toggle(ui, Plugin.PartMassMarkers, "Mass markers", "Each part's blue mass marker while the editor's COM view filter is on.");
         Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");
-        Slider(ui, Plugin.RotationSnap, "Rotation snap (degrees, 0: the game's)", 0, 45, 0.5f);
-        Slider(ui, Plugin.ExplodeSpread, "Exploded view spread (m)", 0.1f, 3, 0.05f);
-        Slider(ui, Plugin.FlashlightPercent, "Flashlight brightness (%)", 5, 300, 5);
-        Slider(ui, Plugin.FullbrightPercent, "Fullbright brightness (%)", 1, 100, 1);
+        ui.InfoField("Rotation snap 0 keeps the game's own step. Light strengths are in percent of the sun.", 1);
+        Slider(ui, Plugin.RotationSnap, "Rotation snap (°)", 0, 45, 0.5f);
+        Slider(ui, Plugin.ExplodeSpread, "Explode gap (m)", 0.1f, 3, 0.05f);
+        Slider(ui, Plugin.FlashlightPercent, "Flashlight (%)", 5, 300, 5);
+        Slider(ui, Plugin.FullbrightPercent, "Fullbright (%)", 1, 100, 1);
         if (Plugin.BackupsKept is { } backups)
         {
             var change = Ui.FloatCallback(v => backups.Value = (int)MathF.Round(v));
             keepFloats.Add(change);
-            ui.Slider("Design backups kept (0: all)", backups.Value, 0, 500, change);
+            ui.Slider("Backups (0: all)", backups.Value, 0, 500, change);
         }
-        Toggle(ui, Plugin.RecordDrives, "Record drives (diagnostics)", "Writes your vehicle's drivetrain, every physics step, to BepInEx\\SprocketQoL-drives while you drive.");
+        Toggle(ui, Plugin.RecordDrives, "Record drives", "Diagnostics: writes your vehicle's drivetrain, every physics step, to BepInEx\\SprocketQoL-drives while you drive.");
     }
 
     static void Toggle(IGUIElementDrawer ui, ConfigEntry<bool>? entry, string label, string tooltip)

@@ -85,12 +85,12 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   sides from one part (placed with Mirror on) brings its other side along the same way. Unmirrored add-ons can't merge
   into a mirrored part whose twin is flipped (the flipped side would stop being mirrored and show wrong): merge them
   into an unmirrored part instead.
-- **Cut with this add-on (Boolean cut):** place an add-on through a plate, and its panel offers **Cut hole** or
-  **Cut pocket (with walls)** out of the structure it sits on (or out of the other selected parts). Any closed shape
+- **Boolean with this add-on:** place an add-on through a plate, and its panel offers **Cut through-hole** or
+  **Cut recess (walls and floor)** out of the structure it sits on (or out of the other selected parts). Any closed shape
   works, dents included. A pocket turns the add-on's surface inside the structure into plates with the add-on's
   armour. **Fill** chooses how the plate around the cut is rebuilt: **fewest points** (default) uses only the cut's
   own points and the face's corners, no new ones (like Blender's Boolean; triangles paired into quads where they
-  fit), **rectangle box** surrounds the cut with a clean rectangular box (also toggled via the **Rectangle box** checkbox), **light fill** adds points inside the face
+  fit), **rectangle box** surrounds the cut with a clean rectangular box (also toggled via the **Box border** checkbox), **light fill** adds points inside the face
   until no face is long and thin (Delaunay refinement, as in Shewchuk's Triangle; for holes, notches and any outline),
   and **smooth fill** also a ring of quads along the cut's curved edge and evener faces. Flat neighbouring faces with the same armour are
   rebuilt together. Rivets move onto the new faces. Happens in place; Ctrl+Z undoes it. A mirrored twin of the add-on
@@ -98,7 +98,26 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   both sides, as the game's own editing does, and stays mirrored; to cut one side only, unmirror it first. Where each
   part really shows is read from the game (parts on scaled mantlets or flipped parents included). The add-on must be a
   closed shape (an open plate has no inside to cut with, and is refused). The add-on is removed or kept
-  (**Keep add-on**).
+  (**Keep cutter**). Besides the cuts: **Keep only the overlap** (Blender's Intersect) keeps just the part of the
+  plates inside the add-on, closed off by its surface; **Join into one shape (union)** makes the add-on and the shape it
+  overlaps one shape, outside only, seams welded; **Slice in two** splits that shape along the add-on's surface, the
+  inside becoming a new add-on in the same place.
+- **Drape as cloth:** an add-on's top becomes a sheet of points dropped onto the vehicle until it settles, like
+  Blender's cloth: a tarp, a cover, or with **Net** on a camouflage net (a hole in every cell, **Hole size (%)**).
+  **Spacing (cm)** sets how far apart its points are (closer follows shapes better but takes longer), **Stiffness (%)**
+  how much it resists bending, and **Lands on** whether everything catches it, only the selected parts, or all but
+  them. Hand-made shapes catch it as they are (open plates from both sides); game parts with no shape of their own
+  (hatches, periscopes, wheels, tracks) as boxes around them. Once it settles, edges and corners poking out between
+  its points push it up so they stay under it. The settled sheet becomes the add-on's shape (10 mm thick at most); a
+  mirrored add-on drapes on both sides; Ctrl+Z undoes it. At most 4,000 points, as it runs while the game waits (a big
+  sheet over a whole tank takes several seconds).
+- **Scatter add-ons over this:** select the add-ons to scatter (a leaf, a stone; several kinds mix), then the part to
+  scatter them on, last. Copies land at random on it, more on bigger faces, each standing on its face as on flat
+  ground and turned at random: on faces looking up only (**Faces up only**) or on every face. Up to 300 copies; each
+  click spreads them anew, and Restore undoes it.
+- **Make the mirror side a real add-on:** the copy the game shows on the other side of a mirrored add-on becomes an
+  add-on of its own, with its own (mirrored) shape, to edit or move apart from the first; a twin pair stops being a
+  pair. Nothing moves. The editor's Mirror turns off afterwards, because dragging a part with it on mirrors it again.
 - **Gun length:** select a cannon, and its panel shows its length in calibers, **L/xx**, measured as guns are: from
   the muzzle to the face of the breech block. That's the barrel plus the chamber, which holds the whole round (in the
   game, the propellant plus a 3-caliber shell). The barrel alone and the round's length are listed below it, to 0.01 caliber; a muzzle brake isn't counted.
@@ -111,11 +130,16 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   of it is read from the design, so no test drive is needed. Against recorded test drives the top speed is within
   0.1% and each gear's acceleration within about 3%; the first 10-20 km/h read a little slow, as the tank's rocking at
   launch isn't modelled. A gear marked "short of the rev limit" can't reach it on flat ground.
+  The transmission's **Smooth** button keeps first and top gear and spaces the gears between them for the quickest
+  acceleration, timing each spacing with the same maths; when no spacing is at least 1% quicker, the game's equal
+  steps stay.
 - **Hole quality:** in a hand-made structure's panel, choose how many segments and how big the game's Create Hole tool
   makes a hole. Holes come out round, stay inside their face, and no longer leave faces inside out. **Hole fill:
   fewest points** (default) joins the hole's ring to the face's corners with no new points; **light fill** adds points
   so no face is long and thin, **smooth fill** a ring of quads round the hole and evener faces, and **game's fan** gets
-  the game's own fill back. The circle sits square to the part (flat top, mirror twins match).
+  the game's own fill back. The circle sits square to the part (flat top, mirror twins match). Faces looking
+  straight forward or back get holes too: the game's circle collapses to a point there, and comes out too small on
+  faces tilted toward them, so the mod draws the circle the game meant.
 - **Merge faces:** in a hand-made structure, select faces in Faces edit mode and press **Merge selected faces**. Faces
   that share edges become as few faces as their outline allows: two triangles become a quad, a strip of quads one quad,
   a fan a handful of quads. Points inside, and points along straight sides, go. A side point an unselected face also
@@ -151,12 +175,12 @@ alongside it through the loader's MLLoader. In the vehicle editor:
     Recreated surrounding sides inherit their own sharp/connection settings; new chamfer edges do not copy
     unrelated or temporary edge flags. Existing edges are reused without changing their settings.
   - **Select linked flat faces (U):** grows the selection over faces lying flat with it (angle in the panel).
-  - **Smooth Edge:** in Edges mode, rounds selected edges using **Smooth width (mm)** and **Smooth segments**
+  - **Smooth Edge:** in Edges mode, rounds selected edges using **Smooth (mm)** (the width cut back) and **Smooth segments**
     (2–16, default 4). Uses a curved profile rather than dividing a flat chamfer; neighbouring faces share its
     new vertices and multi-edge corners are closed. New round strips start without sharp/connection flags
     inherited from the removed edges. Bevel (V) still makes its original single chamfer.
   - **Fillet:** in Edges mode, rounds selected edges with a circular curve tangent to both adjoining faces.
-    **Fillet radius (mm)** sets the actual curve radius and **Fillet segments** (2–16, default 4) sets its
+    **Radius (mm)** sets the actual curve radius and **Fillet segments** (2–16, default 4) sets its
     number of strips. Uses Mirror and one undo operation, preserves surrounding edge settings and source-corner
     thickness, and rejects a radius that cannot fit instead of shrinking it. Adjacent faces must be flat;
     unsupported junctions are rejected. Smooth Edge keeps its separate cutback-width controls.
@@ -174,19 +198,19 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   - **Orthographic view (Numpad 5):** no perspective, and the spawn pad (its deck and the blocks and rails beside the
     tracks) and ground under the vehicle are hidden (back when you leave it). Scroll zooms as usual (sized by the camera's orbit distance,
     never the ground), and **Numpad + / −** or the **Ortho zoom** slider zoom further, past the game's closest
-    distance. With **Ortho: whole view** (on by default) the camera never cuts into the vehicle when zoomed in.
+    distance. With **Whole view** (on by default) the camera never cuts into the vehicle when zoomed in.
     **Ortho backdrop** (click to change): **plain grey** (default), **white** or **black** draws the vehicle alone on
     one colour, no sky and no map (the map's edge, hills and walls neither in front nor behind), or **scene** as it is.
-    With **Ortho: straight views** (on by default) it snaps to front, back, sides or top, and orbiting flips between
+    With **Straight views** (on by default) it snaps to front, back, sides or top, and orbiting flips between
     them; **Numpad 1 / 3 / 7** jump to front, side and top (with **Ctrl**: back, the other side, and from below), and **Numpad 9** flips to the opposite view (top to below,
-    front to back). In a straight view, **Ortho: measurements** (on by default) draws the vehicle's overall size as
+    front to back). In a straight view, **Measurements** (on by default) draws the vehicle's overall size as
     dimension lines: across the screen under it, up the screen beside it, to the centimetre (antennas not counted).
     The game's fog is off in orthographic view, and the move / turn / scale arrows keep a normal size.
     Gizmo clicks also reach the pulled-back orthographic camera's full distance, so visible rotation rings can
     be dragged on selected points and edges. **D** selects the rotation rings; **R** rotates directly (default keys).
 - **Bridge** (the **Bridge and circle** section; Blender's Bridge Edge Loops): in Edges mode, select the open edges of two
   plates (or two loops of edges, for a tube) and press **Bridge**: a strip of faces joins them. **Bridge cuts** sets
-  how many rows of points go across it; **Bridge smooth** 0 goes straight across, 100 leaves each plate the way it runs
+  how many rows of points go across it; **Smoothness** 0 goes straight across, 100 leaves each plate the way it runs
   and curves round into the other (a rounded corner between a wall and a floor, say). Both chains need as many points;
   the strip pairs them the shortest way round, so it doesn't twist. With Mirror on, the other side is bridged too.
 - **Circle** (LoopTools' Circle): select points round a loop (a hole's rim, a ring round a turret) and press **Circle**:
@@ -215,9 +239,9 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   away from the sun aren't black.
 - **Flashlight (F6):** a spotlight from the camera that points wherever the mouse points, putting 80% of the sun's
   light on whatever it lands on, near or far (in orthographic view it shines from a normal viewing distance). F6
-  again turns it off. **Flashlight (% of sun)** in Mesh tools sets how bright (5 to 300%, remembered).
+  again turns it off. **Flashlight (%)** in Mesh tools sets how bright, in percent of the sun (5 to 300%, remembered).
 - **Fullbright (F7):** shadows off and even light from all six sides and eight corners (14 lights; brightness in
-  Mesh tools, **Fullbright (% of sun, each light)**), so every face shows clearly. F7 again puts the
+  Mesh tools, **Fullbright (%)**: each light, in percent of the sun), so every face shows clearly. F7 again puts the
   lighting back.
 - **Drawing sheet (F9):** saves a technical drawing of the vehicle, laid out like a maker's drawing: from above and
   from the front on top, from the side and from the back below, all at one scale, on white, each view named. Measured
@@ -230,19 +254,19 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   vehicle with its armour off: the armour as glass). Colour uses **clean outlines** around visible parts, depth steps and sharp corners, suppressing flat
   triangle seams, shallow facets and isolated speckles. These thin dark-grey contours preserve detail throughout
   the vehicle without a mesh overlay. See-through keeps only the vehicle silhouette by default.
-  In **Drawing sheet (F9)**, turn off **Colour outlines** or **Interior outline** to restore that export's wireframe, or enable
-  **No wireframe** to omit all added lines from both coloured exports. These choices are remembered between
+  In **Drawing sheet (F9)**, turn off **Clean outlines** or **Silhouette** to restore that export's wireframe, or turn off
+  **Drawing lines** to omit all added lines from both coloured exports. These choices are remembered between
   sessions and leave the separate line drawing unchanged.
-  **Intensity (%)** adjusts geometry-line strength from 0 to 100 on all sheets, without fading
+  **Line strength (%)** adjusts geometry-line strength from 0 to 100 on all sheets, without fading
   paint, dimensions or labels. **Gun elevation** adds dashed barrel positions and angle labels
   in the side view; **Gun traverse** independently shows the laying drive's left/right limits in the top
   view, useful for casemates. These use the configured laying-drive limits and the principal barrel on each mount,
   keep the vehicle intact, and leave space around the views for the movement. Missing/unreadable barrel meshes are
   skipped and logged. **Blue blueprint** saves an extra `(blueprint).png` with light lines on blue paper.
-  **Turret rotation** separately draws ring-centred rotation using the traverse motor's Min and Max settings,
+  **Turret arc** separately draws ring-centred rotation using the traverse motor's Min and Max settings,
   including asymmetric limits. Full rotation gets one 360-degree arc; a locked turret gets none. These controls
   live in their own foldout on structure, turret-ring and cannon panels, with short labels and detailed tooltips.
-  Select a cannon and turn off **This gun's limits** in **Drawing sheet (F9)** to omit only its movement-limit
+  Select a cannon and turn off **Include gun** in **Drawing sheet (F9)** to omit only its movement-limit
   lines and angle labels from all F9 sheets. Its geometry, decals and weapon specifications stay visible.
   On shared mounts, the largest enabled gun supplies the annotations; disable all guns on that mount to hide them all.
   Choices are remembered per design name and gun ID in the mod settings. Renaming a design starts a separate selection;
@@ -291,7 +315,8 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   the copy of its parent. With Mirror on, a turret gets a mirrored twin on the other side like other parts; the game
   mirrors only the ring, so once you let go the mod mirrors the turret body, guns and everything else on it onto the
   twin (the design reloads once; Restore undoes it). The twin body shares the original's shape, so later edits to it
-  apply to both sides. Each mirrored ring references its own traverse motor, including nested turrets.
+  apply to both sides. Each mirrored ring references its own traverse motor, including nested turrets. Moving
+  one turret of a mirrored pair keeps the other its mirror image, centred on its ring.
   For an existing pair sharing or crossing drive connections, select a turret ring or traverse motor and press
   **Fix mirrored turret drives**. It reconnects each ring to its own attached motor, reloads an unsaved result and
   keeps a backup (Restore undoes it). Missing or ambiguous motors and unrelated external connections are left alone.
@@ -303,6 +328,12 @@ alongside it through the loader's MLLoader. In the vehicle editor:
 - **Keys and settings:** every Quality of Life key can be changed in the game's **Settings > Mod Options** tab (Tool
   keys, Editing keys) or the **F11** window: click a key, press the new one. Its **Settings** page holds the options
   that have no panel of their own.
+- **Right-click menu:** **Ctrl + a right click** that doesn't drag (a drag still turns the camera) opens a menu at the
+  mouse, like Blender's, with what fits the selection: the game's own actions (duplicate, flip, mirror, delete and
+  the mesh edits, done as if their key was pressed), QoL's add-on and mesh tools, **Set origin to the shape's
+  middle**, **Parent to active** (to the last selected part) and the view keys, each with its key. Esc or a click
+  elsewhere closes it. **Settings > Mod Options > Right-click menu** chooses what opens it (Ctrl, Alt, Shift, or Off)
+  and which items it shows. In the mesh editor the game also selects with those keys and a right click.
 - **Move or scale without height:** while moving or scaling, **Shift + the vertical-lock key (Z)** locks to the two
   flat axes, so a scale keeps the height. Shift + X or Shift + Y leaves out that axis instead. These are the game's
   own two-axis locks, which it has no key for; the axis key alone goes back to the one-axis lock.

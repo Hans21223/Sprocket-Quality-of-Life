@@ -125,6 +125,16 @@ public static class HoleQuality
         }
     }
 
+    /// The game's hole circle collapses on faces looking forward or back and shrinks on faces tilted that way
+    /// (HoleRing.Circle): its points go where the game meant them. Create Hole is its only caller (both builds).
+    [HarmonyPostfix, HarmonyPatch(typeof(MeshPrimitives), nameof(MeshPrimitives.CreateCircle))]
+    static void RealCircle(int count, UnityEngine.Vector3 centre, UnityEngine.Vector3 normal, float radius, bool flipWinding, Il2CppReferenceArray<Vertex> __result)
+    {
+        if (__result == null || __result.Length != count || !Finite(ToNum(normal)) || ToNum(normal).LengthSquared() < 1e-12f) return;
+        var ring = HoleRing.Circle(count, ToNum(centre), ToNum(normal), radius, flipWinding);
+        for (int k = 0; k < count; k++) __result[k].position = new UnityEngine.Vector3(ring[k].X, ring[k].Y, ring[k].Z);
+    }
+
     static bool Finite(Num p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
     static float DistanceToSegment(Num p, Num a, Num b)
     {

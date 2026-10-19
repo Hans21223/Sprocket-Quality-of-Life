@@ -294,6 +294,21 @@ public static class Conversion
         return (drives.Json, copy.Count, drives.Repaired == 0 ? "copied onto the twin ring" : "copied onto the twin ring; drive connections repaired");
     }
 
+    /// Where a mirror twin's local place goes so it shows as the mirror image of its partner's (`pos`, `rot`): on twin
+    /// parents, mirrored in the parent's frame; beside its partner on one parent (a turret ring and its twin on the hull,
+    /// or on an off-centre add-on), mirrored across the vehicle's centre, `sharedParent` placing that parent in the
+    /// vehicle. Mirroring is x the other way; a turn's y and z parts change sign.
+    public static (Vector3 Pos, Quaternion Rot) MirrorPose(Vector3 pos, Quaternion rot, (Vector3 Pos, Quaternion Rot)? sharedParent = null)
+    {
+        static Vector3 V(Vector3 p) => new(-p.X, p.Y, p.Z);
+        static Quaternion Q(Quaternion q) => new(q.X, -q.Y, -q.Z, q.W);
+        if (sharedParent is not var (pp, pq)) return (V(pos), Q(rot));
+        var inverse = Quaternion.Inverse(pq);
+        var worldPos = V(pp + Vector3.Transform(pos, pq));
+        var worldRot = Q(pq * rot);
+        return (Vector3.Transform(worldPos - pp, inverse), inverse * worldRot);
+    }
+
     public static Matrix4x4 Local(JsonNode transform, bool scaled = true)
     {
         Vector3 Vec(string k) => new(transform[k]![0]!.GetValue<float>(), transform[k]![1]!.GetValue<float>(), transform[k]![2]!.GetValue<float>());

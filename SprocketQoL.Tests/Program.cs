@@ -9,6 +9,7 @@ if (args.Contains("--ui-only")) { UiPresentationTests.Run(); return; }
 if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); HoleFillTests.Run(); return; }
 if (args.Contains("--core-only")) { CoreAuditTests.Run(); GizmoPickingTests.Run(); return; }
 if (args.Contains("--drive-only")) { DriveSimTests.Run(); return; }
+if (args.Contains("--cloth-only")) { ClothTests.Run(); return; }
 if (args.Contains("--fillet-only")) { FilletTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--smooth-split-only")) { SmoothSplitTests.Run(); BevelEdgeTests.Run(); return; }
 if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
@@ -200,11 +201,11 @@ foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\
     var others = addons.Skip(1).Where(v => !Above(v, target) && objs[target]["transform"]!["mirrorVuid"]?.GetValue<int>() != v).Take(2).ToList();
     if (others.Count == 0) continue;
     var before = Conversion.WorldMatrices(objs);
-    // Where a part's points show: a flipped part mirrors its shape along its own x, and a part saved once that the game
-    // shows twice (mirrored mark, no twin part) shows its image across the centre too.
+    // Where a part's points show: a flipped mirror twin mirrors its shape along its own x (AddonEdits.Shape), and a part
+    // saved once that the game shows twice (mirrored mark, no twin part) shows its image across the centre too.
     IEnumerable<Vector3> Shown(JsonObject b, JsonObject o, Matrix4x4 world)
     {
-        var shape = (o["flags"]!.GetValue<int>() & 1) != 0 ? Matrix4x4.CreateScale(-1, 1, 1) * world : world;
+        var shape = AddonEdits.Shape(o, world);
         var all = Conversion.Objects(b);
         bool imaged = (o["flags"]!.GetValue<int>() & 4) != 0 && !(o["transform"]!["mirrorVuid"]?.GetValue<int>() is int t && all.ContainsKey(t));
         return (imaged ? new[] { shape, shape * Matrix4x4.CreateScale(-1, 1, 1) } : new[] { shape }).SelectMany(m => Verts(b, o).Select(p => Vector3.Transform(p, m)));
@@ -291,4 +292,5 @@ Console.WriteLine($"HOLE_TESTS_OK: {checks} checks total");
 // ---------------- Boolean cut (CutTests.cs) ----------------
 DrawingTests.Run();
 DriveSimTests.Run();
+ClothTests.Run();
 CutTests.Run(Path.GetDirectoryName(root)!.Replace(@"\PMC\Blueprints", ""), CheckRefs);

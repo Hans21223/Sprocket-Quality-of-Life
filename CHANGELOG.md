@@ -1,3 +1,35 @@
+# Quality of Life 1.9.0
+
+- **Right-click menu:** Ctrl + a right click that doesn't drag opens a Blender-style menu at the mouse with what
+  fits the selection: the game's own actions (duplicate, flip, mirror, delete, the mesh edits) and QoL's tools, each
+  with its key. Game actions run as if their key was tapped. Settings > Mod Options > Right-click menu chooses what
+  opens it (Ctrl, Alt, Shift or Off) and which items show.
+- **Drape as cloth:** an add-on's top becomes a sheet of cloth, or a camouflage net, dropped onto the vehicle until it
+  settles (position-based cloth: springs, collisions, friction). Spacing, stiffness, net hole size, and Lands on:
+  everything, only the selected parts, or all but them. Game parts with no shape (hatches, periscopes, wheels,
+  tracks) catch it as boxes around them, open plates catch it from both sides, and after it settles every edge that
+  pokes out between its points lifts the nearest spot of cloth clear of it. At most 4,000 points (it runs on the
+  game's main thread).
+- **Scatter add-ons over this:** copies of the other selected add-ons land at random on a part, standing on its faces
+  (faces looking up only, or all), area-weighted, up to 300.
+- **Boolean with this add-on:** besides the two cuts, **Keep only the overlap** (intersect), **Join into one shape**
+  (union, seams welded) and **Slice in two** (the inside becomes a new add-on).
+- **Make the mirror side a real add-on:** the copy the game shows on the other side becomes an add-on of its own, its
+  points mirrored; a twin pair stops being a pair. Mirror turns off afterwards, as dragging with it on re-mirrors.
+- **Set origin to the shape's middle** and **Parent to active** (the last selected part), from the menu.
+- **Mirrored turrets:** moving one of a mirrored pair keeps its twin mirrored and centred, and each ring keeps its own
+  traverse drive.
+- **Create Hole:** the game's circle collapsed on faces looking straight forward or back (and shrank on faces tilted
+  toward them); QoL makes the circle the game meant, so those faces get full-size holes.
+- **Gear spacing:** the transmission's Smooth button keeps first and top gear and picks the spacing that reaches
+  speed fastest (QoL's drivetrain maths times each), or the game's equal steps when nothing is at least 1% quicker.
+- QoL's design maths mirrors only Flipped parts that have a mirror twin (Set origin moved standalone Flipped add-ons
+  by twice their box's offset). A thicken edge of 0 stays "none" through merges.
+- Shorter labels in QoL's panel sections and Mod Options: the game's label column holds about 14 characters, and
+  longer ones overlapped the next row. Tooltips keep the full wording.
+- Offline tests pass (cloth, scatter, union, slice, real mirror, turret mirror poses, the circle fix); built against
+  0.2.56.2, with every game type and member checked present in 0.2.55.5 too.
+
 # Quality of Life 1.8.8
 
 - One build for **Sprocket 0.2.55.5 and 0.2.56**. 0.2.56 moved the engine panel into

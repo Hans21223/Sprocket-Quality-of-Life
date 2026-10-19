@@ -46,5 +46,30 @@ static class DriveSimTests
         var stuck = Recorded(1e8f);
         Check(stuck.Gears.All(r => DriveSim.TopSpeed(stuck, r).Speed == 0), "nothing moves a 100,000 t vehicle");
         Console.WriteLine($"DRIVE_TESTS_OK: top {top.Speed * 3.6f:0.00} km/h, 0-60 km/h {At(60):0.0} s, heavy {gears[best] * 3.6f:0.0} km/h in gear {best + 1}");
+        Spacing();
+    }
+
+    /// The Smooth button's spacings (GearSpacing): the game's equal steps at exponent 1, first and top gear kept, and the
+    /// quickest spacing found for the recorded drive.
+    static void Spacing()
+    {
+        var even = GearSpacing.Spread(5, 0.625f, 8, 1);
+        for (int i = 0; i < 8; i++) // TransmissionRules.ComputeIdealRatios: first × (last / first)^(i / (count - 1))
+            Check(MathF.Abs(even[i] / (5 * MathF.Pow(0.125f, i / 7f)) - 1) < 1e-5f, $"equal steps, gear {i + 1}: {even[i]}");
+        var closer = GearSpacing.Spread(5, 0.625f, 8, 2);
+        Check(closer[0] == 5 && closer[^1] == 0.625f, "first and top gear kept");
+        for (int i = 1; i < 7; i++) Check(closer[i] / closer[i + 1] < closer[i - 1] / closer[i], $"steps shrink towards top gear ({i + 1} to {i + 2})");
+        Check(GearSpacing.Resulting(even, 1).SequenceEqual(even), "no auxiliary gear: the gears as they are");
+        var doubled = GearSpacing.Resulting(new[] { 4f, 2, 1 }, 0.5f);
+        Check(doubled.SequenceEqual(new[] { 4f, 2, 2, 1, 1, 0.5f }), $"auxiliary gear: each gear twice, sorted ({string.Join("/", doubled)})");
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var choice = GearSpacing.Fastest(Recorded(), 5, 0.625f, 8, 1) ?? throw new Exception("drive: no spacing for the recorded drive");
+        long ms = clock.ElapsedMilliseconds;
+        Check(choice.Gears[0] == 5 && choice.Gears[^1] == 0.625f && choice.Seconds <= choice.EvenSeconds, "the choice keeps the ends and is no slower");
+        Check(MathF.Abs(GearSpacing.TimeTo(Recorded() with { Gears = choice.Gears }, choice.Target) - choice.Seconds) < 0.02f, "its time is the drive's");
+        Check(GearSpacing.Fastest(Recorded(1e8f), 5, 0.625f, 8, 1) == null, "a vehicle that can't move gets the game's own Smooth");
+        Console.WriteLine($"SPACING_TESTS_OK: exponent {choice.Exponent}, 0-{choice.Target * 3.6f:0} km/h {choice.Seconds:0.0} s " +
+                          $"(equal steps {choice.EvenSeconds:0.0} s), gears {string.Join("/", choice.Gears.Select(g => g.ToString("0.00")))}, {ms} ms");
     }
 }
