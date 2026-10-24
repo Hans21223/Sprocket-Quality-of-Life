@@ -1558,6 +1558,8 @@ public static partial class MeshTools
     {
         if (__result?.TryCast<Sprocket.Transformations.Gizmos.TransformGizmo>() is not { } gizmo) return;
         var cam = Camera.main;
+        bool log = ++arrowDraws == 30;
+        string clickShapes = "";
         if (ortho && cam != null && cam.orthographic)
         {
             if (arrowsViewpoint == null) arrowsViewpoint = new GameObject("Quality of Life arrows viewpoint");
@@ -1567,14 +1569,30 @@ public static partial class MeshTools
             if (gizmo.observer?.Pointer != stand.Pointer) { arrowObservers[gizmo.Pointer] = (gizmo, gizmo.observer!); gizmo.observer = stand; }
             // Drawing them sizes them by the camera itself (so they flickered big): their size from the stand-in instead.
             gizmo.transform.localScale = gizmo.ScreenScale;
+            // The game turned them on at that camera size, and its physics takes transform changes only at the next physics
+            // step (auto sync is off): until then their click shapes were ~50x the arrows, and a click got the big plane
+            // handle instead of the arrow. Their click shapes now take the drawn size at once.
+            if (log) clickShapes = $"; click shapes {ClickSpan(gizmo):0.00} m";
+            Physics.SyncTransforms();
+            if (log) clickShapes += $" -> {ClickSpan(gizmo):0.00} m across";
         }
         else if (arrowObservers.Remove(gizmo.Pointer, out var was)) gizmo.observer = was.Observer;
-        if (++arrowDraws != 30) return;
+        if (!log) return;
         var o = gizmo.observer;
         Plugin.ModLog.LogInfo($"Transform arrows ({(ortho ? "orthographic" : "normal")} view): the game's size {scale:0.000}, Scale {gizmo.Scale:0.000} x {gizmo.ScaleMultiplier:0.000}, " +
                               $"screen scale {gizmo.ScreenScale.x:0.000}, drawn at {gizmo.transform.lossyScale.x:0.000}; observer '{o?.name}' " +
-                              $"{(o != null ? Vector3.Distance(o.position, gizmo.transform.position) : -1):0.0} m away, camera {(cam != null ? Vector3.Distance(cam.transform.position, gizmo.transform.position) : -1):0.0} m");
+                              $"{(o != null ? Vector3.Distance(o.position, gizmo.transform.position) : -1):0.0} m away, camera {(cam != null ? Vector3.Distance(cam.transform.position, gizmo.transform.position) : -1):0.0} m{clickShapes}");
     });
+
+    /// The widest click shape of an arrow set, as the physics sees it.
+    static float ClickSpan(Sprocket.Transformations.Gizmos.TransformGizmo gizmo)
+    {
+        float span = 0;
+        if (gizmo.axes is { } axes)
+            foreach (var axis in axes)
+                if (axis?.Collider is { } collider) span = Math.Max(span, collider.bounds.size.magnitude);
+        return span;
+    }
 
     /// Out of orthographic view: every arrow set's own observer back.
     static void ArrowObserversBack()

@@ -1,3 +1,7 @@
+# Quality of Life 1.10.2
+
+- **Orthographic view:** the move, turn and scale arrows are easy to grab (their click areas were up to 50 times too big, so a click often took the wrong handle).
+
 # Quality of Life 1.10.1
 
 - **Orthographic view:** moving points and parts with the mouse or the arrows goes at normal speed (it jumped many times too far).

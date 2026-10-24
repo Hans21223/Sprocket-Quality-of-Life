@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.10.1")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.10.2")]
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
