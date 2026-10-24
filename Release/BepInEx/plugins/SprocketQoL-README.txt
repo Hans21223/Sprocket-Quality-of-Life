@@ -1,5 +1,8 @@
-Quality of Life 1.10.1 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.2 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.10.2
+- Orthographic view: the move, turn and scale arrows are easy to grab.
 
 NEW IN 1.10.1
 - Orthographic view: moving points and parts with the mouse or arrows goes at normal speed.
