@@ -39,6 +39,7 @@ internal static class ModOptions
     static readonly List<UnityAction> keep = new();              // the page's button callbacks, while it shows
     static readonly List<Il2CppSystem.Action<bool>> keepBools = new();
     static readonly List<Il2CppSystem.Action<float>> keepFloats = new();
+    static readonly List<object> keepOther = new();
     static string? capturing;                                    // the action waiting for its new key
 
     /// The page's class made known to the game's runtime (once, before the settings screen first opens).
@@ -74,7 +75,7 @@ internal static class ModOptions
 
     internal static void Draw(ModOptionsMenu page, IGUILayout layout)
     {
-        keep.Clear(); keepBools.Clear(); keepFloats.Clear(); keepInts.Clear();
+        keep.Clear(); keepBools.Clear(); keepFloats.Clear(); keepInts.Clear(); keepOther.Clear();
         if (layout.TryCast<IGUIElementDrawer>() is not { } ui) return;
         UnityAction Act(Action a) { var c = Ui.Callback(a); keep.Add(c); return c; }
         void Redraw() => page.GUIRepaint = true;
@@ -88,12 +89,23 @@ internal static class ModOptions
         if (part == 3) { Compatibility(ui, Redraw); return; }
         if (part == 4) { Photos(ui, Redraw); return; }
         if (part == 5) { RightClick(ui, Redraw); return; }
+        if (part == 6) { Selection(ui); return; }
+        if (part == 7) { Predictive(ui); return; }
+        if (part == 8) { Workshop(ui); return; }
 
         ui.InfoField(capturing != null
             ? $"Press the new key for {Keybinds.All.First(b => b.Id == capturing).Name} (with Ctrl, Shift or Alt if wanted). Esc cancels, Backspace leaves it without a key."
             : "Click a key to change it, then press the new key. Saved at once. Red: two actions share a key.", 2);
         var shared = Keybinds.Shared();
-        foreach (var group in Keybinds.All.GroupBy(b => b.Group).Where(g => EditingGroups.Contains(g.Key) == (part == 1)))
+        var shownKeys = Keybinds.All.Where(b => EditingGroups.Contains(b.Group) == (part == 1)).ToArray();
+        int pageCount = Math.Max(1, (shownKeys.Length + 15) / 16);
+        keyPage = Math.Clamp(keyPage, 0, pageCount - 1);
+        if (pageCount > 1)
+        {
+            var pageTip = new UITooltip("More keybindings", "Show the next page of keybindings.");
+            ui.Button($"Keys page {keyPage + 1}/{pageCount} — next", Act(() => { keyPage = (keyPage + 1) % pageCount; Redraw(); }), ref pageTip);
+        }
+        foreach (var group in shownKeys.Skip(keyPage * 16).Take(16).GroupBy(b => b.Group))
         {
             ui.Header(group.Key);
             ui.ColumnCount = 2;
@@ -112,9 +124,49 @@ internal static class ModOptions
     }
 
     static int part;
-    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos", "Right-click menu" };
+    static int keyPage;
+    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos", "Right-click menu", "Selection", "Build assist", "Workshop" };
     static readonly HashSet<string> EditingGroups = new() { "View", "Mesh", "Selection", "Add-ons" };
     static readonly List<Il2CppSystem.Action<int>> keepInts = new();
+
+    static void Workshop(IGUIElementDrawer ui)
+    {
+        ui.Header("QoL Workshop");
+        var tip = new UITooltip("Workshop", "Presets, saved part groups, clipboard history, selection sets, recovery checkpoints and diagnostics.");
+        var workshop=Ui.Callback(WorkshopLibrary.Open); keep.Add(workshop);
+        ui.Button($"Open Workshop ({Keybinds.Shown("workshop")})", workshop, ref tip);
+        var searchTip = new UITooltip("Search tools", "Search available editor tools, favourites and recent actions.");
+        var search=Ui.Callback(CommandPalette.Open); keep.Add(search);
+        ui.Button($"Search tools ({Keybinds.Shown("commandSearch")})", search, ref searchTip);
+        ui.InfoField("Tool values are remembered across restarts. Named presets in Workshop save combinations of these settings.", 2);
+        ui.InfoField("In the vehicle editor, use a structure panel's Precision and measurements section for slide, exact distances, mesh health and proportional controls.", 3);
+    }
+
+    static void Selection(IGUIElementDrawer ui)
+    {
+        ui.Header("Point and edge selection");
+        Toggle(ui, Plugin.BetterMeshPicking, "Better picking", "Choose the closest visible point or edge to the cursor. Off restores the game's picker.");
+        Slider(ui, Plugin.MeshPickRadius, "Click radius (px)", 4, 30, 1);
+        Toggle(ui, MeshAssistSettings.HoverHighlight, "Hover highlight", "Shows which point or edge a click would choose.");
+        Toggle(ui, MeshAssistSettings.CyclePicking, "Cycle overlaps", $"Press {Keybinds.Shown("cycleSelection")} to cycle nearby eligible targets. X-ray controls hidden geometry.");
+        ui.InfoField("The click radius stays the same size on screen at any zoom. Smaller values help with dense meshes; larger values make small points and edges easier to click.", 3);
+        ui.InfoField("Points and edges behind a face are skipped unless X-ray is enabled. Your usual add, remove, loop, box and circle selection controls still apply.", 3);
+    }
+
+    static void Predictive(IGUIElementDrawer ui)
+    {
+        ui.Header("Advanced predictive mode");
+        Toggle(ui, Plugin.PredictiveBuild, "Predict moves", "Show nearby snap and alignment targets while moving points, edges or faces. Hold Apply prediction to use the shown target during the current move.");
+        Slider(ui, Plugin.PredictionRadius, "Range (pixels)", 4, 40, 1);
+        Toggle(ui, Plugin.PredictEdgeMidpoints, "Edge midpoints", "Suggest the middle of stationary edges as well as stationary points.");
+        Toggle(ui, Plugin.PredictFaceCentres, "Face centres", "Suggest the centre of stationary faces as well as stationary points.");
+        Toggle(ui, MeshAssistSettings.CrossPartTargets, "Other parts", "Include geometry from other plate structures in this vehicle.");
+        Toggle(ui, MeshAssistSettings.EdgeSurfaceTargets, "Anywhere on edges", "Suggest the closest position along an edge.");
+        Toggle(ui, MeshAssistSettings.FaceSurfaceTargets, "Face surfaces", "Suggest the closest position on a face.");
+        ui.InfoField($"Move a point or face toward a target. The guide previews it; hold {Keybinds.Shown("applyPrediction")} to apply it, then confirm the move normally. Release the key to return to free movement.", 3);
+        ui.InfoField("Uses your current axis locks, Mirror and X-ray setting. Ctrl+Z undoes the whole move. This suggests geometric targets; it does not move parts on its own.", 3);
+        ui.InfoField("Change Apply prediction under Editing keys. Off by default.", 1);
+    }
 
     static void Photos(IGUIElementDrawer ui, Action redraw)
     {
@@ -206,6 +258,7 @@ internal static class ModOptions
         Toggle(ui, Plugin.ShowHotkeys, "Hotkeys box", "The box listing the editing keys, beside a hand-made structure's panel (its key toggles it too).");
         Toggle(ui, Plugin.PartMassMarkers, "Mass markers", "Each part's blue mass marker while the editor's COM view filter is on.");
         Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");
+        Toggle(ui, Plugin.RelativeSnap, "Relative snap", "Snapping a move moves the points in whole grid steps from where they start, instead of putting each point on the grid: off-grid shapes keep their shape.");
         ui.InfoField("Rotation snap 0 keeps the game's own step. Light strengths are in percent of the sun.", 1);
         Slider(ui, Plugin.RotationSnap, "Rotation snap (°)", 0, 45, 0.5f);
         Slider(ui, Plugin.ExplodeSpread, "Explode gap (m)", 0.1f, 3, 0.05f);
@@ -217,7 +270,10 @@ internal static class ModOptions
             keepFloats.Add(change);
             ui.Slider("Backups (0: all)", backups.Value, 0, 500, change);
         }
+        Toggle(ui, Plugin.StopNaNs, "Black box fix", "On some graphics cards, smoke and fire show black boxes: bad pixels that bloom and anti-aliasing smear. This turns on the cameras' Stop NaNs, which removes them first. Costs a little GPU time.");
         Toggle(ui, Plugin.RecordDrives, "Record drives", "Diagnostics: writes your vehicle's drivetrain, every physics step, to BepInEx\\SprocketQoL-drives while you drive.");
+        ui.Header("View");
+        MeshTools.DrawViewOptions(ui, keepOther.Add);
     }
 
     static void Toggle(IGUIElementDrawer ui, ConfigEntry<bool>? entry, string label, string tooltip)

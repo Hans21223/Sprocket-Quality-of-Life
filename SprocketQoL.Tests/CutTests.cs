@@ -127,6 +127,17 @@ static class CutTests
         Console.WriteLine($"  {what}: {result.PocketFaces} pocket plates, {MeshFaces(mesh).Count(f => f.Length == 4)} quads, {MeshFaces(mesh).Count(f => f.Length == 3)} triangles");
     }
 
+    /// A shape open somewhere else (real hulls almost always are) still gets a recess's walls: inside it the plates read
+    /// about 0.85 enclosed, not exactly 1, so this guards MeshCut's 0.75 cut-off from being raised past them.
+    static void CheckPocketOpenElsewhere()
+    {
+        var tool = SolidOf(Tool16, p => Vector3.Transform(p, Top), thickness: 7);
+        var (_, closed, _) = CutBox("pocket in a closed box", tool, true);
+        var (_, open, _) = CutBox("pocket in a box with one side open", tool, true, box => box["mesh"]!["faces"]!.AsArray().RemoveAt(0));
+        Check(open.PocketFaces > 0 && open.PocketFaces == closed.PocketFaces,
+              $"pocket in a box with one side open: the same walls as in a closed box ({open.PocketFaces} vs {closed.PocketFaces})");
+    }
+
     /// Keep only the overlap (the opposite cut): the box keeps just the piece inside the add-on, closed by the add-on's
     /// surface with the add-on's armour; an add-on that misses the box changes nothing.
     static void CheckOverlap()
@@ -146,6 +157,32 @@ static class CutTests
         var (_, missed, _) = CutBox("keep the overlap, add-on elsewhere", SolidOf(Tool16, p => p + new Vector3(5, 5, 5)), false, keepInside: true);
         Check(missed.FacesCut == 0, "keep the overlap: an add-on that misses the box changes nothing");
         Console.WriteLine($"  keep the overlap: {result.FacesCut} faces changed, {result.PocketFaces} plates from the add-on, {MeshFaces(mesh).Count} faces left");
+    }
+
+    /// Open plates (a sawtooth roof of single plates, Discord 2026-10-20) have no inside, so nothing can close them:
+    /// keeping the overlap only trims them to the add-on. Before, the add-on's faces stayed across the folds (a point
+    /// deep in a fold counted as inside), as big triangles outside the plates.
+    static void CheckOpenOverlap()
+    {
+        var verts = new List<Vector3>(); var faces = new List<int[]>();
+        for (int i = 0; i <= 8; i++) { float y = i % 2 == 0 ? 0 : .3f; verts.Add(new(i * .2f, y, 0)); verts.Add(new(i * .2f, y, 1)); }
+        for (int i = 0; i < 8; i++) faces.Add(new[] { 2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2 });
+        var sheet = AddonEdits.MeshData(verts, faces, 10, 0);
+        // a slab 6 cm thick, tilted 8 degrees, across the ridge tops
+        var slab = SolidOf(AddonEdits.Cylinder(.5f, .06f, 4, 10).MeshData["mesh"]!.AsObject(),
+            p => Vector3.Transform(p, Matrix4x4.CreateRotationY(MathF.PI / 4) * Matrix4x4.CreateRotationZ(.14f) * Matrix4x4.CreateTranslation(.8f, .2f, .5f)));
+        var result = MeshCut.Cut(sheet, new[] { slab }, false, keepInside: true);
+        var mesh = sheet["mesh"]!.AsObject();
+        CheckMesh(mesh, "keep the overlap of open plates", 0);
+        Check(result.FacesCut > 0 && result.PocketFaces == 0 && result.Open, $"keep the overlap of open plates: trimmed, nothing closes them ({result.PocketFaces} plates from the add-on)");
+        var planes = PlanesOf(slab);
+        var vs = MeshVerts(mesh);
+        foreach (var f in MeshFaces(mesh))
+        {
+            var c = f.Aggregate(Vector3.Zero, (s, i) => s + vs[i]) / f.Length;
+            Check(planes.All(q => Vector3.Dot(q.N, c) - q.D < 1e-4f), $"keep the overlap of open plates: nothing left outside the add-on (a face at {c})");
+        }
+        Console.WriteLine($"  keep the overlap of open plates: {result.FacesCut} faces trimmed, {MeshFaces(mesh).Count} faces left");
     }
 
     /// The fill on its own: a square with a round hole, and a many-sided polygon. Faces must exactly cover the region.
@@ -539,6 +576,19 @@ static class CutTests
             double share = MeshArea(SheetOf(net)) / MeshArea(mesh);
             Check(MeshFaces(SheetOf(net)).Count == 4 * MeshFaces(mesh).Count && MeshFaces(SheetOf(net)).All(f => f.Length == 4) && share > 0.55 && share < 0.72,
                   $"drape as a net: 4 quads a cell, {share:P0} of the cloth's area ({net.Summary})");
+
+            // Smaller holes than the spacing: each settled cell cut into 5 x 5 (6 mm holes on 10 mm), the same open share.
+            var fineNet = AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f, Hole: 0.6f, HoleSize: 0.006f));
+            CheckMesh(SheetOf(fineNet), "drape as a fine net", 0);
+            double fineShare = MeshArea(SheetOf(fineNet)) / MeshArea(mesh);
+            var finePoints = MeshVerts(SheetOf(fineNet));
+            float hole = MeshFaces(SheetOf(fineNet)).Take(4).Select(f => Vector3.Distance(finePoints[f[2]], finePoints[f[3]])).Average(); // a hole's sides
+            Check(MeshFaces(SheetOf(fineNet)).Count == 25 * 4 * MeshFaces(mesh).Count && fineShare > 0.55 && fineShare < 0.72 && MathF.Abs(hole - 0.006f) < 0.0015f && fineNet.Summary.Contains("6 mm holes"),
+                  $"drape as a fine net: 25 x the holes, about 6 mm ({hole * 1000:0.0} mm), {fineShare:P0} of the area ({fineNet.Summary})");
+            bool tooFine = false;
+            try { AddonEdits.PlanDrape(design, 9, new AddonEdits.DrapeOptions(Cell: 0.05f, Hole: 0.6f, HoleSize: 0.0003f)); }
+            catch (Exception ex) { tooFine = ex.Message.Contains("mm holes") && ex.Message.Contains("face corners"); }
+            Check(tooFine, "a net with holes too small for its size is refused before draping, saying what fits");
 
             // Lands on: only pair 2/3 (named by 2: twins count together) or everything but it. Below 2 there's nothing
             // but the floor, so without 2 the cloth falls to the lowest plate left.
@@ -1342,7 +1392,9 @@ static class CutTests
         }
         CheckPocket("pocket in the top", Top, 0.2, 1);
         CheckPocket("tunnel right through", Through, 1.0, 2);
+        CheckPocketOpenElsewhere();
         CheckOverlap();
+        CheckOpenOverlap();
         {
             // Rivets: one near a corner of the cut face moves onto a new face and stays put; one where the hole goes is
             // removed, and the rivet line between them is broken. (Side face 0 is (0.5,0,0) (0.5,1,0) (0,1,0.5) (0,0,0.5).)
@@ -1361,7 +1413,7 @@ static class CutTests
         }
 
         // Real add-ons cutting the shape they sit on, from the saved tanks: holes and pockets.
-        int cuts = 0, pockets = 0, notCutting = 0, openCutters = 0; long slowest = 0; string slowestWhat = "";
+        int cuts = 0, pockets = 0, notCutting = 0, openCutters = 0, openTargets = 0; long slowest = 0; string slowestWhat = "";
         foreach (var file in Directory.GetFiles(factions, "*.blueprint", SearchOption.AllDirectories).OrderBy(f => new FileInfo(f).Length))
         {
             if (cuts >= 30) break;
@@ -1400,10 +1452,11 @@ static class CutTests
                 Check(nodes.All(n => n!["face"]!.GetValue<int>() < faceCount && n["next"]!.GetValue<int>() < nodes.Count && n["prev"]!.GetValue<int>() < nodes.Count), "real cut: rivets point at real faces");
                 Check(!afterObjs.ContainsKey(addon) || objs.Values.Any(o => o["pvuid"]!.GetValue<int>() == addon), "real cut: cutting add-on removed unless parts hang on it");
                 cuts++; if (pocket) pockets++;
+                if (pocket && plan.Summary.Contains("don't enclose")) openTargets++;
             }
         }
         Check(cuts > 0 && pockets > 0, "found real add-ons that cut their structure");
-        Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {notCutting} add-ons not touching anything, {openCutters} open add-ons refused), slowest cut {slowest} ms: {slowestWhat}");
+        Console.WriteLine($"CUT_TESTS_OK: {checks} checks, shaped holes + pockets + rivets + {cuts} real cuts ({pockets} pockets, {openTargets} of them plain holes in plates enclosing nothing there, {notCutting} add-ons not touching anything, {openCutters} open add-ons refused), slowest cut {slowest} ms: {slowestWhat}");
     }
 
     internal static void RunGeometry()
@@ -1415,7 +1468,9 @@ static class CutTests
         CheckHole("fixture: hole in the top",Top,1);
         CheckHole("fixture: hole through the shell",Through,2);
         CheckPocket("fixture: pocket in the top",Top,.2,1);
+        CheckPocketOpenElsewhere();
         CheckOverlap();
+        CheckOpenOverlap();
         Console.WriteLine($"CUT_GEOMETRY_TESTS_OK: {checks} checks");
     }
 }

@@ -29,17 +29,23 @@ public sealed class DesignEditor : MonoBehaviour
     private System.Action? afterEdit; // runs once the requested live edit is done (in place or reloaded)
     private Func<string, EditResult>? edit;
     private Func<string, AddonEdits.EditPlan>? liveEdit;
-    private static readonly List<object> alive = new(); // delegates handed to the game's undo history must not be collected
+    // Delegates handed to one of the game's undo steps mustn't be collected while it can call them: each step's are
+    // kept until the game lets the step go (UndoStepLifetime).
+    private static readonly Dictionary<IntPtr, List<object>> alive = new();
+    private static List<object> keeping = new();
     private string editName = "", doneMessage = "", status = "";
     private string? recoveryJson, recoveryDir;
     private IntPtr recoveryTarget;
+    private readonly VehicleSession vehicles = new();
+    private int requestSession, recoverySession; // the vehicle session an edit was asked for in, and its Restore's
     private bool restoring, ready, busy;
     private int waits;
     private float nextLookup, statusUntil;
     internal int LastEditedPart { get; private set; } = -1;
-    private bool RecoveryBelongsHere => recoveryTarget != IntPtr.Zero && core?.Target?.Pointer == recoveryTarget;
+    private bool RecoveryBelongsHere => recoveryTarget != IntPtr.Zero && core?.Target?.Pointer == recoveryTarget && recoverySession == vehicles.Now;
     internal bool CanRestore => recoveryJson != null && !busy && RecoveryBelongsHere;
     internal bool IsReady => ready;
+    internal int Session => vehicles.Now; // changes whenever another vehicle is opened or the editor is left
     internal bool IsBusy => busy;
     internal VehicleDesignerCore? Core => core;
     public DesignEditor(IntPtr pointer) : base(pointer) { Instance = this; }
@@ -57,7 +63,7 @@ public sealed class DesignEditor : MonoBehaviour
     {
         if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
-        editName = name; doneMessage = done; edit = change; afterEdit = null;
+        editName = name; doneMessage = done; edit = change; afterEdit = null; requestSession = vehicles.Now;
         busy = true; Say(name + "...", 30);
         queued = RunEdit; // runs from Update, outside the game's inspector drawing
     }
@@ -68,7 +74,7 @@ public sealed class DesignEditor : MonoBehaviour
     {
         if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
-        editName = name; doneMessage = done; liveEdit = change; afterEdit = then;
+        editName = name; doneMessage = done; liveEdit = change; afterEdit = then; requestSession = vehicles.Now;
         busy = true; Say(name + "...", 30);
         queued = RunLiveEdit;
     }
@@ -91,7 +97,7 @@ public sealed class DesignEditor : MonoBehaviour
     {
         if (busy || CaptureBlocked()) return;
         Plugin.ModLog.LogInfo($"QOL requested: {name}");
-        editName = name; doneMessage = done; separate = plan; afterEdit = null;
+        editName = name; doneMessage = done; separate = plan; afterEdit = null; requestSession = vehicles.Now;
         busy = true; Say(editName + "...", 30);
         queued = RunSeparate;
     }
@@ -111,6 +117,7 @@ public sealed class DesignEditor : MonoBehaviour
         SetRecovery(original, groups[0][0].Added);
         restoring = false;
         doneMessage += " Restore undoes it.";
+        vehicles.Loading();
         pending = core!.Load(serializer!.DeserializeJSON(planned), Il2CppSystem.Threading.CancellationToken.None);
     }
 
@@ -149,10 +156,14 @@ public sealed class DesignEditor : MonoBehaviour
         var extra = allCopies.SelectMany(c => Each(c.GetComponent<VehicleTransform>().Children)).Select(t => t?.VehicleObject).Where(o => o != null).Select(o => o!.GetReference()).ToArray();
         if (extra.Length > 0) ops.Destroy(new Il2CppReferenceArray<ISoftVehicleObject>(extra), group);
         string name = editName, done = doneMessage;
+        var paint = PartPaint.SlotsOf(sources.Select(s => (int)s.VUID)); // the copies keep their part's own paint
         void Shapes(bool forward)
         {
             foreach (var s in sources) { StructureOf(s).Mesh.LoadBlueprint(forward ? keptShape : oldShape); StructureOf(s).RequestMeshRefresh(); }
-            if (!forward) return;
+            var copied = paint.Count == 0 ? new Dictionary<int, int>() : Enumerable.Range(0, groups.Count)
+                .SelectMany(i => Copies(i).Select((c, j) => (Copy: (int)c.VUID, Source: (int)sources[j].VUID)))
+                .Where(p => paint.ContainsKey(p.Source)).ToDictionary(p => p.Copy, p => forward ? paint[p.Source] : 0);
+            if (!forward) { PartPaint.Put(copied, paint.Keys); return; }
             for (int i = 0; i < groups.Count; i++)
             {
                 var now = Copies(i);
@@ -173,6 +184,7 @@ public sealed class DesignEditor : MonoBehaviour
                 if (now.Count == 2 && now[0].GetComponent<VehicleTransform>() is { } a && now[1].GetComponent<VehicleTransform>() is { } b && a.Mirror?.Pointer != b.Pointer)
                     VehicleTransform.SetMirrors(a, b);
             }
+            PartPaint.Put(copied, paint.Keys); // the copies aren't painted yet: found through their parts' painter
         }
         bool executed = false;
         var callbacks = new VehicleOperationCallbacks
@@ -188,7 +200,7 @@ public sealed class DesignEditor : MonoBehaviour
         };
         var flags = Sprocket.VehicleDesigner.Operations.VehicleOp.InternalOpToVehicleOpFlags(global::Operations.Operation.DefaultFlags)
                     | VehicleOperationFlags.Undo | VehicleOperationFlags.Redo | VehicleOperationFlags.Register;
-        ops.CreateOp(name, ref callbacks, flags, group, VehicleOpExecutionMode.Synchronous);
+        KeptFor(ops.CreateOp(name, ref callbacks, flags, group, VehicleOpExecutionMode.Synchronous));
         if (!executed) return "the shapes didn't go in";
         if (allCopies.Any(c => sources.Any(s => StructureOf(s).Mesh.Pointer == StructureOf(c).Mesh.Pointer))) return "a copy still shares the part's shape";
 
@@ -372,7 +384,7 @@ public sealed class DesignEditor : MonoBehaviour
     internal void RequestRestore()
     {
         if (!CanRestore || CaptureBlocked()) return;
-        busy = true; Say("Restoring the design from before the last edit...", 30);
+        busy = true; Say("Restoring the design from before the last edit...", 30); requestSession = vehicles.Now;
         queued = Restore;
     }
 
@@ -512,7 +524,12 @@ public sealed class DesignEditor : MonoBehaviour
     public void Update()
     {
         // The per-frame features each on their own: one that fails (every frame) is logged once and stops no other.
-        Ui.Guard("QoL settings", QolMenu.Update);
+        Ui.Guard("Tool preferences", ToolSettings.Tick);
+        Ui.Guard("QoL Workshop", WorkshopLibrary.Update);
+        Ui.Guard("Tool search", CommandPalette.Update);
+        Ui.Guard("Part patterns", PartPatterns.Update);
+        Ui.Guard("Black box fix", StopNaNs.Tick);
+        if (!EditorModal.BlocksInput || QolMenu.IsOpen) Ui.Guard("QoL settings", QolMenu.Update);
         Ui.Guard("Editor lookup", () =>
         {
             bool wasReady = ready;
@@ -524,36 +541,53 @@ public sealed class DesignEditor : MonoBehaviour
                 if ((core?.Pointer ?? IntPtr.Zero) != previousCore) { filledRings.Clear(); liveShapesFailed = false; }
             }
             ready = core != null && core.HasEditor && core.editorState == VehicleDesignerCore.EditorState.Running;
+            if (ready) vehicles.Saw(core!.Target?.Pointer ?? IntPtr.Zero);
+            else if (wasReady) vehicles.Left();
             if (wasReady && !ready)
                 // Each on its own: one that couldn't run (1.8.6-1.8.7's Speed & acceleration on Sprocket 0.2.55.5) stopped
                 // the rest, and QoL's panel sections were gone after the next visit.
                 foreach (var (feature, leave) in new (string, Action)[] { ("Right-click menu", RightClickMenu.Close), ("Mesh tools", MeshTools.LeftEditor), ("Exploded view", ExplodedView.LeftEditor),
-                             ("Gear speeds", GearSpeeds.LeftEditor), ("Own paint", PartPaint.LeftEditor), ("OBJ menu", ObjTransfer.LeftEditor), ("QoL panel", QolPanel.Close) })
+                             ("Gear speeds", GearSpeeds.LeftEditor), ("Predictive build assist", BuildAssist.LeftEditor), ("Mesh selection", MeshSelection.LeftEditor),
+                             ("QoL Workshop", WorkshopLibrary.LeftEditor), ("Tool search", CommandPalette.LeftEditor), ("Part patterns", PartPatterns.LeftEditor),
+                             ("Own paint", PartPaint.LeftEditor), ("OBJ menu", ObjTransfer.LeftEditor), ("QoL panel", QolPanel.Close) })
                     Ui.Guard(feature, leave);
         });
-        Ui.Guard("OBJ menu", ObjTransfer.Update);
-        if (ready && !busy && !ObjTransfer.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
-        if (ready && !busy && !ObjTransfer.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); }
-        if (ready && !ObjTransfer.BlocksInput)
+        if (!EditorModal.BlocksInput) Ui.Guard("OBJ menu", ObjTransfer.Update);
+        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
+        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); }
+        if (ready && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput)
         {
             if (!busy && !PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Right-click menu", RightClickMenu.Update);
             Ui.Guard("Mesh tools keys", MeshTools.Keys);
             Ui.Guard("Exploded view", ExplodedView.Keys);
             Ui.Guard("Own paint", PartPaint.Tick);
             Ui.Guard("Hotkeys", Hotkeys.Keys);
+            Ui.Guard("Part clipboard", PartClipboard.Update);
             Ui.Guard("Gear speeds", GearSpeeds.Update);
+            Ui.Guard("Mesh selection", MeshSelection.Tick);
+            Ui.Guard("Precision measurements", MeshTools.TickPrecision);
         }
         if (ready) Ui.Guard("QoL panel", QolPanel.Update);
         Ui.Guard("Mouse over QoL boxes", ready ? InputShield.Update : InputShield.Release);
-        if (!ObjTransfer.BlocksInput) Ui.Guard("Photo", PhotoShot.Update);
-        if (ready && !ObjTransfer.BlocksInput) Ui.Guard("Drawing sheet", DrawingSheet.Update);
+        // A photo being taken always runs on, to finish and put the settings and overlay back; only new ones wait for windows.
+        if (PhotoShot.Capturing || !ObjTransfer.BlocksInput && !EditorModal.BlocksInput) Ui.Guard("Photo", PhotoShot.Update);
+        if (ready && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput) Ui.Guard("Drawing sheet", DrawingSheet.Update);
         // Design edits: a failure ends the edit (so the editor isn't left busy) and says why.
         try
         {
             if (pending != null && pending.IsCompleted)
             {
                 var task = pending; pending = null; busy = false;
-                if (task.IsFaulted || task.IsCanceled)
+                if (ready) vehicles.Saw(core!.Target?.Pointer ?? IntPtr.Zero); // the reload's own vehicle, before the load counts as over
+                vehicles.Loaded();
+                if (requestSession != vehicles.Now)
+                {
+                    // Another vehicle was opened while this loaded: it gets neither this edit's Restore nor its follow-up.
+                    recoveryJson = null; afterEdit = null;
+                    Say("Another vehicle was opened while the QoL edit loaded, so it has no Restore. Its backup is in SprocketQoLBackups.", 10);
+                    Plugin.ModLog.LogWarning($"QOL_EDIT {editName}: another vehicle was opened while it loaded");
+                }
+                else if (task.IsFaulted || task.IsCanceled)
                 {
                     Say(RecoveryBelongsHere ? "The game could not load the result. Your design from before is backed up; use Restore."
                         : "The game could not load the result. Load original.blueprint from SprocketQoLBackups to recover your previous design.", 10);
@@ -565,6 +599,7 @@ public sealed class DesignEditor : MonoBehaviour
                     // Our own reload creates a new Target. Another vehicle loaded
                     // by the user must never inherit this Restore button by VUID.
                     recoveryTarget = core?.Target?.Pointer ?? IntPtr.Zero;
+                    recoverySession = vehicles.Now;
                     Say(restoring ? "Design restored." : doneMessage, 8);
                     Plugin.ModLog.LogInfo(restoring ? "QOL_RESTORE_OK" : $"QOL_EDIT_OK: {editName}");
                     if (restoring) afterEdit = null; else AfterEdit();
@@ -598,6 +633,7 @@ public sealed class DesignEditor : MonoBehaviour
     private bool EditorIdle(System.Action retry)
     {
         if (!ready || core == null) throw new Exception("Open a vehicle in the editor first.");
+        if (requestSession != vehicles.Now) throw new Exception("another vehicle was opened before the edit could run; nothing was changed.");
         if (PhotoShot.Capturing || DrawingSheet.Capturing) { queued = retry; return false; }
         if (!core.DesignIOPossible || (core.Editor != null && core.Editor.OperationInProgress))
         {
@@ -624,6 +660,7 @@ public sealed class DesignEditor : MonoBehaviour
     {
         recoveryJson = original;
         recoveryTarget = core?.Target?.Pointer ?? IntPtr.Zero;
+        recoverySession = vehicles.Now;
         LastEditedPart = focus;
     }
 
@@ -635,11 +672,7 @@ public sealed class DesignEditor : MonoBehaviour
         if (keep <= 0) return;
         try
         {
-            var root = Path.Combine(Paths.BepInExRootPath, "SprocketQoLBackups");
-            var ours = new System.Text.RegularExpressions.Regex(@"^\d{8}-\d{6}-[0-9a-f]{8}$");
-            var old = Directory.GetDirectories(root).Where(d => ours.IsMatch(Path.GetFileName(d))).OrderByDescending(d => Path.GetFileName(d), StringComparer.Ordinal).Skip(keep).ToList();
-            foreach (var d in old) Directory.Delete(d, recursive: true);
-            if (old.Count > 0) Plugin.ModLog.LogInfo($"Backups: kept the newest {keep}, removed {old.Count} older");
+            WorkshopStorage.Prune(keep);
         }
         catch (Exception ex) { Plugin.ModLog.LogWarning($"Backups: couldn't tidy the old ones: {ex.Message}"); }
     }
@@ -654,6 +687,7 @@ public sealed class DesignEditor : MonoBehaviour
         SetRecovery(original, result.FocusPart);
         restoring = false;
         Plugin.ModLog.LogInfo($"QOL_EDIT {editName}: {result.Log}; backup={recoveryDir}");
+        vehicles.Loading();
         pending = core!.Load(nativeBlueprint, Il2CppSystem.Threading.CancellationToken.None);
     }
 
@@ -671,6 +705,7 @@ public sealed class DesignEditor : MonoBehaviour
         }
         SetRecovery(original, plan.Focus);
         restoring = false;
+        vehicles.Loading();
         pending = core!.Load(serializer!.DeserializeJSON(plan.DesignJson), Il2CppSystem.Threading.CancellationToken.None);
     }
 
@@ -702,7 +737,7 @@ public sealed class DesignEditor : MonoBehaviour
         };
         var flags = Sprocket.VehicleDesigner.Operations.VehicleOp.InternalOpToVehicleOpFlags(global::Operations.Operation.DefaultFlags)
                     | VehicleOperationFlags.Undo | VehicleOperationFlags.Redo | VehicleOperationFlags.Register;
-        ops.CreateOp(name, ref callbacks, flags, ops.GetNewGroupID(), VehicleOpExecutionMode.Synchronous);
+        KeptFor(ops.CreateOp(name, ref callbacks, flags, ops.GetNewGroupID(), VehicleOpExecutionMode.Synchronous));
         return done;
     }
 
@@ -735,22 +770,23 @@ public sealed class DesignEditor : MonoBehaviour
         int group = ops.GetNewGroupID();
         string name = editName, done = doneMessage;
         bool executed = false;
+        var removedPaint = PartPaint.SlotsOf(plan.Remove); // removed parts leave the own paint lists, and come back with Ctrl+Z
         var callbacks = new VehicleOperationCallbacks
         {
             Execute = Keep(DelegateSupport.ConvertDelegate<Il2CppSystem.Func<IVehicleOperatorContext, VehicleOPExecutionResult>>(
                 new Func<IVehicleOperatorContext, VehicleOPExecutionResult>(_ =>
                 {
                     executed = Swap(changes, true, name);
-                    if (executed) Say(done + " Ctrl+Z undoes it.", 8);
+                    if (executed) { PartPaint.Put(removedPaint.ToDictionary(kv => kv.Key, _ => 0)); Say(done + " Ctrl+Z undoes it.", 8); }
                     return executed ? VehicleOPExecutionResult.Executed : VehicleOPExecutionResult.Cancelled;
                 }))!),
             Revert = Keep(DelegateSupport.ConvertDelegate<Il2CppSystem.Action<IVehicleOperatorContext>>(
-                new Action<IVehicleOperatorContext>(_ => Swap(changes, false, name)))!),
+                new Action<IVehicleOperatorContext>(_ => { Swap(changes, false, name); PartPaint.Put(removedPaint); }))!),
         };
         // The game's usual flags plus undo/redo: with Register alone the step is kept in the history but Ctrl+Z skips it.
         var flags = Sprocket.VehicleDesigner.Operations.VehicleOp.InternalOpToVehicleOpFlags(global::Operations.Operation.DefaultFlags)
                     | VehicleOperationFlags.Undo | VehicleOperationFlags.Redo | VehicleOperationFlags.Register;
-        var op = ops.CreateOp(name, ref callbacks, flags, group, VehicleOpExecutionMode.Synchronous);
+        var op = KeptFor(ops.CreateOp(name, ref callbacks, flags, group, VehicleOpExecutionMode.Synchronous));
         Plugin.ModLog.LogInfo($"QOL_LIVE {name}: operation created, ran now={executed}, flags={op?.Flags}");
         if (!executed) throw new Exception("the in-place change didn't go through"); // the caller reloads the design instead
         // Parts on a merged add-on move onto the one it merged into (before that add-on goes, or they'd go with it).
@@ -790,18 +826,27 @@ public sealed class DesignEditor : MonoBehaviour
         if (sharers.Any(saved.Contains)) throw new Exception("a changed part shares its live shape with another part");
         if (sharers.Count > 0) Plugin.ModLog.LogInfo($"QOL_LIVE the game's mirror images {string.Join(", ", sharers)} share the changed shape and follow it");
 
-        Swap(changes, true, "trial of " + editName);
+        // Any trouble here throws: the caller then loads the planned design, which replaces whatever the trial left.
+        if (!Swap(changes, true, "trial of " + editName)) throw new Exception("trial: the new shapes didn't go in");
         string trial;
         try { trial = Snapshot(); }
-        finally { Swap(changes, false, "trial of " + editName); }
-        var was = AddonEdits.FaceCounts(original);
-        var now = AddonEdits.FaceCounts(trial);
-        var want = AddonEdits.FaceCounts(plan.DesignJson);
-        foreach (var (vuid, faces) in was)
+        finally
+        {
+            if (!Swap(changes, false, "trial of " + editName)) throw new Exception("trial: the old shapes didn't go back");
+        }
+        // Every other part exactly as it was; changed ones where the plan puts their faces (the game may tidy corner
+        // settings as it loads a shape, the same as a reload would).
+        var was = AddonEdits.ShapeKeys(original);
+        var now = AddonEdits.ShapeKeys(trial);
+        var nowFaces = AddonEdits.ShapeKeys(trial, full: false);
+        var want = AddonEdits.ShapeKeys(plan.DesignJson, full: false);
+        var back = AddonEdits.ShapeKeys(Snapshot());
+        foreach (var (vuid, shape) in was)
         {
             bool changed = plan.MeshIds.ContainsKey(vuid);
-            if (!now.TryGetValue(vuid, out int n) || n != (changed ? want[vuid] : faces))
-                throw new Exception($"trial: part {vuid} saved {(now.ContainsKey(vuid) ? n : 0)} faces, expected {(changed ? want[vuid] : faces)}");
+            if (changed ? nowFaces.GetValueOrDefault(vuid) != want.GetValueOrDefault(vuid) : now.GetValueOrDefault(vuid) != shape)
+                throw new Exception($"trial: part {vuid} {(changed ? "didn't take the planned shape" : "changed, though the edit isn't for it")}");
+            if (back.GetValueOrDefault(vuid) != shape) throw new Exception($"trial: part {vuid} didn't go back exactly");
         }
     }
 
@@ -821,7 +866,17 @@ public sealed class DesignEditor : MonoBehaviour
         }
     }
 
-    static T Keep<T>(T value) where T : class { alive.Add(value); return value; }
+    static T Keep<T>(T value) where T : class { keeping.Add(value); return value; }
+
+    /// The delegates kept since the last step was made now belong to step `op`.
+    static IVehicleOperation? KeptFor(IVehicleOperation? op)
+    {
+        if (op != null) alive[op.Pointer] = keeping;
+        keeping = new();
+        return op;
+    }
+
+    internal static void Forget(IntPtr step) => alive.Remove(step);
 
     internal static IEnumerable<T> Each<T>(Il2CppSystem.Collections.Generic.IReadOnlyList<T> list)
     {
@@ -836,6 +891,7 @@ public sealed class DesignEditor : MonoBehaviour
         // Keep any work done after the edit before replacing it.
         File.WriteAllText(Path.Combine(recoveryDir!, "before-restore-" + DateTime.Now.ToString("HHmmssfff") + ".blueprint"), Snapshot());
         restoring = true;
+        vehicles.Loading();
         pending = core.Load(serializer!.DeserializeJSON(recoveryJson), Il2CppSystem.Threading.CancellationToken.None);
     }
 
@@ -843,16 +899,34 @@ public sealed class DesignEditor : MonoBehaviour
     public void OnGUI()
     {
         if (PhotoShot.Capturing) return; // nothing of ours in the photo
+        Ui.Guard("OBJ preview", ObjTransfer.DrawPreview);
         if (!ObjTransfer.BlocksInput)
         {
             Ui.Guard("Hotkeys", Hotkeys.DrawBox);
             Ui.Guard("Measurements", MeshTools.DrawMeasures);
+            Ui.Guard("Predictive build assist", BuildAssist.Draw);
+            Ui.Guard("Mesh selection", MeshSelection.Draw);
+            Ui.Guard("Selection measurements", MeshTools.DrawSelectionMeasures);
+            Ui.Guard("Create Hole preview", HoleQuality.DrawHovered);
+            Ui.Guard("Tool hover outline", MeshTools.DrawHoverTool);
             Ui.Guard("Right-click menu", RightClickMenu.Draw);
         }
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;
         float width = Math.Min(620, Screen.width - 40);
         GUI.Box(new Rect((Screen.width - width) / 2, 80, width, 30), status); // below the game's vehicle name bar
     }
+}
+
+/// The delegates QoL hands to one of the game's undo steps live as long as the step: its history dropped or cleared, or the
+/// step cancelled, they go (they used to be kept for the whole session).
+[HarmonyPatch]
+public static class UndoStepLifetime
+{
+    [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.VehicleDesigner.Operations.VehicleOp), nameof(Sprocket.VehicleDesigner.Operations.VehicleOp.ReleaseInternal))]
+    static void Released(Sprocket.VehicleDesigner.Operations.VehicleOp __instance) => DesignEditor.Forget(__instance.Pointer);
+
+    [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.VehicleDesigner.Operations.VehicleOp), nameof(Sprocket.VehicleDesigner.Operations.VehicleOp.CancelInternal))]
+    static void Cancelled(Sprocket.VehicleDesigner.Operations.VehicleOp __instance) => DesignEditor.Forget(__instance.Pointer);
 }
 
 /// "Restore design before last edit" in the panel of the part the last QoL edit produced.

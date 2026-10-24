@@ -16,6 +16,9 @@ internal static class Ui
         catch { latestBackend = null; return null; } // a replaced native UI can use the screen-contained fallback
     }
     internal static void LeftEditor() => latestBackend = null;
+    /// The mouse is over the game's UI, by the game's own every-frame flag. Hit tests use this: the inspector's measured
+    /// bounds can span the whole screen (its scroll view does in 0.2.56), which hid every hover mark.
+    internal static bool PointerOverGameUi() => Sprocket.Inputsystem.Inputs.PointerOverGUI;
     /// Several native component editors share one inspector layout (e.g. ring and basket).
     /// A QoL postfix must close its final foldout before the next native editor draws.
     internal static void Inspector(string feature, Panel? layout, Action draw) => Guard(feature, () =>

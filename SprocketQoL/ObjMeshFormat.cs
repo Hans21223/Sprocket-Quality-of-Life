@@ -13,7 +13,8 @@ public record ObjDocument(ObjMeshData[] Meshes);
 /// Wavefront polygon data in right-handed, Y-up coordinates. No paths are opened by this codec.
 public static class ObjMeshFormat
 {
-    public const int MaxTextLength = 64 * 1024 * 1024;
+    public const int MaxTextLength = 64 * 1024 * 1024; // historical text ceiling, retained for source compatibility
+    public const long MaxInputCharacters = 1024L * 1024 * 1024;
     public const int MaxLineLength = 256 * 1024;
     public const int MaxVertices = 1_000_000;
     public const int MaxFaces = 1_000_000;
@@ -26,7 +27,16 @@ public static class ObjMeshFormat
     public static ObjDocument Read(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (text.Length > MaxTextLength) throw new FormatException("The OBJ is too large (maximum 64 MiB of text).");
+        using var reader = new StringReader(text);
+        return Read(reader);
+    }
+
+    /// Reads bounded chunks and bounded lines, retaining only geometry rather than a whole-file string.
+    /// The caller owns the reader. Cancellation and IO failures propagate without publishing a partial document.
+    public static ObjDocument Read(TextReader reader, CancellationToken cancellationToken = default, Action<long>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        cancellationToken.ThrowIfCancellationRequested();
         var vertices = new List<Vector3>();
         var texCoords = new List<Vector2>();
         var normals = new List<Vector3>();
@@ -75,6 +85,7 @@ public static class ObjMeshFormat
             var localCorners = new ObjCorner[faces.Count][];
             for (int f = 0; f < faces.Count; f++)
             {
+                if ((f & 127) == 0) cancellationToken.ThrowIfCancellationRequested();
                 localFaces[f] = new int[faces[f].Length];
                 localCorners[f] = new ObjCorner[faces[f].Length];
                 for (int c = 0; c < faces[f].Length; c++)
@@ -98,12 +109,10 @@ public static class ObjMeshFormat
             faces.Clear(); materials.Clear();
         }
 
-        using var reader = new StringReader(text);
-        string? raw;
-        while ((raw = reader.ReadLine()) != null)
+        foreach (var sourceLine in Lines(reader, cancellationToken, progress))
         {
+            var raw = sourceLine;
             lineNumber++;
-            if (raw.Length > MaxLineLength) throw Bad("the line is too long.");
             if (lineNumber == 1) raw = raw.TrimStart('\uFEFF');
             int comment = raw.IndexOf('#');
             string line = (comment >= 0 ? raw[..comment] : raw).Trim();
@@ -177,17 +186,62 @@ public static class ObjMeshFormat
         return new(meshes.ToArray());
     }
 
+    static IEnumerable<string> Lines(TextReader reader, CancellationToken cancellationToken, Action<long>? progress)
+    {
+        var buffer = new char[8192];
+        var line = new StringBuilder(256);
+        long total = 0;
+        int number = 1;
+        bool afterCr = false;
+        int read;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            read = reader.Read(buffer, 0, buffer.Length);
+            if (read == 0) break;
+            total += read;
+            if (total > MaxInputCharacters) throw new FormatException("The OBJ exceeds the 1 GiB streamed input limit.");
+            progress?.Invoke(total);
+            for (int i = 0; i < read; i++)
+            {
+                char c = buffer[i];
+                if (afterCr && c == '\n') { afterCr = false; continue; }
+                afterCr = c == '\r';
+                if (c is '\r' or '\n')
+                {
+                    yield return line.ToString(); line.Clear(); number++;
+                }
+                else
+                {
+                    if (line.Length >= MaxLineLength) throw new FormatException($"OBJ line {number}: the line is too long.");
+                    line.Append(c);
+                }
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (line.Length > 0) yield return line.ToString();
+    }
+
     public static string Write(ObjDocument document, string? materialLibrary = null)
     {
+        using var output = new StringWriter(Invariant);
+        WriteTo(document, output, materialLibrary);
+        return output.ToString();
+    }
+
+    /// Streams an export without applying the import text-size limit. The caller owns the writer.
+    public static void WriteTo(ObjDocument document, TextWriter output, string? materialLibrary = null)
+    {
         ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(output);
         if (document.Meshes == null || document.Meshes.Length == 0 || document.Meshes.Length > MaxMeshes)
             throw new ArgumentException("Export needs 1 to 4096 meshes.", nameof(document));
         if (materialLibrary != null && (materialLibrary.IndexOfAny(new[] { '\r', '\n', '\0', '#' }) >= 0 ||
             materialLibrary.Length > 4096))
             throw new ArgumentException("The material library reference must fit on one OBJ line.", nameof(materialLibrary));
 
-        var output = new StringBuilder("# Sprocket polygon export; right-handed Y-up; coordinates in metres\n");
-        if (!string.IsNullOrWhiteSpace(materialLibrary)) output.Append("mtllib ").Append(materialLibrary.Trim()).Append('\n');
+        output.Write("# Sprocket polygon export; right-handed Y-up; coordinates in metres\n");
+        if (!string.IsNullOrWhiteSpace(materialLibrary)) { output.Write("mtllib "); output.Write(materialLibrary.Trim()); output.Write('\n'); }
         int vertexOffset = 1, uvOffset = 1, normalOffset = 1, totalFaces = 0, totalCorners = 0;
         string activeMaterial = "";
         string Number(float value)
@@ -202,10 +256,6 @@ public static class ObjMeshFormat
             if (label.Length > 4096) throw new ArgumentException("Mesh and material names must be at most 4096 characters.", nameof(document));
             return label.Length == 0 ? fallback : label;
         }
-        void WithinTextLimit()
-        {
-            if (output.Length > MaxTextLength) throw new ArgumentException("Exported OBJ exceeds the 64 MiB text limit.", nameof(document));
-        }
         for (int m = 0; m < document.Meshes.Length; m++)
         {
             var mesh = document.Meshes[m];
@@ -219,21 +269,18 @@ public static class ObjMeshFormat
                 mesh.FaceMaterials != null && mesh.FaceMaterials.Length != mesh.Faces.Length)
                 throw new ArgumentException("Face attributes must match the number of faces.", nameof(document));
 
-            output.Append('\n').Append("o ").Append(Label(mesh.Name, "Mesh " + (m + 1).ToString(Invariant))).Append('\n');
+            output.Write('\n'); output.Write("o "); output.Write(Label(mesh.Name, "Mesh " + (m + 1).ToString(Invariant))); output.Write('\n');
             foreach (var p in mesh.Vertices)
             {
-                output.Append("v ").Append(Number(p.X)).Append(' ').Append(Number(p.Y)).Append(' ').Append(Number(p.Z)).Append('\n');
-                WithinTextLimit();
+                output.Write($"v {Number(p.X)} {Number(p.Y)} {Number(p.Z)}\n");
             }
             if (mesh.TexCoords != null) foreach (var uv in mesh.TexCoords)
             {
-                output.Append("vt ").Append(Number(uv.X)).Append(' ').Append(Number(uv.Y)).Append('\n');
-                WithinTextLimit();
+                output.Write($"vt {Number(uv.X)} {Number(uv.Y)}\n");
             }
             if (mesh.Normals != null) foreach (var n in mesh.Normals)
             {
-                output.Append("vn ").Append(Number(n.X)).Append(' ').Append(Number(n.Y)).Append(' ').Append(Number(n.Z)).Append('\n');
-                WithinTextLimit();
+                output.Write($"vn {Number(n.X)} {Number(n.Y)} {Number(n.Z)}\n");
             }
             for (int f = 0; f < mesh.Faces.Length; f++)
             {
@@ -249,28 +296,27 @@ public static class ObjMeshFormat
                 string material = Label(mesh.FaceMaterials?[f], "");
                 if (material != activeMaterial)
                 {
-                    output.Append("usemtl ").Append(material.Length == 0 ? "off" : material).Append('\n');
+                    output.Write("usemtl "); output.Write(material.Length == 0 ? "off" : material); output.Write('\n');
                     activeMaterial = material;
                 }
-                output.Append('f');
+                output.Write('f');
                 for (int c = 0; c < face.Length; c++)
                 {
                     var corner = corners == null ? new ObjCorner(face[c]) : corners[c];
                     if (corner.Vertex != face[c] || corner.TexCoord < -1 || corner.TexCoord >= uvCount ||
                         corner.Normal < -1 || corner.Normal >= normalCount)
                         throw new ArgumentException("A face corner refers to missing or mismatched mesh data.", nameof(document));
-                    output.Append(' ').Append((corner.Vertex + vertexOffset).ToString(Invariant));
+                    output.Write(' '); output.Write((corner.Vertex + vertexOffset).ToString(Invariant));
                     if (corner.TexCoord >= 0 || corner.Normal >= 0)
                     {
-                        output.Append('/');
-                        if (corner.TexCoord >= 0) output.Append((corner.TexCoord + uvOffset).ToString(Invariant));
-                        if (corner.Normal >= 0) output.Append('/').Append((corner.Normal + normalOffset).ToString(Invariant));
+                        output.Write('/');
+                        if (corner.TexCoord >= 0) output.Write((corner.TexCoord + uvOffset).ToString(Invariant));
+                        if (corner.Normal >= 0) { output.Write('/'); output.Write((corner.Normal + normalOffset).ToString(Invariant)); }
                     }
                 }
-                output.Append('\n'); WithinTextLimit();
+                output.Write('\n');
             }
             vertexOffset += mesh.Vertices.Length; uvOffset += uvCount; normalOffset += normalCount;
         }
-        return output.ToString();
     }
 }

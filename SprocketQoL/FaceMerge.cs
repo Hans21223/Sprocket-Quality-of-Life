@@ -262,20 +262,28 @@ public static class FaceMerge
     }
 
     /// The faces mirroring `which` across x = 0 (the plane the game's Mirror uses), matched by corner positions within
-    /// `tolerance` metres. A face on the plane can be its own twin; faces without a twin are left out.
+    /// `tolerance` metres. A face on the plane can be its own twin; faces without a twin are left out. Where another
+    /// plate's points lie on the same spots (a seam), the face whose corners lie nearest the mirrored ones wins.
     public static List<int> Mirrored(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<int> which, float tolerance)
     {
         var which2 = which.ToList();
-        var point = MeshPlans.Twins(pos, which2.SelectMany(f => faces[f]).Distinct(), tolerance);
-        int Twin(int v) => point.TryGetValue(v, out int t) ? t : -1;
-        static string Corners(IEnumerable<int> vs) => string.Join(",", vs.OrderBy(v => v));
-        var byCorners = new Dictionary<string, int>();
-        for (int f = 0; f < faces.Count; f++) byCorners.TryAdd(Corners(faces[f]), f);
+        var near = MeshPlans.TwinCandidates(pos, which2.SelectMany(f => faces[f]).Distinct(), tolerance);
+        var facesAt = new Dictionary<int, List<int>>();
+        for (int f = 0; f < faces.Count; f++) foreach (int v in faces[f]) (facesAt.TryGetValue(v, out var at) ? at : facesAt[v] = new()).Add(f);
+        Vector3 Mirror(int v) => new(-pos[v].X, pos[v].Y, pos[v].Z);
         var twins = new List<int>();
         foreach (int f in which2)
         {
-            var mirrored = faces[f].Select(Twin).ToArray();
-            if (!mirrored.Contains(-1) && byCorners.TryGetValue(Corners(mirrored), out int twin)) twins.Add(twin);
+            var corners = faces[f];
+            if (!corners.All(near.ContainsKey)) continue;
+            int best = -1; float bestError = float.MaxValue;
+            foreach (int g in near[corners[0]].SelectMany(t => facesAt.GetValueOrDefault(t) ?? new List<int>()).Distinct().OrderBy(g => g))
+            {
+                if (faces[g].Length != corners.Length || !corners.All(v => near[v].Any(faces[g].Contains))) continue;
+                float error = corners.Sum(v => faces[g].Min(w => Vector3.Distance(pos[w], Mirror(v))));
+                if (error < bestError) (best, bestError) = (g, error);
+            }
+            if (best >= 0) twins.Add(best);
         }
         return twins;
     }

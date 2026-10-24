@@ -17,10 +17,10 @@ using Num = System.Numerics.Vector3;
 namespace SprocketQoL;
 
 /// Blender-style mesh tools for hand-made structures (MeshPlans does the maths): Flatten (P), Loop cut (T), Inset (I),
-/// Bevel (V), Smooth Edge, Fillet, Select linked flat faces (U) and Proportional editing (O); plus a 0.5 mm grid and an orthographic view
+/// Bevel (V), Smooth Edge, Fillet, Select linked flat faces (U) and Proportional editing (O); plus a 0.5 mm grid, relative snap and an orthographic view
 /// (Numpad 5). Each tool runs as one of the game's own mesh edits, so Ctrl+Z undoes it, and follows the editor's Mirror.
 [HarmonyPatch]
-public static class MeshTools
+public static partial class MeshTools
 {
     // ---------- running a tool as one of the game's mesh edits ----------
 
@@ -55,19 +55,36 @@ public static class MeshTools
         return false;
     }
 
+    /// True (and says so) while the shape mustn't be changed or selected from code: a QoL window, a capture, an edit or
+    /// one of the game's operations (a drag) under way.
+    internal static bool Busy(PlateStructureEditor editor, string name)
+    {
+        if (EditorModal.BlocksInput) return true;
+        var designer = DesignEditor.Instance;
+        if (!DrawingSheet.Capturing && !PhotoShot.Capturing && designer?.IsBusy != true && designer?.Core?.Editor?.OperationInProgress != true) return false;
+        editor.operations.NotifyError(name + ": finish the current edit or capture first");
+        return true;
+    }
+
     internal static void Run(PlateStructureEditor editor, string name, Func<EditMesh, (bool, string)> apply) => Ui.Guard(name, () =>
     {
+        if (dryRun) { Outline(editor, apply); return; }
+        if (Busy(editor, name)) return;
         var designer = DesignEditor.Instance;
-        if (DrawingSheet.Capturing || PhotoShot.Capturing || designer?.IsBusy == true || designer?.Core?.Editor?.OperationInProgress == true)
-        {
-            editor.operations.NotifyError(name + ": finish the current edit or capture first");
-            return;
-        }
         var currentMesh = editor.meshEditor?.Mesh?.EditMesh;
         if (currentMesh == null) return;
-        RepairThickening(currentMesh);
+        // Corners whose thickening points at an edge that's gone would break the game's copy of the shape: fixed first,
+        // and put back as they were unless the tool goes through (Ctrl+Z goes back to the fixed shape then).
+        var stale = new List<(Loop Loop, Edge Edge, ThickenMode Mode)>();
+        RepairThickening(currentMesh, stale);
+        void PutBack()
+        {
+            foreach (var (loop, edge, mode) in stale) { loop.thickenEdge = edge; loop.thickenMode = mode; }
+            if (stale.Count > 0) currentMesh.MarkDirty(MeshDirtyFlags.All);
+        }
         if (CloneProblem(currentMesh) is string problem)
         {
+            PutBack();
             editor.operations.NotifyError(name + ": " + problem);
             Plugin.ModLog.LogError(name + ": " + problem);
             return;
@@ -84,14 +101,20 @@ public static class MeshTools
             {
                 carriedTools[historyOp.Pointer] = op.Pointer;
                 retained = true;
+                if (stale.Count > 0)
+                {
+                    Plugin.ModLog.LogInfo($"{name}: {stale.Count} corners' thickening pointed at an edge that's gone; set to Auto");
+                    designer?.Say($"{name}: also set {stale.Count} corners to Auto thickening (their edge was gone).", 8);
+                }
             }
-            else ours.Remove(op.Pointer);
+            else { ours.Remove(op.Pointer); PutBack(); }
             editor.meshEditor.SelectFlush();
         }
         catch
         {
             topology.final = currentMesh;
             topology.Revert(topology.context);
+            PutBack();
             currentMesh.MarkDirty(MeshDirtyFlags.All);
             if (!retained) ours.Remove(op.Pointer);
             throw;
@@ -105,7 +128,12 @@ public static class MeshTools
     static void ReleaseTool(Operations.Operation __instance) => Ui.Guard("Mesh tool history", () =>
     {
         if (carriedTools.Remove(__instance.Pointer, out var tool)) ours.Remove(tool);
+        ReleaseTransformHistory(__instance.Pointer, restore: false);
     });
+
+    [HarmonyPrefix, HarmonyPatch(typeof(Operations.Operation), nameof(Operations.Operation.CancelInternal))]
+    static void CancelTransformHistory(Operations.Operation __instance) => Ui.Guard("Proportional editing history",
+        () => ReleaseTransformHistory(__instance.Pointer, restore: true));
 
     /// The mesh as indices: every face's corners (in its own turning), point positions, and what's selected.
     internal sealed class View
@@ -176,18 +204,34 @@ public static class MeshTools
 
     /// Takes out the plan's faces and puts in its new ones, with the game's own mesh calls. Old corners keep their face's
     /// thickness and thickening; new points blend from the corners they come from. Edges and points nothing uses go.
-    static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true, bool preserveBevelEdges = false, ISet<(int,int)>? roundedEdges = null, Action<List<(Face Face,int Source)>>? afterApply = null)
+    internal static (bool, string) Apply(EditMesh mesh, View view, MeshPlans.Rebuild plan, string did, bool gaps = true, bool preserveBevelEdges = false, ISet<(int,int)>? roundedEdges = null, Action<List<(Face Face,int Source)>>? afterApply = null, float rivetReach = 0.05f)
     {
         if (plan.Why != null) return (false, plan.Why);
         if (MeshPlans.Check(view.Pos, view.Corners, plan, gaps) is string broken) return (false, "not done: " + broken);
+        if (MeshPlans.CreationLimit(mesh.vertices.Count, mesh.edges.Count, mesh.faces.Count, mesh.loops.Count,
+                view.Corners, view.Loose, plan) is string oversized)
+            return (false, "not done: " + oversized);
         var edgeSources = preserveBevelEdges ? BevelEdges.Sources(view.Pos, view.Corners, plan, roundedEdges) : null;
+        var smoothing = roundedEdges == null ? null : BevelEdges.Smoothing(view.Pos, view.Corners, plan, roundedEdges, mesh.smoothAngleThreshold);
         // Keep the authored state before creating any topology. The prototype's temporary
         // tessellation/check flags must not spread into the new chamfer or its neighbouring sides.
         const ElementFlags edgeSettings = ElementFlags.Selected | ElementFlags.Sharp | ElementFlags.AlternatePlateConnection;
         var oldEdges = new Dictionary<(int, int), (Edge Edge, ElementFlags Settings)>();
         if (preserveBevelEdges)
             foreach (var edge in mesh.edges)
-                oldEdges[FaceMerge.Key(view.Id(edge.v0), view.Id(edge.v1))] = (edge, edge.flags & edgeSettings);
+            {
+                var key = FaceMerge.Key(view.Id(edge.v0), view.Id(edge.v1));
+                var settings = edge.flags & edgeSettings;
+                // Raising the threshold for new curves must not soften an existing edge
+                // that was hard solely because of the structure's old angle setting.
+                if (smoothing?.OriginalHardEdges.Contains(key) == true)
+                {
+                    settings |= ElementFlags.Sharp;
+                    edge.EnableFlag(ElementFlags.Sharp);
+                }
+                oldEdges[key] = (edge, settings);
+            }
+        if (smoothing != null) mesh.smoothAngleThreshold = smoothing.AngleDegrees;
         int old = view.Pos.Count;
         var verts = new List<Vertex>(view.Verts);
         var ids = new Dictionary<IntPtr, int>();
@@ -267,7 +311,20 @@ public static class MeshTools
                 CopyThickening(l, from);
             }
         }
-        var (kept, lost) = rivets.Place(made.Select(m => m.Face), reach: 0.05f);
+        if (smoothing != null)
+            foreach (var edge in mesh.edges)
+            {
+                var key = FaceMerge.Key(ids[edge.v0.Pointer], ids[edge.v1.Pointer]);
+                if (smoothing.HardEdges.Contains(key)) edge.EnableFlag(ElementFlags.Sharp);
+                else if (smoothing.SmoothEdges.Contains(key))
+                {
+                    bool authoredHard = edgeSources != null && edgeSources.TryGetValue(key, out var source)
+                        && oldEdges.TryGetValue(source, out var saved) && (saved.Settings & ElementFlags.Sharp) != 0
+                        && roundedEdges?.Contains(source) != true;
+                    if (!authoredHard) edge.DisableFlag(ElementFlags.Sharp);
+                }
+            }
+        var (kept, lost) = rivets.Place(made.Select(m => m.Face), reach: rivetReach);
         FinishDelete(mesh);
         afterApply?.Invoke(made);
         var problems = made.Select(m => HoleQuality.Problem(m.Face)).Where(p => p != null).Distinct().ToList();
@@ -365,8 +422,8 @@ public static class MeshTools
         return repointed;
     }
 
-    /// Validate pointer membership rather than just an edge's recycled numeric index.
-    internal static int RepairThickening(EditMesh mesh)
+    /// Validate pointer membership rather than just an edge's recycled numeric index. `was`: each corner changed, as it was.
+    internal static int RepairThickening(EditMesh mesh, List<(Loop Loop, Edge Edge, ThickenMode Mode)>? was = null)
     {
         var edges = Enumerable.Range(0, mesh.edges.Count).Select(i => mesh.edges[i]).Where(e => !e.HasFlag(ElementFlags.Delete)).Select(e => e.Pointer).ToHashSet();
         int repointed = 0;
@@ -378,6 +435,7 @@ public static class MeshTools
                 if (l.thickenEdge is { } edge && (!edges.Contains(edge.Pointer) || l.vertex == null ||
                     edge.v0 == null || edge.v1 == null || !edge.ContainsVertex(l.vertex)))
                 {
+                    was?.Add((l, edge, l.thickenMode));
                     l.thickenEdge = null;
                     if (l.thickenMode == ThickenMode.AlongEdgeManual) l.thickenMode = ThickenMode.AlongEdgeAuto;
                     repointed++;
@@ -451,6 +509,8 @@ public static class MeshTools
     static float insetMm = 50, bevelMm = 30, flatAngle = 5, radiusMm = 500;
     static float smoothMm = 30, filletRadiusMm = 30;
     static int smoothSegments = 4, filletSegments = 4, splitSections = 2;
+    static bool filletAutoControls = true;
+    static float filletControlMm = 1;
     static bool splitOtherDirection;
     static IntPtr lastSplitMesh;
     static List<Num[]> lastSplitFaces = new();
@@ -492,7 +552,7 @@ public static class MeshTools
         {
             var v = new View(mesh);
             if (v.SelectedEdges.Count == 0) return (false, "select an edge first");
-            return Apply(mesh, v, MeshPlans.LoopCut(v.Pos, v.Corners, WithTwins(v, v.SelectedEdges, mirror)), "loop cut");
+            return Apply(mesh, v, PrecisionGeometry.LoopCuts(v.Pos, v.Corners, WithTwins(v, v.SelectedEdges, mirror), loopCuts, loopOffset / 100), "loop cut");
         });
     }
 
@@ -538,11 +598,13 @@ public static class MeshTools
         if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Fillet: switch to Edges and select edges"); return; }
         bool mirror = e.meshEditor.Symmetry;
         float radius = filletRadiusMm / 1000; int segments = filletSegments;
+        bool controls = filletAutoControls;
+        float controlSpacing = controls ? filletControlMm / 1000 : 0;
         Run(e, "Fillet", mesh =>
         {
             var v = new View(mesh);
             var edges = WithTwins(v, v.SelectedEdges, mirror).Select(edge => FaceMerge.Key(edge.Item1, edge.Item2)).ToHashSet();
-            return Apply(mesh, v, EdgeFillet.Round(v.Pos, v.Corners, edges, radius, segments), "fillet", preserveBevelEdges: true, roundedEdges: edges);
+            return Apply(mesh, v, EdgeFillet.Round(v.Pos, v.Corners, edges, radius, segments, controlSpacing), controls ? "fillet with control edges" : "fillet", preserveBevelEdges: true, roundedEdges: edges);
         });
     }
 
@@ -565,19 +627,19 @@ public static class MeshTools
         });
     }
 
-    internal static void SelectBetweenSplits(PlateStructureEditor e)
+    internal static void SelectBetweenSplits(PlateStructureEditor e) => Ui.Guard("Select between splits", () =>
     {
-        Run(e, "Select between splits", mesh =>
+        // The split's result is the live shape itself (the game keeps the copy the split was made on), so it's checked
+        // here: any edit step, a selection made the way the tools are made too, works on a new copy.
+        var live = e.meshEditor?.Mesh?.EditMesh;
+        if (live == null) return;
+        if (lastSplitMesh != live.Pointer || lastSplitFaces.Count == 0) { e.operations.NotifyError("Select between splits: split a face on this structure first (or redo the split)"); return; }
+        var found = new List<Face>();
+        foreach (var face in live.faces)
+            if (SplitFaceSelection.Matches(HoleQuality.Corners(face), lastSplitFaces)) found.Add(face);
+        if (found.Count != lastSplitFaces.Count) { e.operations.NotifyError("Select between splits: the last split was changed; split again first"); return; }
+        MeshSelection.SelectAsStep(e, "Select between splits", MeshEditType.Face, _ =>
         {
-            if (lastSplitMesh != mesh.Pointer || lastSplitFaces.Count == 0) return (false, "split a face on this structure first");
-            var found = new List<Face>();
-            foreach (var face in mesh.faces)
-                if (SplitFaceSelection.Matches(HoleQuality.Corners(face), lastSplitFaces)) found.Add(face);
-            if (found.Count != lastSplitFaces.Count) return (false, "the last split was changed or undone; split again or redo it first");
-            foreach (var face in mesh.faces) face.DisableFlag(ElementFlags.Selected);
-            foreach (var edge in mesh.edges) edge.DisableFlag(ElementFlags.Selected);
-            foreach (var vertex in mesh.vertices) vertex.DisableFlag(ElementFlags.Selected);
-            e.meshEditor.SelectType = MeshEditType.Face;
             foreach (var face in found)
             {
                 face.EnableFlag(ElementFlags.Selected);
@@ -585,10 +647,8 @@ public static class MeshTools
                 for (int k=0;k<face.vertexCount;k++,l=l.next)
                 { l.vertex.EnableFlag(ElementFlags.Selected); l.edge.EnableFlag(ElementFlags.Selected); }
             }
-            mesh.MarkDirty(MeshDirtyFlags.All);
-            return (true, $"selected all {found.Count} faces between the last split lines");
         });
-    }
+    });
 
     static void SelectFlat(PlateStructureEditor e)
     {
@@ -867,6 +927,32 @@ public static class MeshTools
         gridOwner = e.meshEditor;
         gridBefore ??= now;
         if (Math.Abs(now - half) > half * 0.01f) e.meshEditor.GridSize = half;
+    }
+
+    // ---------- relative snap ----------
+
+    /// The game's move with the snap applied to the move instead of to each point. The game puts every moved point on the
+    /// grid, which bends a shape whose points are off it (made on a finer grid, typed in, scaled); this moves the whole
+    /// selection in whole grid steps from where it started, so each point keeps its place in the shape.
+    static bool RelativeMove(MeshTransformation t, Transformation op)
+    {
+        // As the move was first made (redo replays it), not as the setting is now.
+        bool relative = sessions.TryGetValue(op.Pointer, out var kept) ? kept.Relative : Plugin.RelativeSnap?.Value == true;
+        if (!relative || !(op.snap > 0) || op.blocks is not { Length: > 0 } blocks || blocks[0] is not { } block) return false;
+        var move = MeshTransformation.Snap(block.worldToLocal.MultiplyVector(op.ApplyVectorAxisConstraint(op.inputValue)), op.snap);
+        var mesh = t.mesh;
+        var points = block.elements;
+        for (int i = 0; i < points.Length; i++)
+        {
+            var p = points[i];
+            p.location = p.initialLocation + move;
+            if ((p.flag & TransformOptions.MirrorCentreX) != 0) p.location.x = 0; // a point on the centre line stays on it, as in the game's move
+            points[i] = p;
+            mesh.GetVertex(p.index).position = p.location;
+        }
+        mesh.MarkDirty(MeshDirtyFlags.Geometry);
+        t.ApplyMirrorPositions(block); // the mirror images follow, as at the end of the game's move
+        return true;
     }
 
     // ---------- shadows (F5) ----------
@@ -1213,6 +1299,8 @@ public static class MeshTools
     /// The editor closed: back to the game's own camera, so orthographic view doesn't carry into another screen.
     internal static void LeftEditor() => Ui.Guard("Orthographic view", () =>
     {
+        sessions.Clear();
+        transformHistory.Clear();
         if (ortho) ToggleOrtho();
         RestoreCloseZoom();
         RestoreHalfGrid();
@@ -1683,20 +1771,63 @@ public static class MeshTools
         public Num[] Delta = Array.Empty<Num>();
         public Num[]? Final;
     }
-    // By the game's move object. Holding the object keeps its address from being reused by a later move while its
-    // session is kept (for undo and redo); the oldest go past a limit.
-    static readonly Dictionary<IntPtr, (Transformation Op, Session? S)> sessions = new();
-    static readonly Queue<IntPtr> sessionOrder = new();
-    const int KeptSessions = 256;
+    // Keep each native move and its follower state for exactly as long as its undo operation lives. Even a null
+    // session records that proportional editing was off, so enabling it later cannot change an old move on redo;
+    // Relative records the same for relative snap.
+    static readonly Dictionary<IntPtr, (Transformation Op, Session? S, bool Relative)> sessions = new();
+    static readonly Dictionary<IntPtr, MeshGeometryEditOp> transformHistory = new();
 
     static Session? SessionOf(IntPtr op) => sessions.TryGetValue(op, out var s) ? s.S : null;
+
+    [HarmonyPostfix, HarmonyPatch(typeof(PlateStructureEditOperations), nameof(PlateStructureEditOperations.Execute),
+        new[] { typeof(MeshEditOp), typeof(StructureEditOperationOptions), typeof(int) })]
+    static void TrackTransformHistory(MeshEditOp __0, StructureEdit __result) => Ui.Guard("Proportional editing history", () =>
+    {
+        if (__0.TryCast<MeshGeometryEditOp>() is not { } op
+            || op.mode is not (MeshGeometryEditType.Translate or MeshGeometryEditType.Rotate or MeshGeometryEditType.Scale)
+            || __result?.operation is not { } wrapper) return;
+        if (__result.cancelled || op.state == MeshEditOperatorState.Cancelled)
+        {
+            ForgetTransformation(op, restore: true);
+            return;
+        }
+        if (wrapper.State == Operations.OperatorState.Released)
+        {
+            ForgetTransformation(op, restore: false);
+            return;
+        }
+        transformHistory[wrapper.Pointer] = op;
+    });
+
+    static void ReleaseTransformHistory(IntPtr wrapper, bool restore)
+    {
+        if (transformHistory.Remove(wrapper, out var op)) ForgetTransformation(op, restore);
+    }
+
+    static void ForgetTransformation(MeshGeometryEditOp op, bool restore)
+    {
+        if (op.transformation is { } transformation)
+        {
+            // Cancel may arrive directly from the controller, without another pointer update/Restore callback.
+            if (restore) Put(SessionOf(transformation.Pointer), false);
+            sessions.Remove(transformation.Pointer);
+        }
+        foreach (var key in transformHistory.Where(p => p.Value.Pointer == op.Pointer).Select(p => p.Key).ToArray())
+            transformHistory.Remove(key);
+    }
+
+    [HarmonyPostfix, HarmonyPatch(typeof(MeshGeometryEditOp), nameof(MeshGeometryEditOp.Update))]
+    static void TransformUpdated(MeshGeometryEditOp __instance, MeshEditOperatorState __result)
+    {
+        if (__result == MeshEditOperatorState.Cancelled)
+            Ui.Guard("Proportional editing history", () => ForgetTransformation(__instance, restore: true));
+    }
 
     static void Begin(MeshTransformation t, Transformation op)
     {
         if (sessions.ContainsKey(op.Pointer)) return;
-        sessions[op.Pointer] = (op, null);
-        sessionOrder.Enqueue(op.Pointer);
-        while (sessionOrder.Count > KeptSessions) sessions.Remove(sessionOrder.Dequeue());
+        bool relative = Plugin.RelativeSnap?.Value == true;
+        sessions[op.Pointer] = (op, null, relative);
         if (!proportional) return;
         var mesh = t.mesh;
         var all = new List<Vertex>();
@@ -1709,13 +1840,15 @@ public static class MeshTools
         var slot = new Dictionary<int, int>();
         foreach (int m in moving) { slot[m] = s.Movers.Count; s.Movers.Add(all[m]); s.MoverFrom.Add(pos[m]); }
         s.Delta = new Num[s.Movers.Count];
-        foreach (var (v, (movers, weights)) in MeshPlans.Falloff(pos, moving, radiusMm / 1000))
+        var influenceFaces = mesh.faces.ToArray().Select(f => HoleQuality.Corners(f, v => (int)v.index)).ToArray();
+        foreach (var (v, (movers, weights)) in PrecisionGeometry.Influence(pos, influenceFaces, moving, radiusMm / 1000,
+                     proportionalConnected, proportionalTopology, proportionalFalloff))
         {
             s.Near.Add(all[v]);
             s.NearFrom.Add(pos[v]);
             s.Follow.Add((movers.Select(m => slot[m]).ToArray(), weights));
         }
-        sessions[op.Pointer] = (op, s);
+        sessions[op.Pointer] = (op, s, relative);
         Plugin.ModLog.LogInfo($"Proportional editing: {s.Movers.Count} points moving, {s.Near.Count} following within {radiusMm:0} mm");
     }
 
@@ -1748,14 +1881,48 @@ public static class MeshTools
         s.Mesh.MarkDirty(MeshDirtyFlags.Geometry);
     }
 
+    // One prefix for both, in this order: proportional editing notes where the points start before relative snap moves them.
     [HarmonyPrefix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyTranslation))]
-    static void MoveStart(MeshTransformation __instance, Transformation op) => Ui.Guard("Proportional editing", () => Begin(__instance, op));
+    static bool MoveStart(MeshTransformation __instance, Transformation op)
+    {
+        Ui.Guard("Proportional editing", () => Begin(__instance, op));
+        bool moved = false;
+        Ui.Guard("Relative snap", () => moved = RelativeMove(__instance, op));
+        return !moved; // the game's own move, unless relative snap made it
+    }
     [HarmonyPrefix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyScale))]
     static void ScaleStart(MeshTransformation __instance, Transformation op) => Ui.Guard("Proportional editing", () => Begin(__instance, op));
     [HarmonyPrefix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyRotation))]
     static void RotateStart(MeshTransformation __instance, Transformation op) => Ui.Guard("Proportional editing", () => Begin(__instance, op));
     [HarmonyPostfix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyTranslation))]
-    static void Moved(Transformation op) => Ui.Guard("Proportional editing", () => Follow(op));
+    static void Moved(MeshTransformation __instance, Transformation op)
+    {
+        Ui.Guard("Predictive build assist", () => BuildAssist.AfterMove(__instance, op));
+        Ui.Guard("Proportional editing", () => Follow(op));
+    }
+
+    internal static IEnumerable<(Vertex Vertex, Num Original)> PredictionFollowers(Transformation op)
+    {
+        if (SessionOf(op.Pointer) is { } s)
+            for (int i = 0; i < s.Near.Count; i++) yield return (s.Near[i], s.NearFrom[i]);
+    }
+
+    // The same weighted translation as Follow, without changing native geometry.
+    // Build assist uses it to validate mirrored and proportional faces together.
+    internal static void PredictFollowers(Transformation op, Dictionary<int, Num> moved)
+    {
+        if (SessionOf(op.Pointer) is not { } s || s.Near.Count == 0) return;
+        var delta = new Num[s.Movers.Count];
+        for (int i = 0; i < s.Movers.Count; i++)
+            delta[i] = (moved.TryGetValue(s.Movers[i].index, out var p) ? p : HoleQuality.ToNum(s.Movers[i].position)) - s.MoverFrom[i];
+        for (int i = 0; i < s.Near.Count; i++)
+        {
+            var (movers, weights) = s.Follow[i];
+            var at = s.NearFrom[i];
+            for (int j = 0; j < movers.Length; j++) at += weights[j] * delta[movers[j]];
+            moved[s.Near[i].index] = at;
+        }
+    }
     [HarmonyPostfix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyScale))]
     static void Scaled(Transformation op) => Ui.Guard("Proportional editing", () => Follow(op));
     [HarmonyPostfix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyRotation))]
@@ -1777,6 +1944,8 @@ public static class MeshTools
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return;
         Ui.Section(layout, "Mesh tools");
         ui.InfoField("Choose Points, Edges or Faces before selecting.\nMesh edits follow Mirror; Ctrl+Z undoes a step.", 2);
+        DrawPrecision(__instance, layout, ui);
+        Ui.Section(layout, "Shape editing");
         var flattenTip = new Tip("Flatten", "Select three or more points or a face, then choose a mode. Level and axis modes also work with two points. Best-fit makes one flat plane; level makes one height. Sideways keeps one X position; lengthways keeps one Z position. Click the mode to change it. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Button("Flatten (P)", Ui.Callback(() => Flatten(__instance)), flattenTip);
         ui.Button(FlattenNames[(int)flattenMode], Ui.Callback(() => { flattenMode = (MeshPlans.FlattenMode)(((int)flattenMode + 1) % FlattenNames.Length); __instance.RequestRedraw(); }), flattenTip);
@@ -1789,18 +1958,24 @@ public static class MeshTools
         var bevelTip = new Tip("Bevel", "In Edges mode, select edges with a face on each side. Width is the distance cut back on each side, in millimetres. Bevel adds one flat strip across each corner. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Bevel width (mm)", bevelMm, 1, 500, Ui.FloatCallback(v => bevelMm = MathF.Round(v)));
         ui.Button("Bevel (V)", Ui.Callback(() => Bevel(__instance)), bevelTip);
-        var smoothTip = new Tip("Smooth Edge", "In Edges mode, select edges with a face on each side. Smooth (mm) sets the distance cut back on each side. More segments make the curve smoother. Mirror applies; Ctrl+Z undoes the edit.");
+        var smoothTip = new Tip("Smooth Edge", "In Edges mode, select edges with a face on each side. Smooth (mm) sets the distance cut back on each side. More segments make the curve smoother. The width must fit the adjoining faces; a rejected round leaves the shape unchanged. This rounds corners rather than inflating a flat shell into a sphere. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Smooth (mm)", smoothMm, 1, 500, Ui.FloatCallback(v => smoothMm = MathF.Round(v)));
         ui.Slider("Smooth segments", smoothSegments, 2, 16, Ui.FloatCallback(v => smoothSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button("Smooth Edge", Ui.Callback(() => SmoothEdge(__instance)), smoothTip);
-        var filletTip = new Tip("Fillet", "In Edges mode, select corners between two flat faces. Radius is the size of the circular curve, in millimetres; more segments make it smoother. Reduce the radius if it cannot fit. Mirror applies; Ctrl+Z undoes the edit.");
+        var filletTip = new Tip("Fillet", "In Edges mode, select edges between flat faces. Three touching edges also round their shared convex corner. Radius is the size of the circular curve, in millimetres; more segments make it smoother. Rounded surfaces shade smoothly while other hard edges stay sharp. Reduce the radius if it cannot fit. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Radius (mm)", filletRadiusMm, 1, 500, Ui.FloatCallback(v => filletRadiusMm = MathF.Round(v)));
         ui.Slider("Fillet segments", filletSegments, 2, 16, Ui.FloatCallback(v => filletSegments = Math.Clamp((int)MathF.Round(v), 2, 16)));
+        ui.ToggleField("Auto controls", filletAutoControls, Ui.BoolCallback(v => { filletAutoControls = v; __instance.RequestRedraw(); }),
+            "Add support edge loops on the flat and rounded sides of a fillet, helping the shape hold its borders during subdivision. Spacing is the distance from the border in millimetres; smaller values keep it tighter. Curved loops tighten as needed to fit the segments. Reduce spacing if loops cannot fit. Turn off for simpler topology. Mirror applies; Ctrl+Z undoes the whole edit.");
+        if (filletAutoControls)
+            ui.Slider("Spacing (mm)", filletControlMm, .1f, 20, Ui.FloatCallback(v => filletControlMm = MathF.Round(v * 10) / 10));
         ui.Button("Fillet", Ui.Callback(() => Fillet(__instance)), filletTip);
         Ui.Section(layout, "Subdivision");
         ui.InfoField("Loop cut: select an edge.\nSplit faces: use Faces mode and select faces.", 2);
         var loopTip = new Tip("Loop cut", "In Edges mode, select an edge. Loop cut runs through adjoining four-sided faces and adds one cut halfway across them. It stops at an open border or a triangle. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Button("Loop cut (T)", Ui.Callback(() => LoopCut(__instance)), loopTip);
+        ui.Slider("Loop cuts", loopCuts, 1, 16, Ui.FloatCallback(v => loopCuts = Math.Clamp((int)MathF.Round(v), 1, 16)));
+        ui.Slider("Loop offset (%)", loopOffset, 1, 99, Ui.FloatCallback(v => loopOffset = Math.Clamp(v, 1, 99)));
         var splitTip = new Tip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. The strips stay inside the selected faces; neighbouring borders stay joined using triangles and quads. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
         ui.Slider("Split sections", splitSections, 2, 16, Ui.FloatCallback(v => splitSections = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), splitTip);
@@ -1809,6 +1984,9 @@ public static class MeshTools
         ui.Button("Select between splits", Ui.Callback(() => SelectBetweenSplits(__instance)), betweenTip);
 
         Ui.Section(layout, "Selection and movement");
+        ui.ToggleField("Predict moves", Plugin.PredictiveBuild?.Value ?? false,
+            Ui.BoolCallback(v => { if (Plugin.PredictiveBuild != null) Plugin.PredictiveBuild.Value = v; __instance.RequestRedraw(); }),
+            $"Advanced predictive mode: previews nearby movement targets. Hold {Keybinds.Shown("applyPrediction")} to apply the shown target during a move. Settings > Mod Options > Build assist changes the range and targets.");
         ui.InfoField("Select linked flat starts from a selected face.\nProportional editing also moves nearby points.", 2);
         var flatTip = new Tip("Select linked flat", "In Faces mode, select a starting face. Adds connected faces within the angle below. A smaller angle follows flatter surfaces; a larger angle also follows gentle bends. Mirror applies.");
         ui.Slider("Flat angle (°)", flatAngle, 0.5f, 30, Ui.FloatCallback(v => flatAngle = MathF.Round(v * 2) / 2));
@@ -1822,6 +2000,8 @@ public static class MeshTools
             halfGrid = v;
             if (!v) RestoreHalfGrid();
         }), "Hold the snap key (normally Ctrl) while moving to snap to a 0.5 mm grid.");
+        ui.ToggleField("Relative snap", Plugin.RelativeSnap?.Value ?? false, Ui.BoolCallback(v => { if (Plugin.RelativeSnap != null) Plugin.RelativeSnap.Value = v; }),
+            "Snapping a move (snap key, normally Ctrl) moves the selection in whole grid steps from where it started, instead of putting each point on the grid. A shape whose points are off the grid (made on a finer grid, typed in, scaled) keeps its shape.");
         ui.InfoField("Rotation snap: 0 uses the game's setting.", 1);
         ui.Slider("Rotation snap (°)", Plugin.RotationSnap?.Value ?? 0, 0, 90, Ui.FloatCallback(v =>
         {
@@ -1837,6 +2017,14 @@ public static class MeshTools
         var circleTip = new Tip("Circle", "In Points mode, select at least three points around a loop. Circle spaces them evenly on a flat circle around their centre. To make a smoother circle, add more points with Loop cut first. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Button("Circle selected points", Ui.Callback(() => Circle(__instance)), circleTip);
 
+        Ui.Section(layout, "Corners");
+        ui.InfoField("Smart corners picks how each Auto corner\nthickens, to meet the plates round it.", 2);
+        var cornersTip = new Tip("Smart corners", "For every corner left on Auto (selected faces, or the whole shape if none are selected), tries the game's own " +
+            "thickening ways: straight in, along the point, along an edge. It keeps the one whose inside corner lands nearest where this plate's inside " +
+            "meets its neighbours': no plates poking through, no gaps at joints, no spikes at sharp corners. Corners set on purpose are left alone. " +
+            "Saved with the design, so everyone sees the same plates. Mirror applies; Ctrl+Z undoes it.");
+        ui.Button("Smart corners", Ui.Callback(() => SmartCornersTool(__instance)), cornersTip);
+
         Ui.Section(layout, "Mirror fixes");
         ui.InfoField("Fix mirror aligns nearly matching points.\nPoints with no matching partner are selected.", 2);
         var fixTip = new Tip("Fix mirror", "Points nearly each other's mirror image (within the distance below) are made exactly so, and points " +
@@ -1847,41 +2035,38 @@ public static class MeshTools
         ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), fixTip);
         ui.ToggleField("Mirror merges", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
             "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
+    });
 
-        Ui.Section(layout, "View and lighting");
-        ui.ToggleField("Mass markers", MassMarkers.PartMarkersShown, Ui.BoolCallback(v =>
+    /// Mod Options' View settings (they were the mesh panel's View and lighting section).
+    internal static void DrawViewOptions(IGUIElementDrawer ui, Action<object> keep)
+    {
+        void Toggle(string label, bool value, Action<bool> set, string tip)
         {
-            MassMarkers.SetPartMarkersShown(v);
-            __instance.RequestRedraw();
-        }), "Shows each part's blue centre-of-mass diamond when COM is enabled in the bottom-right view filters. Turn this off to keep only the vehicle mass marker. Turning COM off hides both kinds.");
-        if (MassMarkers.PartMarkersShown && !MassMarkers.MasterShown)
-            ui.InfoField("Part mass markers are hidden while COM is off in the view filters.", 1);
-        ui.InfoField($"{Keybinds.Shown("ortho")}: orthographic view.\n{Keybinds.Shown("shadows")} shadows, {Keybinds.Shown("flashlight")} flashlight, {Keybinds.Shown("fullbright")} fullbright.", 2);
-        ui.ToggleField("Zoom in close", closeZoom, Ui.BoolCallback(v => closeZoom = v),
-            "Lets the camera move close to small parts for detailed editing.");
-        ui.ToggleField("Straight views", orthoLock, Ui.BoolCallback(v => orthoLock = v),
-            $"Orthographic view snaps to front, back, sides or top (orbiting flips between them). {Keybinds.Shown("front")} / {Keybinds.Shown("side")} / {Keybinds.Shown("top")}: front, side, top; " +
-            "with Ctrl, back and the other side. Off: orbit freely.");
-        ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100));
-        var backTip = new Tip("Orthographic backdrop", "Click to cycle backgrounds. Scene keeps the sky and map; grey, white and black show only the vehicle on a plain background. Applies in orthographic view.");
-        ui.Button(BackdropNames[backdrop], Ui.Callback(() => { backdrop = (backdrop + 1) % BackdropNames.Length; __instance.RequestRedraw(); }), backTip);
-        ui.ToggleField("Whole view", orthoWhole, Ui.BoolCallback(v =>
+            var change = Ui.BoolCallback(set);
+            keep(change);
+            ui.ToggleField(label, value, change, tip);
+        }
+        ui.InfoField($"{Keybinds.Shown("ortho")}: orthographic view. {Keybinds.Shown("front")} / {Keybinds.Shown("side")} / {Keybinds.Shown("top")}: front, side, top; with Ctrl, back and the other side.", 2);
+        Toggle("Zoom in close", closeZoom, v => closeZoom = v, "Lets the camera move close to small parts for detailed editing.");
+        Toggle("Straight views", orthoLock, v => orthoLock = v,
+            "Orthographic view snaps to front, back, sides or top (orbiting flips between them). Off: orbit freely.");
+        Toggle("Whole view", orthoWhole, v =>
         {
             orthoWhole = v;
             if (!v && ortho) { var cam = Camera.main; if (cam != null && orbit != null) cam.transform.position = orbit.AppliedPosition; }
-        }), $"Orthographic view ({Keybinds.Shown("ortho")}): the camera steps back so it never cuts into the vehicle when you zoom in close. " +
+        }, "Orthographic view: the camera steps back so it never cuts into the vehicle when you zoom in close. " +
             "Off: it stays where the game puts it, and zooming in close shows the inside.");
-        ui.ToggleField("Measurements", orthoMeasure, Ui.BoolCallback(v => orthoMeasure = v),
+        Toggle("Ortho sizes", orthoMeasure, v => orthoMeasure = v,
             "Orthographic view, looking straight from the front, back, side or top: the vehicle's overall size across the screen " +
             "(under it) and up the screen (beside it), to the centimetre. Antennas aren't counted.");
-        ui.InfoField("Light strength is relative to the scene's sunlight.", 1);
-        ui.Slider("Flashlight (%)", Plugin.FlashlightPercent?.Value ?? 80, 5, 300, Ui.FloatCallback(v => { if (Plugin.FlashlightPercent != null) Plugin.FlashlightPercent.Value = MathF.Round(v); }));
-        ui.Slider("Fullbright (%)", Plugin.FullbrightPercent?.Value ?? 25, 5, 150, Ui.FloatCallback(v =>
-        {
-            if (Plugin.FullbrightPercent != null) Plugin.FullbrightPercent.Value = MathF.Round(v);
-            FillBrightness();
-        }));
-    });
+        var zoom = Ui.FloatCallback(v => orthoZoom = MathF.Round(v) / 100);
+        keep(zoom);
+        ui.Slider("Ortho zoom (%)", orthoZoom * 100, 10, 1000, zoom);
+        var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i => backdrop = i))!;
+        keep(pick);
+        ui.InfoField("Orthographic backdrop: scene keeps the sky and map; grey, white and black show only the vehicle.", 2);
+        ui.TabGroup(pick, backdrop, BackdropNames.Select(n => n["Backdrop: ".Length..]).ToArray());
+    }
 }
 
 /// Turrets can be copied with Alt and mirrored like other parts: the game's turret ring part says it can't be duplicated

@@ -49,14 +49,15 @@ public static class MirrorMerge
     {
         pending = null;
         if (again || !(Plugin.MirrorMerge?.Value ?? true) || Hotkeys.Current is not { } editor || !editor.meshEditor.Symmetry) return;
-        if (editor.meshEditor.Mesh?.EditMesh?.Pointer != mesh.Pointer) return; // another mesh than the one being edited
+        // Another mesh than the one being edited, unless it's the copy a hover outline runs the merge on.
+        if (editor.meshEditor.Mesh?.EditMesh?.Pointer != mesh.Pointer && !MeshTools.Outlining) return;
         var v = new MeshTools.View(mesh);
         var chosen = v.SelectedPoints.ToList();
         if (chosen.Count < 2) return;
         var twins = MeshPlans.Twins(v.Pos, chosen, MeshTools.Tolerance);
         if (chosen.Any(p => !twins.ContainsKey(p)))
         {
-            Plugin.ModLog.LogInfo($"Mirror merge: {chosen.Count(p => !twins.ContainsKey(p))} of the points have no mirror image, so only this side merges (Fix mirror first)");
+            Note($"Mirror merge: {chosen.Count(p => !twins.ContainsKey(p))} of the points have no mirror image, so only this side merges (Fix mirror first)");
             return;
         }
         var images = chosen.Select(p => twins[p]).Distinct().ToList();
@@ -73,7 +74,7 @@ public static class MirrorMerge
         var kept = p.Chosen.Where(x => alive.Contains(x.Pointer)).ToList();
         if (kept.Count != 1 || p.Images.Any(x => !alive.Contains(x.Pointer)))
         {
-            Plugin.ModLog.LogInfo($"Mirror merge: the game's merge left {kept.Count} of the points; the other side is left alone");
+            Note($"Mirror merge: the game's merge left {kept.Count} of the points; the other side is left alone");
             return;
         }
         var at = kept[0].position;
@@ -86,9 +87,12 @@ public static class MirrorMerge
         var image = p.Images.Where(x => alive.Contains(x.Pointer)).ToList();
         // Exactly opposite, so Mirror pairs the two merged points.
         if (image.Count == 1) image[0].position = new Vector3(-at.x, at.y, at.z);
-        Plugin.ModLog.LogInfo(image.Count == 1 ? $"Mirror merge: the {p.Images.Count} mirrored points merged too, at ({-at.x:0.####}, {at.y:0.####}, {at.z:0.####})"
+        Note(image.Count == 1 ? $"Mirror merge: the {p.Images.Count} mirrored points merged too, at ({-at.x:0.####}, {at.y:0.####}, {at.z:0.####})"
                                                : $"Mirror merge: the game's merge of the mirrored points left {image.Count} of them");
     });
+
+    /// Logged, except while a hover outline runs a merge or split on a copy (every hover would log it again).
+    internal static void Note(string text) { if (!MeshTools.Outlining) Plugin.ModLog.LogInfo(text); }
 
     static HashSet<IntPtr> Alive(EditMesh mesh)
     {
@@ -99,7 +103,7 @@ public static class MirrorMerge
     }
 
     /// The mesh's selection: each element's Selected flag, the ordered list and the counts.
-    sealed class Selection
+    internal sealed class Selection
     {
         readonly List<Element> flagged = new(), listed = new();
         readonly HashSet<IntPtr> selectedLoops = new();
@@ -163,5 +167,66 @@ public static class MirrorMerge
             var faces = mesh.faces;
             for (int i = 0; i < faces.Count; i++) yield return faces[i];
         }
+    }
+}
+
+/// With Mirror on, Split (the game's edge cut) cuts the other side too: the game turns Mirror off for it. After the
+/// game splits from the selected edge, the same split runs from that edge's mirror image, inside the same edit (Ctrl+Z
+/// undoes both), and the selection is put back as the game left it. A cut whose ring crosses the middle has already
+/// split the mirror edge itself, so it's left as it is.
+[HarmonyPatch]
+public static class MirrorSplit
+{
+    static bool again; // inside the second, mirrored split
+    static (Vertex A, Vertex B, int Edges)? pending; // the mirror edge's ends, and the edge count before the split
+
+    [HarmonyPrefix, HarmonyPatch(typeof(SplitOp), "ExecuteInternal")]
+    static void Before(EditMesh mesh) => Ui.Guard("Mirror split", () =>
+    {
+        pending = null;
+        if (again || Hotkeys.Current is not { } editor || !editor.meshEditor.Symmetry) return;
+        // Another mesh than the one being edited, unless it's the copy a hover outline runs the split on.
+        if (editor.meshEditor.Mesh?.EditMesh?.Pointer != mesh.Pointer && !MeshTools.Outlining) return;
+        var v = new MeshTools.View(mesh);
+        if (v.SelectedEdges.Count != 1) return; // the game splits from exactly one edge
+        var (a, b) = v.SelectedEdges[0];
+        var twins = MeshPlans.Twins(v.Pos, new[] { a, b }, MeshTools.Tolerance);
+        if (!twins.TryGetValue(a, out int ia) || !twins.TryGetValue(b, out int ib) || Between(mesh, v.Verts[ia], v.Verts[ib]) == null)
+        {
+            MirrorMerge.Note("Mirror split: the edge has no mirror image, so only this side splits (Fix mirror first)");
+            return;
+        }
+        // An edge on or across the middle is its own image: one cut does both sides.
+        if (FaceMerge.Key(ia, ib) != FaceMerge.Key(a, b)) pending = (v.Verts[ia], v.Verts[ib], mesh.edges.Count);
+    });
+
+    [HarmonyPostfix, HarmonyPatch(typeof(SplitOp), "ExecuteInternal")]
+    static void After(SplitOp __instance, EditMesh mesh) => Ui.Guard("Mirror split", () =>
+    {
+        if (again || pending is not { } p) return;
+        pending = null;
+        // The game refused (nothing added), or its cut ran through the mirror edge too.
+        if (mesh.edges.Count == p.Edges || Between(mesh, p.A, p.B) is not { } image) return;
+        var selected = MirrorMerge.Selection.Save(mesh);
+        MirrorMerge.Selection.Only(mesh, new List<Vertex> { p.A, p.B });
+        image.EnableFlag(ElementFlags.Selected);
+        mesh.selection.Add(image);
+        mesh.selectedEdgeCount = 1;
+        int before = mesh.edges.Count;
+        again = true;
+        try { AccessTools.Method(typeof(SplitOp), "ExecuteInternal").Invoke(__instance, new object[] { mesh }); }
+        finally { again = false; selected.Restore(mesh); mesh.MarkDirty(MeshDirtyFlags.All); }
+        MirrorMerge.Note(mesh.edges.Count > before ? "Mirror split: the mirrored edge split too" : "Mirror split: the game didn't split the mirrored edge");
+    });
+
+    static Edge? Between(EditMesh mesh, Vertex a, Vertex b)
+    {
+        var edges = mesh.edges;
+        for (int i = 0; i < edges.Count; i++)
+        {
+            IntPtr v0 = edges[i].v0.Pointer, v1 = edges[i].v1.Pointer;
+            if (v0 == a.Pointer && v1 == b.Pointer || v0 == b.Pointer && v1 == a.Pointer) return edges[i];
+        }
+        return null;
     }
 }

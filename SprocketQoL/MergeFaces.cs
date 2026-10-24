@@ -112,6 +112,9 @@ public static class MergeFaces
         var asPlan = new MeshPlans.Rebuild(todo.SelectMany(g => g.Faces).Distinct().ToList(),
             todo.SelectMany(g => g.NewFaces.Select(nf => new MeshPlans.NewFace(nf, g.Faces[0]))).ToList(), new(), null);
         if (MeshPlans.Check(pos, corners, asPlan, gaps: SideModes[sides] != FaceMerge.SidePoints.RunPast) is string broken) return "nothing merged: " + broken;
+        // The new faces are made before the old ones go: that peak must fit the game's limits too.
+        if (MeshPlans.CreationLimit(mesh.vertices.Count, mesh.edges.Count, mesh.faces.Count, mesh.loops.Count, corners, loose, asPlan) is string full)
+            return "nothing merged: " + full;
 
         // Edges that stay: those of every face not being replaced, loose ones, and (added below) the new faces' sides.
         var replaced = todo.SelectMany(g => g.Faces).ToHashSet();

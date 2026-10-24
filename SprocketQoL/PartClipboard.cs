@@ -201,6 +201,19 @@ public static class PartClipboard
         }
     }
 
+    internal static void PasteJson(DesignEditor editor, string clipJson)
+    {
+        var selected = editor.SelectedParts();
+        int targetParent = selected.Count > 0 ? selected.Last() : -1;
+        editor.RequestEdit("Pasting parts", "Pasted parts from the workshop. Restore undoes it.", currentJson =>
+        {
+            var (newJson, focusVuid, count) = BlueprintClipboard.PasteInto(currentJson, clipJson, targetParent);
+            return new EditResult(newJson, focusVuid, $"pasted {count} parts");
+        });
+    }
+
+    internal static void CopySelected(DesignEditor editor) => DoCopy(editor);
+
     static void DoPaste(DesignEditor editor)
     {
         string? clipJson = BlueprintClipboard.GetClipboardJson();
@@ -210,13 +223,6 @@ public static class PartClipboard
             return;
         }
 
-        var selected = editor.SelectedParts();
-        int targetParent = selected.Count > 0 ? selected.Last() : -1;
-
-        editor.RequestEdit("Pasting parts", "Pasted parts from clipboard. Restore undoes it.", currentJson =>
-        {
-            var (newJson, focusVuid, count) = BlueprintClipboard.PasteInto(currentJson, clipJson, targetParent);
-            return new EditResult(newJson, focusVuid, $"pasted {count} parts");
-        });
+        PasteJson(editor, clipJson);
     }
 }

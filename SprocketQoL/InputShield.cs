@@ -12,6 +12,7 @@ internal static class InputShield
 
     /// The mouse is over a QoL box this frame.
     internal static void Claim() => claimedFrame = Time.frameCount;
+    internal static bool Claimed => claimedFrame >= Time.frameCount - 1;
 
     /// Once a frame (late): the game's mouse controls off while claimed, back on once not.
     internal static void Update()

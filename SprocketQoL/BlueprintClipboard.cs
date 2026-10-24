@@ -9,6 +9,93 @@ namespace SprocketQoL;
 public static class BlueprintClipboard
 {
     static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
+    const string PaintTag = "Quality of Life parts:";
+
+    static int[] PaintOwners(JsonObject job) => (job["description"]?.GetValue<string>() ?? "").StartsWith(PaintTag, StringComparison.Ordinal)
+        ? job["description"]!.GetValue<string>()[PaintTag.Length..].Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => int.TryParse(s, out int id) ? id : -1).Where(id => id >= 0).Distinct().ToArray() : Array.Empty<int>();
+
+    static IEnumerable<JsonObject> OwnPaintJobs(JsonArray blocks) => blocks
+        .Where(b => b?["type"]?.GetValue<string>() == "paintJob" && b["blueprint"] is JsonObject job && (job["description"]?.GetValue<string>() ?? "").StartsWith(PaintTag, StringComparison.Ordinal))
+        .Select(b => b!["blueprint"]!.AsObject());
+
+    /// Own paint follows parts made from others (separated, scattered, a mirror image made real, a turret's twin): each
+    /// new part joins the own paint list its source is on.
+    public static void CopyPaintOwners(JsonArray blocks, IEnumerable<(int Source, int Made)> made)
+    {
+        var pairs = made.ToList();
+        foreach (var job in OwnPaintJobs(blocks))
+        {
+            var owners = PaintOwners(job);
+            var joining = pairs.Where(p => owners.Contains(p.Source)).Select(p => p.Made).ToArray();
+            if (joining.Length > 0) job["description"] = PaintTag + " " + string.Join(" ", owners.Concat(joining).Distinct().OrderBy(id => id));
+        }
+    }
+
+    /// Parts that are gone leave the own paint lists (the paint itself stays, for the parts still on it).
+    public static void DropPaintOwners(JsonArray blocks, ICollection<int> gone)
+    {
+        foreach (var job in OwnPaintJobs(blocks))
+            if (PaintOwners(job).Any(gone.Contains))
+                job["description"] = PaintTag + " " + string.Join(" ", PaintOwners(job).Where(id => !gone.Contains(id)).OrderBy(id => id));
+    }
+
+    static JsonArray CopyPaint(JsonArray blocks, ISet<int> selected)
+    {
+        var result = new JsonArray();
+        var registered = blocks.FirstOrDefault(b => b?["type"]?.GetValue<string>() == "paintJobRegister")?["blueprint"]?["paintJobIDs"] as JsonArray;
+        var active = registered?.Skip(5).Take(9).Where(v=>v is JsonValue).Select(v=>v!.GetValue<int>()).ToHashSet();
+        foreach (var block in blocks)
+            if (block?["type"]?.GetValue<string>() == "paintJob" && (active == null || active.Contains(Conversion.Id(block,"id"))) && block["blueprint"] is JsonObject job)
+            {
+                var owners = PaintOwners(job).Where(selected.Contains).ToArray();
+                if (owners.Length == 0) continue;
+                var copy = JsonNode.Parse(job.ToJsonString())!.AsObject();
+                copy["description"] = PaintTag + " " + string.Join(" ", owners);
+                result.Add(copy);
+            }
+        return result;
+    }
+
+    static void PastePaint(JsonObject clip, JsonArray blocks, IReadOnlyDictionary<int,int> ids, ref int nextBlock)
+    {
+        if (clip["ownPaint"] is not JsonArray paints || paints.Count == 0) return;
+        var register = blocks.FirstOrDefault(b => b?["type"]?.GetValue<string>() == "paintJobRegister")?["blueprint"]?["paintJobIDs"] as JsonArray
+            ?? throw new InvalidOperationException("The destination has no paint register. Load a complete vehicle before pasting painted parts.");
+        var jobs = blocks.Where(b => b?["type"]?.GetValue<string>() == "paintJob").ToDictionary(b => Conversion.Id(b!, "id"), b => b!["blueprint"]!.AsObject());
+        string Style(JsonObject job)
+        {
+            var clone = JsonNode.Parse(job.ToJsonString())!.AsObject(); clone.Remove("description"); clone.Remove("name");
+            return string.Join("|", clone.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value?.ToJsonString()));
+        }
+        foreach (var item in paints)
+        {
+            if (item is not JsonObject job) throw new FormatException("Invalid copied paint.");
+            var owners = PaintOwners(job).Where(ids.ContainsKey).Select(id => ids[id]).ToArray();
+            if (owners.Length == 0) continue;
+            int slot = -1; string style = Style(job);
+            for (int i = 5; i < Math.Min(register.Count, 14); i++)
+                if (register[i] is JsonValue value && value.TryGetValue<int>(out int id) && jobs.TryGetValue(id, out var existing)
+                    && (existing["description"]?.GetValue<string>() ?? "").StartsWith(PaintTag, StringComparison.Ordinal) && Style(existing) == style)
+                { slot = i; break; }
+            if (slot >= 0)
+            {
+                var existing = jobs[register[slot]!.GetValue<int>()];
+                existing["description"] = PaintTag + " " + string.Join(" ", PaintOwners(existing).Concat(owners).Distinct().OrderBy(id => id));
+                continue;
+            }
+            for (int i = 5; i < 14; i++)
+                if (i >= register.Count || register[i] == null || register[i]!.GetValue<int>() < 0
+                    || jobs.TryGetValue(register[i]!.GetValue<int>(),out var vacant) && (vacant["description"]?.GetValue<string>() ?? "").StartsWith(PaintTag,StringComparison.Ordinal) && PaintOwners(vacant).Length==0)
+                { slot = i; break; }
+            if (slot < 0) throw new InvalidOperationException("The destination's nine custom paint slots are full. Free a slot before pasting this painted group.");
+            while (register.Count <= slot) register.Add(-1);
+            var copy = JsonNode.Parse(job.ToJsonString())!.AsObject();
+            copy["description"] = PaintTag + " " + string.Join(" ", owners.OrderBy(id => id));
+            int newId = nextBlock++; register[slot] = newId;
+            blocks.Add(new JsonObject { ["id"] = newId, ["type"] = "paintJob", ["blueprint"] = copy }); jobs[newId] = copy;
+        }
+    }
 
     /// Directory where the clipboard file is saved. In the game this is BepInExRootPath; in tests it defaults to BaseDirectory.
     public static string? StorageDirectory { get; set; }
@@ -33,7 +120,8 @@ public static class BlueprintClipboard
         if (!string.IsNullOrEmpty(memoryJson)) return memoryJson;
         try
         {
-            if (File.Exists(ClipboardFilePath))
+            // Bounded like the part library; a file over it is left alone rather than read into memory.
+            if (File.Exists(ClipboardFilePath) && new FileInfo(ClipboardFilePath).Length <= WorkshopStorage.MaxPartBytes)
                 return memoryJson = File.ReadAllText(ClipboardFilePath);
         }
         catch { }
@@ -43,7 +131,15 @@ public static class BlueprintClipboard
     public static void SetClipboardJson(string json)
     {
         memoryJson = json;
-        try { File.WriteAllText(ClipboardFilePath, json); }
+        try { WorkshopStorage.AtomicWrite(ClipboardFilePath, json); } // a crash mid-write leaves the old copy, not half of the new
+        catch { }
+        // History is a separate, bounded convenience store. A disk error must never break copying itself.
+        try
+        {
+            WorkshopStorage.Root = StorageDirectory ?? Path.GetDirectoryName(ClipboardFilePath)!;
+            string source = JsonNode.Parse(json)?["sourceVehicle"]?.GetValue<string>() ?? "Copied parts";
+            WorkshopStorage.SavePart(source.Length == 0 ? "Copied parts" : source, json, history: true);
+        }
         catch { }
     }
 
@@ -186,6 +282,7 @@ public static class BlueprintClipboard
             ["sourceVehicle"] = b["header"]?["name"]?.GetValue<string>() ?? "",
             ["rootVuids"] = JsonNode.Parse($"[{string.Join(",", rootVuids)}]")!.AsArray(),
             ["rootTransforms"] = rootTransforms,
+            ["ownPaint"] = CopyPaint(blocks, allToCopy),
             ["objects"] = new JsonArray(allToCopy.Select(v => JsonNode.Parse(objects[v].ToJsonString())!).ToArray()),
             ["blueprints"] = new JsonArray(blueprintIds.Select(id => blocksById.GetValueOrDefault(id)).Where(x => x != null).Select(x => JsonNode.Parse(x!.ToJsonString())!).ToArray()),
             ["meshes"] = new JsonArray(meshIds.Select(id => meshes.FirstOrDefault(x => x!["vuid"]?.GetValue<int>() == id)).Where(x => x != null).Select(x => JsonNode.Parse(x!.ToJsonString())!).ToArray()),
@@ -201,6 +298,14 @@ public static class BlueprintClipboard
     {
         var b = Conversion.Parse(targetBlueprintJson);
         var clip = JsonNode.Parse(clipboardJson)?.AsObject() ?? throw new Exception("Invalid clipboard data.");
+        var (focus, count) = PasteInto(b, clip, targetParentVuid);
+        return (Write(b), focus, count);
+    }
+
+    /// The same on a design already read, changed in place: many pastes into one design (a pattern's copies) read and
+    /// write it once, not once each. `clip` isn't changed.
+    internal static (int FocusVuid, int PastedCount) PasteInto(JsonObject b, JsonObject clip, int targetParentVuid = -1)
+    {
         var clipObjects = clip["objects"]?.AsArray();
         if (clipObjects == null || clipObjects.Count == 0) throw new Exception("Clipboard is empty.");
 
@@ -359,8 +464,11 @@ public static class BlueprintClipboard
             targetObjectsArray.Add(o);
         }
 
-        return (b.ToJsonString(Indented), focusVuid, clipObjects.Count);
+        PastePaint(clip, targetBlocks, vuidMap, ref nextBlock);
+        return (focusVuid, clipObjects.Count);
     }
+
+    internal static string Write(JsonObject design) => design.ToJsonString(Indented);
 
     /// Removes parts and their descendants from the blueprint JSON, unlinking broken mirror references
     /// and cleaning up orphaned blueprints and meshes. Protects the vehicle hull from deletion.
@@ -455,6 +563,7 @@ public static class BlueprintClipboard
                 meshes.RemoveAt(i);
         }
 
+        DropPaintOwners(blocks, dead);
         return b.ToJsonString(Indented);
     }
 }

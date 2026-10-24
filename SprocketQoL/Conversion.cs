@@ -275,6 +275,7 @@ public static class Conversion
             }
             list.Add(d);
         }
+        BlueprintClipboard.CopyPaintOwners(blocks, copy.Select(v => (v, map[v])));
         // The twin ring's turret body is the copy of this ring's.
         if (ring["structureID"] is JsonValue rb && map.TryGetValue(rb.GetValue<int>(), out int twinBody)) objects[twinRing]["structureID"] = twinBody;
         if (ring["compartmentBodyID"]?["structureVuid"] is JsonValue cb && map.TryGetValue(cb.GetValue<int>(), out int twinCompartment) && objects[twinRing]["compartmentBodyID"] is JsonObject tc)

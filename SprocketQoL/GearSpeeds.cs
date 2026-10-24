@@ -56,7 +56,7 @@ public static class GearSpeeds
         {
             accelTask = null;
             if (done.IsFaulted) Plugin.ModLog.LogWarning($"{Title}: acceleration run failed: {done.Exception?.GetBaseException()}");
-            accelText = done.IsFaulted ? "Acceleration: couldn't work it out (see the log)." : done.Result;
+            accelText = done.IsCompletedSuccessfully ? done.Result : "Acceleration: couldn't work it out (see the log).";
             try { redrawPanel?.Invoke(); } catch { }
         }
         if (pendingEngineRedraw != null && !IsDragging())
@@ -80,6 +80,7 @@ public static class GearSpeeds
         predictionKey = null;
         predictionText = null;
         accelKey = accelText = null;
+        accelCancel?.Cancel();
         accelTask = null;
         redrawPanel = null;
         transmissionPanel = null;
@@ -259,6 +260,7 @@ public static class GearSpeeds
     // The acceleration run takes a moment, so it runs in the background; the panel shows it once it's done.
     static string? accelKey, accelText;
     static Task<string>? accelTask;
+    static CancellationTokenSource? accelCancel; // the run going on; a newer design stops it, so runs never pile up
     static Action? redrawPanel;
 
     static string Acceleration(DriveSim.Vehicle vehicle, string key, float top)
@@ -267,15 +269,18 @@ public static class GearSpeeds
         if (accelKey != key || accelTask == null)
         {
             accelKey = key; accelText = null;
-            accelTask = Task.Run(() => Milestones(vehicle, top));
+            accelCancel?.Cancel();
+            var cancel = (accelCancel = new CancellationTokenSource()).Token;
+            accelTask = Task.Run(() => Milestones(vehicle, top, cancel), cancel);
+            accelTask.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted); // seen, even once a newer run replaces it
         }
         return "Working out the acceleration...";
     }
 
     /// Seconds to each round speed on the way to top speed (0-20, 0-40... or 0-10, 0-20... for slow vehicles).
-    static string Milestones(DriveSim.Vehicle vehicle, float top)
+    static string Milestones(DriveSim.Vehicle vehicle, float top, CancellationToken cancel)
     {
-        var run = DriveSim.Accelerate(vehicle);
+        var run = DriveSim.Accelerate(vehicle, cancel: cancel);
         float topKmh = top * 3.6f, step = topKmh > 45 ? 20 : 10;
         var parts = new List<string>();
         for (float kmh = step; kmh < topKmh * 0.97f; kmh += step)

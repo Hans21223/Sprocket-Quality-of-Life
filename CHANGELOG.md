@@ -1,3 +1,44 @@
+# Quality of Life 1.10.0
+
+New:
+
+- **Workshop** (`Ctrl+Shift+Space`): tool presets, saved part groups with geometry thumbnails, clipboard history, saved geometry selections, pinned checkpoints, recovery as a new vehicle file and a shareable support report.
+- **Tool search** (`Ctrl+Space`): every action by name, with favourites and recent actions; **part patterns** repeat the selected parts along a line or round a circle.
+- **Hover outlines:** with the mouse over a mesh tool's button (QoL's, and the game's Fill, Merge, Split and Delete), what it would make is outlined on the part (what Delete takes away, in red). Tools act at once, with no Confirm window; Ctrl+Z undoes them.
+- **Hover highlight:** marks the point or edge a click would pick, and outlines the face under the mouse in Faces mode.
+- **Point and edge picking:** the closest visible target within a screen radius; Alt+N cycles overlapping ones (Mod Options > Selection).
+- **Precision** (structure inspector): measurements, exact lengths, sliding along edges, reference alignment, several loop cuts with an offset, connected or topology-distance falloff, mesh-health inspection and welding of selected duplicate points.
+- **Smart corners** (mesh panel > Corners): each corner left on Auto gets the game's thickening way that meets the plates round it best, saved with the design.
+- **Create Hole:** points at the four cardinal directions (32 segments by default; Ring switches back to Flat sides); touching flat faces get one hole through them (Hole per face: one each); hovering the button outlines the holes.
+- **Split** (the game's edge cut) cuts both sides with Mirror on, in one edit.
+- **Fillet:** spherical corners where three convex edges meet, smooth shading on the rounds, and Auto control edges with adjustable spacing.
+- **Smooth Edge:** right-angle rounds are true cylinders with spherical corners (no dented junctions); rounds too wide for the faces are refused.
+- **Drape as a net:** Holes (mm) sets the hole size, down to 2 mm.
+- **Predictive build assist** (off by default, Mod Options > Build assist): movement guides to nearby points, edge middles and face centres; hold N to use one.
+- **Relative snap** (Mod Options): snapped moves go in whole grid steps, so off-grid shapes keep their shape.
+- **OBJ:** import streams large files with units, up axis, dimensions and a rotatable preview; export writes large files straight to disk.
+- **Black box fix** (Mod Options, on by default): for graphics cards where smoke and fire show black boxes.
+- **View settings** (orthographic views, backdrop, zoom in close) moved to Mod Options > Settings > View.
+
+Fixes and safety:
+
+- **Size limits:** Merge faces, Create Hole and OBJ import refuse results past the game's 65,535 points, edges, faces or corners per part, before anything changes.
+- **Edits stay with their vehicle:** an edit, Restore or drawing started on one vehicle stops if another is opened first.
+- **In-place edits** compare every part's whole shape (points, thickness, corners, weld marks, rivets) in their safety trial; anything off loads the planned design instead.
+- **Align** and new faces: crossed (bow-tie) plates are refused.
+- **Own paint** follows parts made by Separate, Scatter, Make mirror side real and turret twins; merged or deleted parts leave the paint lists.
+- **Selection steps** (Select between splits, Select reported points, saved selections) undo with Ctrl+Z.
+- **Mirror matching** picks the nearest point, so a seam with doubled points pairs the right faces.
+- **Keep only the overlap** on open plates (a sawtooth of single plates) just trims them.
+- **Thickening repair** before a mesh tool is put back if the tool is refused.
+- **Pinned backups** are kept even when their note is damaged; saved part groups always show up in the list, and one too big to open can still be deleted.
+- **Radial patterns** that would stack copies (a sweep past one turn) are refused.
+- **Drawing sheet:** tall or long designs draw (the views shrink to fit the graphics card); F11 waits until a photo is done.
+- **QoL windows** (Workshop, tool search, part patterns) always give the editor's keys back when they close.
+- **Selection sets** skipped after a shape change load again once Ctrl+Z brings that shape back.
+- **Drive recorder** (diagnostics) checks the game still keeps its drivetrain where it reads it, and stays off if not.
+- **Lighter:** measurements, point and edge picking, hover outlines, the Workshop, part patterns, proportional editing and acceleration runs do much less work.
+
 # Quality of Life 1.9.0
 
 - **Right-click menu:** Ctrl + a right click that doesn't drag opens a Blender-style menu at the mouse with what

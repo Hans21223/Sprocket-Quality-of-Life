@@ -156,6 +156,18 @@ static class ObjBlueprintImportTests
         MustReject(() => ObjBlueprintImport.Build(null!, "Invalid"), "null OBJ rejected");
         var oversized = new ObjDocument(new[] { new ObjMeshData("Huge", new[] { new Vector3(2000, 0, 0), new Vector3(2001, 0, 0), new Vector3(2000, 1, 0) }, new[] { new[] { 0, 1, 2 } }) });
         MustReject(() => ObjBlueprintImport.Build(oversized, "Too large", 1000), "scaled coordinates beyond native supported range rejected");
+        // Review DATA-01: one structure holds at most 65,535 points and face corners, whatever the OBJ format allows.
+        static ObjMeshData Triangles(string label, int count, int first = 0) => new(label,
+            Enumerable.Range(first, count).SelectMany(i => new[] { new Vector3(i % 160, 0, i / 160), new Vector3(i % 160 + .5f, 0, i / 160), new Vector3(i % 160, 0, i / 160 + .5f) }).ToArray(),
+            Enumerable.Range(0, count).Select(i => new[] { 3 * i, 3 * i + 1, 3 * i + 2 }).ToArray());
+        var full = ObjBlueprintImport.Build(new ObjDocument(new[] { Triangles("Full", 21_845) }), "Full");
+        Check(full.VertexCount == 65_535 && full.FaceCount == 21_845, "exactly 65,535 points and corners still import");
+        MustReject(() => ObjBlueprintImport.Build(new ObjDocument(new[] { Triangles("Over", 21_846) }), "Over"), "65,538 points and corners refused");
+        MustReject(() => ObjBlueprintImport.Build(new ObjDocument(new[] { Triangles("Half", 10_923), Triangles("Other half", 10_923, 10_923) }), "Over"),
+            "small objects that only pass the limit together are refused: they share one structure");
+        var grid = new ObjMeshData("Grid", Enumerable.Range(0, 129 * 129).Select(i => new Vector3(i % 129, 0, i / 129)).ToArray(),
+            Enumerable.Range(0, 128 * 128).Select(i => { int a = i % 128 + i / 128 * 129; return new[] { a, a + 1, a + 130, a + 129 }; }).ToArray());
+        MustReject(() => ObjBlueprintImport.Build(new ObjDocument(new[] { grid }), "Grid"), "16,384 shared-point quads refused: 65,536 corners though only 16,641 points");
         Check(unchanged == ObjMeshFormat.Write(model), "successful and failed conversions never mutate supplied OBJ data");
 
         // Compare the exact saved-file schema with a real native Plate Structures file, read-only.

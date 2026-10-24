@@ -349,6 +349,25 @@ public static class PartPaint
                                              : "Own paint: no paintable material found on these parts", 5);
     }
 
+    /// The own paint slots of those of `parts` that have one (part -> slot).
+    internal static Dictionary<int, int> SlotsOf(IEnumerable<int> parts)
+    {
+        var list = parts.ToList();
+        if (list.Select(PainterOf).FirstOrDefault(p => p != null) is not { } painter) return new();
+        var owners = Owners(painter);
+        return list.Where(owners.ContainsKey).ToDictionary(v => v, v => owners[v]);
+    }
+
+    /// Parts to these paint slots (0: the vehicle's) from inside a QoL edit's own undoable step, so separated copies keep
+    /// their part's own paint and removed parts leave the lists. Never throws into the edit.
+    /// `near`: parts painted by the same painter, for when those in `slots` aren't painted yet (a copy just made: its
+    /// materials come after, and then take the slot from the list).
+    internal static void Put(Dictionary<int, int> slots, IEnumerable<int>? near = null) => Ui.Guard("Own paint", () =>
+    {
+        if (slots.Count > 0 && slots.Keys.Concat(near ?? Enumerable.Empty<int>()).Select(PainterOf).FirstOrDefault(p => p != null) is { } painter)
+            SetSlots(painter, slots);
+    });
+
     /// Each part to its paint slot (0: the vehicle's), making own paint jobs that aren't there yet, and repaints them.
     /// Returns how many materials moved.
     static int SetSlots(VehicleMaterialPainter p, Dictionary<int, int> slots)
@@ -486,7 +505,8 @@ public static class ImageAddresses
             var candidate = at >= 0 ? Path.Combine(games, tail[at..].Replace('/', Path.DirectorySeparatorChar)) : "";
             if (File.Exists(candidate)) found = candidate;
             else
-                foreach (var folder in new[] { "Paint", "Decals" })
+                // The folder the address names first: a decal's shared.png mustn't turn into a paint's of that name.
+                foreach (var folder in tail.Contains("/Decals/", StringComparison.OrdinalIgnoreCase) ? new[] { "Decals", "Paint" } : new[] { "Paint", "Decals" })
                     if (Path.Combine(games, "Sprocket", folder, Path.GetFileName(path)) is var named && File.Exists(named)) { found = named; break; }
         }
         if (found == null) { Log(uri, "file not found in My Games\\Sprocket either"); return uri; }

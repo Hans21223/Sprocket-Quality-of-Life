@@ -106,22 +106,57 @@ public static class AddonEdits
     }
 
     /// Face count of every part's hand-made shape in a design (parts without one are left out).
-    public static Dictionary<int, int> FaceCounts(string json)
+    public static Dictionary<int, int> FaceCounts(string json) =>
+        PartShapes(Conversion.Parse(json)).ToDictionary(p => p.Vuid, p => p.Data["mesh"]!["faces"]!.AsArray().Count);
+
+    /// Every part's shape as the game saves it, whatever order its points, edges and faces are listed in: each face's
+    /// corners (exact positions, from the lowest), thicknesses and corner modes, the marked edges, the smoothing angle and
+    /// the rivet count. A moved point, a changed thickness or corner mode, or a lost weld mark or rivet changes it.
+    /// `full` false: only where the faces are, for comparing with a plan the game may tidy as it loads it.
+    public static Dictionary<int, string> ShapeKeys(string json, bool full = true) =>
+        PartShapes(Conversion.Parse(json)).ToDictionary(p => p.Vuid, p => ShapeKey(p.Data, full));
+
+    static IEnumerable<(int Vuid, JsonNode Data)> PartShapes(JsonObject b)
     {
-        var b = Conversion.Parse(json);
-        var blocks = b["blueprints"]!.AsArray();
-        var meshes = b["meshes"]!.AsArray();
-        var blocksById = blocks.Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "id"));
-        var meshesById = meshes.Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "vuid"));
-        var counts = new Dictionary<int, int>();
+        var blocksById = b["blueprints"]!.AsArray().Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "id"));
+        var meshesById = b["meshes"]!.AsArray().Where(x => x != null).ToDictionary(x => Conversion.Id(x!, "vuid"));
         foreach (var (vuid, o) in Conversion.Objects(b))
         {
             var id = o["structureBlueprintVuid"];
-            var block = id == null ? null : blocksById.GetValueOrDefault(id.GetValue<int>());
-            var mesh = block?["blueprint"]?["bodyMeshVuid"];
-            if (mesh != null && meshesById.GetValueOrDefault(mesh.GetValue<int>())?["meshData"]?["mesh"]?["faces"] is JsonArray faces) counts[vuid] = faces.Count;
+            var mesh = (id == null ? null : blocksById.GetValueOrDefault(id.GetValue<int>()))?["blueprint"]?["bodyMeshVuid"];
+            if (mesh != null && meshesById.GetValueOrDefault(mesh.GetValue<int>())?["meshData"] is { } data && data["mesh"]?["faces"] is JsonArray)
+                yield return (vuid, data);
         }
-        return counts;
+    }
+
+    static string ShapeKey(JsonNode data, bool full)
+    {
+        var mesh = data["mesh"]!;
+        var xyz = mesh["vertices"]!.AsArray().Select(n => n!.GetValue<float>()).ToArray();
+        string P(int i) => FormattableString.Invariant($"{xyz[3 * i]:R},{xyz[3 * i + 1]:R},{xyz[3 * i + 2]:R}");
+        // Numbers as the game holds them (32-bit), so "5" and "5.0" agree.
+        static string N(JsonNode? n) => n is JsonValue v && v.TryGetValue(out float x) ? FormattableString.Invariant($"{x:R}") : n?.ToJsonString() ?? "";
+        var faces = new List<string>();
+        foreach (var f in mesh["faces"]!.AsArray())
+        {
+            var t = f!["t"]?.AsArray();
+            long modes = f["tm"]?.GetValue<long>() ?? 0; // a byte per corner; "te" (edge numbers) depends on the listing order
+            var corners = f["v"]!.AsArray().Select((n, k) => full ? $"{P(n!.GetValue<int>())}/{N(t?[k])}/{(modes >> (8 * k)) & 0xFF}" : P(n!.GetValue<int>())).ToArray();
+            int first = Enumerable.Range(0, corners.Length).MinBy(k => corners[k], StringComparer.Ordinal);
+            faces.Add(string.Join(";", corners[first..].Concat(corners[..first])));
+        }
+        if (!full) return string.Join("|", faces.OrderBy(s => s, StringComparer.Ordinal));
+        var ends = mesh["edges"]?.AsArray();
+        var marks = new List<string>();
+        if (ends != null && mesh["edgeFlags"] is JsonArray flags)
+            for (int e = 0; e < flags.Count && 2 * e + 1 < ends.Count; e++)
+                if (flags[e]!.GetValue<int>() is int flag and not 0)
+                {
+                    var (a, b) = (P(ends[2 * e]!.GetValue<int>()), P(ends[2 * e + 1]!.GetValue<int>()));
+                    marks.Add((string.CompareOrdinal(a, b) < 0 ? a + "-" + b : b + "-" + a) + "=" + flag);
+                }
+        return string.Join("|", faces.OrderBy(s => s, StringComparer.Ordinal)) + "#" + string.Join("|", marks.OrderBy(s => s, StringComparer.Ordinal))
+               + "#" + N(data["smoothAngle"]) + "#" + (data["rivets"]?["nodes"]?.AsArray().Count ?? 0);
     }
 
     /// The mesh number part `vuid`'s structure uses in a design.
@@ -181,7 +216,10 @@ public static class AddonEdits
 
     /// How a cloth drapes: points `Cell` apart; `Hole` the share of each cell left open, a net's mesh (0: solid cloth);
     /// `Stiffness` how hard it resists bending (0.15 drapes like canvas); what it lands on, `Parts` being the picked parts.
-    public sealed record DrapeOptions(float Cell = 0.1f, float Hole = 0, float Stiffness = 0.15f, LandsOn LandsOn = LandsOn.Everything, IReadOnlyCollection<int>? Parts = null);
+    /// `HoleSize` (metres): a net's holes that small, the settled sheet's cells cut into finer ones (0, or bigger than a
+    /// cell's hole: one hole a cell).
+    public sealed record DrapeOptions(float Cell = 0.1f, float Hole = 0, float Stiffness = 0.15f, LandsOn LandsOn = LandsOn.Everything,
+                                      IReadOnlyCollection<int>? Parts = null, float HoleSize = 0);
 
     /// Blender's cloth drape: add-on `part` becomes a sheet of cloth as wide and long as its top, points `Cell` apart,
     /// dropped from there onto the vehicle's other shapes until it settles (Cloth.Drape). The shape it settles in is the
@@ -252,9 +290,14 @@ public static class AddonEdits
         // capped where the game stops for a few seconds at most; run Cloth.Drape off the main thread to allow finer sheets.
         if (size.Columns * size.Rows > MaxClothPoints)
             throw new Exception($"The cloth would have {size.Columns * size.Rows:N0} points; at most {MaxClothPoints:N0} drape without the game stopping for long. Space the points further apart (now {how.Cell * 100:0} cm) or drape a smaller add-on.");
-        int corners = (size.Columns - 1) * (size.Rows - 1) * (how.Hole > 0 ? 16 : 4);
+        // Small holes: the sheet drapes at its spacing, then each settled cell is cut into `split` x `split` cells, each
+        // with its hole (draping at hole size would take thousands of times longer).
+        int split = how.Hole > 0 && how.HoleSize > 0 ? Math.Clamp((int)MathF.Ceiling(how.Cell * how.Hole / how.HoleSize - 1e-4f), 1, 1000) : 1;
+        long corners = (long)(size.Columns - 1) * (size.Rows - 1) * split * split * (how.Hole > 0 ? 16 : 4);
         if (corners > ushort.MaxValue)
-            throw new Exception($"The {(how.Hole > 0 ? "net" : "cloth")} would have {corners:N0} face corners; the game holds at most 65,535 in one part. Space the points further apart (now {how.Cell * 100:0} cm) or drape a smaller add-on.");
+            throw new Exception(split > 1
+                ? $"A net with {how.Cell * how.Hole / split * 1000:0.#} mm holes this big would have {corners:N0} face corners; the game holds at most 65,535 in one part. Use bigger holes or drape a smaller add-on: at this hole size about {Math.Sqrt(ushort.MaxValue / 16.0) * how.Cell / split * 100:0} cm square fits."
+                : $"The {(how.Hole > 0 ? "net" : "cloth")} would have {corners:N0} face corners; the game holds at most 65,535 in one part. Space the points further apart (now {how.Cell * 100:0} cm) or drape a smaller add-on.");
         var draped = Cloth.Drape(corner, across, along, how.Cell, solid, floor, gap: 0.01f + thickness / 1000f, bend: how.Stiffness);
 
         // The sheet's cells as quads, facing up as the sheet started: a cell (a, a+1, a+cols+1, a+cols) faces along
@@ -262,6 +305,20 @@ public static class AddonEdits
         int cols = draped.Columns, rows = draped.Rows;
         bool acrossAlongUp = Vector3.Cross(across, along).Y >= 0;
         var local = draped.Points.Select(q => Vector3.Transform(q, intoShape)).ToList();
+        if (split > 1)
+        {
+            // The finer grid, its points spread evenly across each settled cell (shared along the cells' sides).
+            int fineCols = (cols - 1) * split + 1, fineRows = (rows - 1) * split + 1;
+            var fine = new List<Vector3>(fineCols * fineRows);
+            for (int J = 0; J < fineRows; J++)
+                for (int I = 0; I < fineCols; I++)
+                {
+                    int i = Math.Min(I / split, cols - 2), j = Math.Min(J / split, rows - 2), a = j * cols + i;
+                    float u = (I - i * split) / (float)split, w = (J - j * split) / (float)split;
+                    fine.Add(Vector3.Lerp(Vector3.Lerp(local[a], local[a + 1], u), Vector3.Lerp(local[a + cols], local[a + cols + 1], u), w));
+                }
+            (local, cols, rows) = (fine, fineCols, fineRows);
+        }
         var quads = new List<int[]>();
         for (int j = 0; j + 1 < rows; j++)
             for (int i = 0; i + 1 < cols; i++)
@@ -285,7 +342,7 @@ public static class AddonEdits
         foreach (var s in structures) s["armourVolume"] = armour;
         int meshId = Conversion.Id(structures[0], "bodyMeshVuid");
         return new EditPlan(b.ToJsonString(Indented), group.ToDictionary(v => v, _ => meshId), group.ToDictionary(v => v, _ => facesBefore), new(), new(), inPlace, part,
-                            $"{(how.Hole > 0 ? "Net" : "Cloth")} of {cols} x {rows} points draped over part {string.Join(" and its twin ", group)} in {draped.Steps} steps{(draped.Settled ? "" : " (stopped before it fully settled)")}.");
+                            $"{(how.Hole > 0 ? $"Net with {how.Cell * how.Hole / split * 1000:0.#} mm holes" : "Cloth")} of {cols} x {rows} points draped over part {string.Join(" and its twin ", group)} in {draped.Steps} steps{(draped.Settled ? "" : " (stopped before it fully settled)")}.");
     }
 
     /// The mirror side of add-on `part` becomes an add-on of its own, edited apart from it: the image the game shows of a
@@ -303,6 +360,7 @@ public static class AddonEdits
         var place = Placement(objects, before, live);
         var imageAt = place.ImageAt;
         var made = new Dictionary<int, Matrix4x4>(); // new part -> where it must show (its own points mirrored when that's mirrored)
+        var madeFrom = new List<(int, int)>(); // source -> new part, for own paint
         string summary;
         if (o["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int twin) && twin != part && objects.TryGetValue(twin, out var other))
         {
@@ -353,6 +411,7 @@ public static class AddonEdits
                 b["objects"]!.AsArray().Add(copy);
                 Unlink(source);
                 made[vuid] = mirrored ? Flip * image : image; // its own (mirrored) points to where the image showed
+                madeFrom.Add((v, vuid));
                 foreach (int child in objects.Where(kv => kv.Value["pvuid"]?.GetValue<int>() == v && Conversion.GuidOf(kv.Value) == Conversion.AddonGuid
                                                           && kv.Value["structureBlueprintVuid"] != null && Imaged(objects, kv.Key)).Select(kv => kv.Key).ToList())
                     Real(child, vuid, w);
@@ -362,6 +421,7 @@ public static class AddonEdits
             summary = $"The mirror image of part {part} is now add-on {made.Keys.First()}{(made.Count > 1 ? $", with the {made.Count - 1} add-on{(made.Count == 2 ? "" : "s")} on it" : "")}, each with its own shape.";
         }
         else throw new Exception("This add-on isn't mirrored: there's no mirror side to make real.");
+        BlueprintClipboard.CopyPaintOwners(blocks, madeFrom);
         var all = Conversion.Objects(b);
         var after = Conversion.WorldMatrices(all);
         foreach (var (id, matrix) in before)
@@ -433,6 +493,7 @@ public static class AddonEdits
         var list = b["objects"]!.AsArray();
         int next = NextPartId(objects);
         var planned = new Dictionary<int, Matrix4x4>();
+        var scattered = new List<(int, int)>(); // type -> copy, for own paint
         count = Math.Clamp(count, 1, MaxScatter);
         for (int c = 0; c < count; c++)
         {
@@ -453,7 +514,9 @@ public static class AddonEdits
             Conversion.WriteTransform(copy["transform"]!.AsObject(), place * intoTarget);
             list.Add(copy);
             planned[vuid] = place;
+            scattered.Add((type, vuid));
         }
+        BlueprintClipboard.CopyPaintOwners(b["blueprints"]!.AsArray(), scattered);
         var all = Conversion.Objects(b);
         foreach (var (id, matrix) in Conversion.WorldMatrices(all))
             if (planned.TryGetValue(id, out var want) ? !Conversion.Near(Shape(all[id], matrix), want) : !Conversion.Near(matrix, world[id]))
@@ -741,7 +804,9 @@ public static class AddonEdits
                 structure["armourVolume"] = Math.Max(0, (structure["armourVolume"]?.GetValue<double>() ?? 0) + result.ArmourChange);
             foreach (int t in group) meshIds[t] = Conversion.Id(owned[0], "bodyMeshVuid");
             report.Add($"{result.FacesCut} faces of part {string.Join(" and its twin ", group)}"
-                       + (pocket ? $" ({result.PocketFaces} pocket plates)" : keepInside ? $" ({result.PocketFaces} plates from the add-on close it)" : "")
+                       + (!pocket && !keepInside ? ""
+                          : result.Open && result.PocketFaces == 0 ? (pocket ? " (its plates don't enclose a space there, so a plain hole: no walls)" : " (its plates don't enclose a space there, so they're only trimmed)")
+                          : pocket ? $" ({result.PocketFaces} pocket plates)" : $" ({result.PocketFaces} plates from the add-on close it)")
                        + (result.RivetsMoved + result.RivetsDropped > 0 ? $", rivets {result.RivetsMoved} moved {result.RivetsDropped} removed" : ""));
         }
         return (inPlace, meshIds, oldFaces, report, groups);
@@ -950,6 +1015,7 @@ public static class AddonEdits
             pair[made[0]]["transform"]!["mirrorVuid"] = made[1];
             pair[made[1]]["transform"]!["mirrorVuid"] = made[0];
         }
+        BlueprintClipboard.CopyPaintOwners(blocks, owners.Zip(made));
         return made;
     }
 
@@ -1187,6 +1253,7 @@ public static class AddonEdits
         }
         foreach (var o in list)
             if (o!["transform"]?["mirrorVuid"] is JsonValue mv && mv.TryGetValue<int>(out int mirror) && gone.Contains(mirror)) Unlink(o.AsObject());
+        BlueprintClipboard.DropPaintOwners(blocks, gone);
     }
 
     // Adds `mesh` (vertices mapped through `m`) to `into`, keeping each face's armour, thickening settings and any rivets.
@@ -1296,7 +1363,7 @@ public static class AddonEdits
         return (MeshData(verts, faces, thicknessMm, smooth), faces.Sum(f => Area(verts, f)) * thicknessMm / 1000.0);
     }
 
-    static JsonObject MeshData(List<Vector3> verts, List<int[]> faces, int thicknessMm, float smoothAngle)
+    internal static JsonObject MeshData(List<Vector3> verts, List<int[]> faces, int thicknessMm, float smoothAngle)
     {
         var edges = new List<(int, int)>();
         var seen = new HashSet<(int, int)>();

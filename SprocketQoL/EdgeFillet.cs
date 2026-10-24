@@ -7,9 +7,10 @@ namespace SprocketQoL;
 /// Plans only: an unsupported or oversized corner leaves the input untouched.
 public static class EdgeFillet
 {
-    public static MeshPlans.Rebuild Round(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<(int A, int B)> edges, float radius, int segments = 4)
+    public static MeshPlans.Rebuild Round(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IEnumerable<(int A, int B)> edges, float radius, int segments = 4, float supportSpacing = 0)
     {
         if (!float.IsFinite(radius) || radius <= 0) return Rebuild.Fail("radius must be positive");
+        if (!float.IsFinite(supportSpacing) || supportSpacing < 0) return Rebuild.Fail("support spacing must be zero or positive");
         if (pos.Any(p => !Finite(p)) || faces.Any(f => f.Length < 3 || f.Distinct().Count() != f.Length || f.Any(v => v < 0 || v >= pos.Count)))
             return Rebuild.Fail("the mesh contains invalid points or faces");
         if (segments < 2 || segments > 16) return Rebuild.Fail("use 2 to 16 segments");
@@ -43,6 +44,17 @@ public static class EdgeFillet
             if (!Finite(centre)) return Rebuild.Fail("this corner is too sharp for a fillet");
             profiles[e] = new Profile(axis, centre, setback, new Dictionary<int, Vector3> { [sides[0]] = d1, [sides[1]] = d2 });
         }
+        var samples=Enumerable.Range(0,segments+1).Select(s => s/(float)segments).ToList();
+        if (supportSpacing>0)
+        {
+            if (supportSpacing<=tolerance*2) return Rebuild.Fail("support spacing is too small for this mesh; use a larger spacing");
+            float maxAngle=sel.Max(e => MathF.Acos(Math.Clamp(Vector3.Dot(normals[edgeFaces[e][0]],normals[edgeFaces[e][1]]),-1,1)));
+            // Use one common profile so the extra rows also join around multi-edge corners.
+            // Both curved support edges lie within the requested distance of their tangent.
+            float near=MathF.Min(supportSpacing/(radius*maxAngle),.5f/segments);
+            samples.Insert(1,near); samples.Insert(samples.Count-1,1-near);
+        }
+        int steps=samples.Count-1;
         var pointFaces = new Dictionary<int, List<int>>();
         for (int f = 0; f < faces.Count; f++)
             foreach (int v in faces[f])
@@ -185,10 +197,10 @@ public static class EdgeFillet
                     .Select(f => normals[f]).Where(n => Math.Abs(Vector3.Dot(n,axis)) > 1e-5f
                       && Math.Abs(Vector3.Dot(n,p-pos[u])) < tolerance && Math.Abs(Vector3.Dot(n,q-pos[u])) < tolerance)
                     .Select(n => (Vector3?)n).FirstOrDefault();
-                path = new int[segments+1]; path[0]=key.Item1; path[^1]=key.Item2;
-                for (int s=1;s<segments;s++)
+                path = new int[steps+1]; path[0]=key.Item1; path[^1]=key.Item2;
+                for (int s=1;s<steps;s++)
                 {
-                    float t=s/(float)segments, a=angle*t;
+                    float t=samples[s], a=angle*t;
                     Vector3 offset=profile.Centre+radius*(radial*MathF.Cos(a)+tangent*MathF.Sin(a));
                     float along=endNormal is Vector3 normal ? -Vector3.Dot(normal,offset)/Vector3.Dot(normal,axis) : ap+(aq-ap)*t;
                     path[s]=Add(pos[u]+offset+axis*along,u);
@@ -209,11 +221,11 @@ public static class EdgeFillet
                 if (new[] { aa, ab, ba, bb }.Any(c => c.Length != 1)) return Rebuild.Fail("this junction cannot be rounded");
                 var ap = Curve(aa[0], ab[0], a, e); var bp = Curve(ba[0], bb[0], b, e);
                 if (ap == null || bp == null) return Rebuild.Fail("the requested radius cannot meet this edge junction");
-                for (int s = 0; s < segments; s++)
-                    shapes.Add((new[] { bp[s], ap[s], ap[s+1], bp[s+1] }, s * 2 < segments ? f1 : f2));
+                for (int s = 0; s < steps; s++)
+                    shapes.Add((new[] { bp[s], ap[s], ap[s+1], bp[s+1] }, s * 2 < steps ? f1 : f2));
                 foreach (var (u, path, reverse) in new[] { (a, ap, true), (b, bp, false) })
                 {
-                    for (int s = 0; s < segments; s++)
+                    for (int s = 0; s < steps; s++)
                     {
                         int p = reverse ? path[s+1] : path[s], q = reverse ? path[s] : path[s+1];
                         if (endsAt.Contains(u))
@@ -245,7 +257,193 @@ public static class EdgeFillet
                 }
                 shapes[i] = (expanded.ToArray(), source);
             }
+        if (supportSpacing>0)
+        {
+            // An actual inset loop supports the flat side of every rebuilt plate boundary.
+            // Keep the shared outer IDs, so its quad band meets the fillet without a crack.
+            for (int i=0;i<remove.Count;i++)
+            {
+                var (outer,source)=shapes[i];
+                Vector3 normal=normals[source],origin=Position(outer[0]);
+                if (outer.Any(v => Math.Abs(Vector3.Dot(Position(v)-origin,normal))>tolerance))
+                    return Rebuild.Fail("support loops need flat neighbouring faces");
+                var inset=new Vector3[outer.Length];
+                for (int k=0;k<outer.Length;k++)
+                {
+                    Vector3 p=Position(outer[k]),before=p-Position(outer[(k+outer.Length-1)%outer.Length]),after=Position(outer[(k+1)%outer.Length])-p;
+                    if (before.Length()<=tolerance || after.Length()<=tolerance)
+                        return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                    Vector3 n1=Vector3.Normalize(Vector3.Cross(normal,Vector3.Normalize(before))),n2=Vector3.Normalize(Vector3.Cross(normal,Vector3.Normalize(after)));
+                    float denominator=1+Vector3.Dot(n1,n2);
+                    if (denominator<1e-5f) return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                    inset[k]=p+(n1+n2)*(supportSpacing/denominator);
+                    if (!Finite(inset[k])) return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                }
+                Vector3 axis=Vector3.Normalize(Position(outer[1])-origin),up=Vector3.Cross(normal,axis);
+                Vector2 Flat(Vector3 p)=>new(Vector3.Dot(p-origin,axis),Vector3.Dot(p-origin,up));
+                var boundary=outer.Select(v => Flat(Position(v))).ToArray();
+                var inner=inset.Select(Flat).ToArray();
+                bool Inside(Vector2 p)
+                {
+                    bool inside=false;
+                    for (int k=0,j=boundary.Length-1;k<boundary.Length;j=k++)
+                        if ((boundary[k].Y>p.Y)!=(boundary[j].Y>p.Y)
+                            && p.X<(boundary[j].X-boundary[k].X)*(p.Y-boundary[k].Y)/(boundary[j].Y-boundary[k].Y)+boundary[k].X) inside=!inside;
+                    return inside;
+                }
+                bool Crosses(Vector2 a,Vector2 b,Vector2 c,Vector2 d)
+                {
+                    static float Turn(Vector2 a,Vector2 b,Vector2 c)=>(b.X-a.X)*(c.Y-a.Y)-(b.Y-a.Y)*(c.X-a.X);
+                    float ac=Turn(a,b,c),ad=Turn(a,b,d),ca=Turn(c,d,a),cb=Turn(c,d,b);
+                    return ac*ad<=0 && ca*cb<=0
+                        && Math.Max(Math.Min(a.X,b.X),Math.Min(c.X,d.X))<=Math.Min(Math.Max(a.X,b.X),Math.Max(c.X,d.X))+tolerance
+                        && Math.Max(Math.Min(a.Y,b.Y),Math.Min(c.Y,d.Y))<=Math.Min(Math.Max(a.Y,b.Y),Math.Max(c.Y,d.Y))+tolerance;
+                }
+                for (int k=0;k<outer.Length;k++)
+                {
+                    int next=(k+1)%outer.Length;
+                    if (!Inside(inner[k]) || !Inside((inner[k]+inner[next])*.5f)
+                        || Vector3.Dot(inset[next]-inset[k],Position(outer[next])-Position(outer[k]))<=tolerance*tolerance)
+                        return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                    for (int j=k+2;j<outer.Length;j++)
+                        if ((j+1)%outer.Length!=k && Crosses(inner[k],inner[next],inner[j],inner[(j+1)%outer.Length]))
+                            return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                    for (int j=0;j<outer.Length;j++)
+                    {
+                        int after=(j+1)%outer.Length;
+                        // Endpoints and midpoints can be inside a concave plate while the
+                        // connecting segment passes through a narrow notch between them.
+                        if (Crosses(inner[k],inner[next],boundary[j],boundary[after])
+                            || (j!=k && after!=k && Crosses(boundary[k],inner[k],boundary[j],boundary[after])))
+                            return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                    }
+                }
+                var ids=new int[outer.Length];
+                var face=faces[source];
+                int[]? hull=null;
+                for (int k=0;k<outer.Length;k++)
+                {
+                    // Interpolate on the original plate, rather than copying the outer edge's
+                    // origins: the interior loop must not inherit that edge's sharp flags.
+                    var weights=new Dictionary<int,float>();
+                    void BlendFrom(IReadOnlyList<int> polygon)
+                    {
+                        for (int t=1;t+1<polygon.Count;t++)
+                        {
+                            Vector3 a=pos[polygon[0]],b=pos[polygon[t]]-a,c=pos[polygon[t+1]]-a,p=inset[k]-a;
+                            double bb=Vector3.Dot(b,b),bc=Vector3.Dot(b,c),cc=Vector3.Dot(c,c),pb=Vector3.Dot(p,b),pc=Vector3.Dot(p,c),denominator=bb*cc-bc*bc;
+                            if (denominator<=1e-18) continue;
+                            float wb=(float)((pb*cc-pc*bc)/denominator),wc=(float)((pc*bb-pb*bc)/denominator),wa=1-wb-wc;
+                            if (Math.Min(wa,Math.Min(wb,wc)) < -1e-5f) continue;
+                            foreach (var (vertex,weight) in new[] { (polygon[0],wa),(polygon[t],wb),(polygon[t+1],wc) })
+                                weights[vertex]=weights.GetValueOrDefault(vertex)+Math.Max(0,weight);
+                        }
+                    }
+                    BlendFrom(face);
+                    if (weights.Count==0)
+                    {
+                        // A concave fillet can fill part of the original face's notch. Its
+                        // new plate points still interpolate inside the original corner hull.
+                        if (hull==null)
+                        {
+                            var sorted=face.OrderBy(v => Flat(pos[v]).X).ThenBy(v => Flat(pos[v]).Y).ToArray();
+                            var chain=new List<int>();
+                            float Turn(int a,int b,int c)
+                            {
+                                Vector2 x=Flat(pos[b])-Flat(pos[a]),y=Flat(pos[c])-Flat(pos[a]);
+                                return x.X*y.Y-x.Y*y.X;
+                            }
+                            foreach (int v in sorted)
+                            {
+                                while (chain.Count>=2 && Turn(chain[^2],chain[^1],v)<=0) chain.RemoveAt(chain.Count-1);
+                                chain.Add(v);
+                            }
+                            int lower=chain.Count;
+                            foreach (int v in sorted.Reverse().Skip(1))
+                            {
+                                while (chain.Count>lower && Turn(chain[^2],chain[^1],v)<=0) chain.RemoveAt(chain.Count-1);
+                                chain.Add(v);
+                            }
+                            hull=chain.Take(chain.Count-1).ToArray();
+                        }
+                        BlendFrom(hull);
+                    }
+                    float total=weights.Values.Sum();
+                    if (total<=0) return Rebuild.Fail("support loops cannot fit these faces; reduce support spacing");
+                    var blend=weights.Where(w => w.Value>0).Select(w => (w.Key,w.Value/total)).ToArray();
+                    ids[k]=pos.Count+points.Count; points.Add(new NewPoint(inset[k],blend));
+                }
+                shapes[i]=(ids,source);
+                for (int k=0;k<outer.Length;k++)
+                {
+                    int next=(k+1)%outer.Length;
+                    shapes.Add((new[] { outer[k],outer[next],ids[next],ids[k] },source));
+                }
+            }
+        }
         // Where three or more filleted edges meet, a cap closes the corner.
+        bool SphericalCorner(int u, List<int> boundary)
+        {
+            var around = pointFaces[u];
+            // Three convex face planes have a unique radius-tangent sphere. More complex or
+            // concave junctions need a different surface, so retain their existing cap below.
+            if (around.Count != 3 || boundary.Count != 3 * steps
+                || sel.Count(e => e.Item1 == u || e.Item2 == u) != 3) return false;
+            var neighbours = around.SelectMany(f => Beside(faces[f],u)).Distinct().ToArray();
+            if (neighbours.Length != 3 || around.Any(f => neighbours.Any(v => Vector3.Dot(normals[f],pos[v]-pos[u]) > tolerance)
+                || !neighbours.Any(v => Vector3.Dot(normals[f],pos[v]-pos[u]) < -tolerance))) return false;
+            var tangentPoints = around.Select(f => corner.TryGetValue((f,u),out var c) && c.Length == 1 ? c[0] : -1).ToArray();
+            if (tangentPoints.Any(v => v < 0) || tangentPoints.Distinct().Count() != 3) return false;
+            int start = boundary.IndexOf(tangentPoints[0]);
+            if (start < 0) return false;
+            var loop = Enumerable.Range(0,boundary.Count).Select(i => boundary[(start+i)%boundary.Count]).ToArray();
+            if (!tangentPoints.Contains(loop[steps]) || !tangentPoints.Contains(loop[2*steps])) return false;
+            var planes = around.Select(f => (N:normals[f],D:-radius)).ToArray();
+            if (Math.Abs(Vector3.Dot(planes[0].N,Vector3.Cross(planes[1].N,planes[2].N))) < 1e-5f
+                || !Solve(planes,out var offset) || planes.Any(c => Math.Abs(Vector3.Dot(c.N,offset)-c.D) > tolerance)) return false;
+            Vector3 centre = pos[u]+offset;
+            if (loop.Any(v => Math.Abs(Vector3.Distance(Position(v),centre)-radius) > tolerance*4)) return false;
+            var directions = new[] { loop[0],loop[steps],loop[2*steps] }.Select(v => Vector3.Normalize(Position(v)-centre)).ToArray();
+            var grid = new int[steps+1,steps+1];
+            for (int i=0;i<=steps;i++) for (int j=0;j<=steps-i;j++)
+            {
+                if (j==0) grid[i,j]=loop[i];
+                else if (i+j==steps) grid[i,j]=loop[steps+j];
+                else if (i==0) grid[i,j]=loop[3*steps-j];
+                else
+                {
+                    float b=samples[i],c=samples[j],a=1-b-c;
+                    if (supportSpacing>0)
+                    {
+                        a=samples[steps-i-j]; float sum=a+b+c; a/=sum; b/=sum; c/=sum;
+                    }
+                    // Correct barycentric interpolation to the equal-angle great-circle arcs
+                    // used by the cylinders, then project onto their common tangent sphere.
+                    // The symmetric construction avoids a preferred diagonal through a corner.
+                    Vector3 direction=directions[0]*a+directions[1]*b+directions[2]*c;
+                    var weights=new[] { a,b,c };
+                    for (int x=0;x<3;x++) for (int y=x+1;y<3;y++)
+                    {
+                        float sum=weights[x]+weights[y],t=weights[y]/sum;
+                        Vector3 linear=directions[x]*(1-t)+directions[y]*t;
+                        direction+=sum*(Slerp(directions[x],directions[y],t)-linear);
+                    }
+                    grid[i,j]=Add(centre+radius*Vector3.Normalize(direction),u);
+                }
+            }
+            void Triangle(int a,int b,int c)
+            {
+                var n=Vector3.Cross(Position(b)-Position(a),Position(c)-Position(a));
+                int source=around.OrderByDescending(f => Vector3.Dot(n,normals[f])).First();
+                shapes.Add((new[] { a,b,c },source));
+            }
+            for (int i=0;i<steps;i++) for (int j=0;j<steps-i;j++)
+            {
+                Triangle(grid[i,j],grid[i+1,j],grid[i,j+1]);
+                if (i+j<steps-1) Triangle(grid[i+1,j],grid[i+1,j+1],grid[i,j+1]);
+            }
+            return true;
+        }
         foreach (var (u, sidesAtU) in capSides.Where(c => c.Value.Count >= 3))
         {
             var chain = sidesAtU.GroupBy(s => s.From).ToDictionary(g => g.Key, g => g.First().To);
@@ -253,6 +451,7 @@ public static class EdgeFillet
             while (loop.Count <= sidesAtU.Count && chain.TryGetValue(loop[^1], out int to) && to != loop[0]) loop.Add(to);
             if (loop.Count == sidesAtU.Count)
             {
+                if (SphericalCorner(u,loop)) continue;
                 {
                     // A curved multi-edge junction is not planar. A centre fan avoids the sliver
                     // ears made by projecting its near-tangent boundary onto one flat plate.
@@ -290,6 +489,10 @@ public static class EdgeFillet
             }
             else add.AddRange(filled.Select(x => new NewFace(x, source)));
         }
+        // Judge refined patches relative to their radius, rather than rejecting valid
+        // millimetre-scale triangles because the parent plate is much larger.
+        float featureSize=supportSpacing>0 ? MathF.Min(radius,supportSpacing) : radius;
+        add = add.Select(face => face with { ReferenceArea = MathF.Min(featureSize * featureSize, Newell(pos, faces[face.Source]).Length()) }).ToList();
         var result = new Rebuild(remove, add, points, null);
         string? why = MeshPlans.Check(pos, faces, result);
         return why == null ? result : Rebuild.Fail("the fillet cannot fit these faces: " + why);
@@ -298,6 +501,12 @@ public static class EdgeFillet
 
     sealed record Profile(Vector3 Axis, Vector3 Centre, float Setback, Dictionary<int,Vector3> Inward);
     static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
+    static Vector3 Slerp(Vector3 a,Vector3 b,float t)
+    {
+        float angle=MathF.Acos(Math.Clamp(Vector3.Dot(a,b),-1,1));
+        if (angle<1e-5f) return Vector3.Normalize(a*(1-t)+b*t);
+        return (a*MathF.Sin((1-t)*angle)+b*MathF.Sin(t*angle))/MathF.Sin(angle);
+    }
     static bool Solve(IReadOnlyList<(Vector3 N,float D)> constraints,out Vector3 result)
     {
         // Minimum-length solution of face and tangent-plane constraints.

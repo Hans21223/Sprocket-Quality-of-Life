@@ -191,7 +191,19 @@ static class DrawingTests
         Drawing.SavePng(file,3,2,changed);
         Check(!File.ReadAllBytes(file).SequenceEqual(bytes), "completed PNG atomically replaces the previous export");
         File.Delete(file);
-        Console.WriteLine("DRAWING_TESTS_OK: cube edges, hidden box, clip, steep walls, outline, clean part contours, suppressed seams/facets/noise, PNG");
+        // Review CORE-06: a 1 x 1 x 20 m design at the sheet's 1738 px/m wanted a 1750 x 34772 picture; views must fit the GPU
+        // (each side) and the memory (all pixels), shrinking together.
+        var tall = new[] { (1f, 1f), (1f, 20f), (1f, 20f), (1f, 20f) };
+        Check(Drawing.FitScale(1738, tall, 6, 16384, 40_000_000) is float fit && fit < 1738 && fit > 800
+              && tall.All(v => Math.Ceiling(v.Item2 * fit) + 12 <= 16384), "a tall design's views shrink to fit the GPU's 16384 pixels");
+        Check(Drawing.FitScale(1738, tall, 6, 4096, 40_000_000) is float small && tall.All(v => Math.Ceiling(v.Item2 * small) + 12 <= 4096), "and a 4096-pixel GPU");
+        var big = new[] { (10f, 10f), (10f, 10f), (10f, 10f), (10f, 10f) };
+        Check(Drawing.FitScale(1000, big, 6, 16384, 40_000_000) is float some && big.Sum(v => (Math.Ceiling(v.Item1 * some) + 12) * (Math.Ceiling(v.Item2 * some) + 12)) <= 40_000_000,
+            "all views together stay within the pixel budget");
+        Check(Drawing.FitScale(100, big, 6, 16384, 40_000_000) == 100, "a design that fits keeps its scale");
+        Check(Drawing.FitScale(100, new[] { (float.NaN, 1f) }, 6, 16384, 40_000_000) == null && Drawing.FitScale(100, big, 9000, 16384, 40_000_000) == null,
+            "bad sizes, or pads that alone are too big, are refused");
+        Console.WriteLine("DRAWING_TESTS_OK: cube edges, hidden box, clip, steep walls, outline, clean part contours, suppressed seams/facets/noise, PNG, view budget");
     }
 
     static int FindChunk(byte[] png, string type, out int length)

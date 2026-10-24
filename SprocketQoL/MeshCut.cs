@@ -13,7 +13,8 @@ public static class MeshCut
     /// A closed shape in the cut mesh's space: vertices, faces, and each face corner's thickness (mm) and thicken mode.
     public sealed record Solid(IReadOnlyList<Vector3> Verts, IReadOnlyList<int[]> Faces, IReadOnlyList<float[]> Thickness, IReadOnlyList<byte[]> Modes);
 
-    public sealed record Result(int FacesCut, int PocketFaces, double ArmourChange, int RivetsMoved, int RivetsDropped);
+    /// `Open`: the cut structure has open sides (with no pocket faces: nowhere it encloses a space by the cut).
+    public sealed record Result(int FacesCut, int PocketFaces, double ArmourChange, int RivetsMoved, int RivetsDropped, bool Open = false);
 
     const float Eps = 1e-5f;    // 0.01 mm: this close to a plane counts as on it
     const float Tiny = 1e-9f;   // m²: slivers smaller than this are dropped
@@ -149,6 +150,9 @@ public static class MeshCut
             original.Add(poly);
         }
 
+        // Most hand-made shapes have some open sides; reported when nothing could close or line the cut (see step 2).
+        bool open = (pocket || keepInside) && AddonEdits.OpenEdges(verts, original.Select(f => f.C.Select(c => c.V).ToArray()).ToList()) > 0;
+
         var shapeTris = shapes.Select(s => s.Faces.SelectMany(f => FanTris(f.Select(i => s.Verts[i]).ToList())).Where(t => !t.Degenerate).ToList()).ToList();
         var allShapeTris = shapeTris.SelectMany(x => x).ToList();
         var shapeMin = allShapeTris.Aggregate(new Vector3(float.MaxValue), (m, t) => Vector3.Min(m, t.Min)) - new Vector3(Flat);
@@ -222,7 +226,11 @@ public static class MeshCut
                     foreach (var p in pieces)
                     {
                         var c = Centre(p);
-                        if (Math.Abs(Winding(targetTris, c)) <= 0.5 || OnSurface(targetTris, c)) continue;
+                        // Only where the structure clearly surrounds the piece: a closed shape gives 1 inside, a shape open
+                        // somewhere else 0.8 and up, but a fold of open plates (a sawtooth of single plates) 0.3-0.7, which
+                        // more than half would take as inside and close with stray faces (Discord 2026-10-20).
+                        // shortcut: a very narrow fold can still pass 0.75; a local closedness test would settle it.
+                        if (Math.Abs(Winding(targetTris, c)) < 0.75 || OnSurface(targetTris, c)) continue;
                         // Keep only walls inside the part of the shape that actually cuts: other shapes may overlap it.
                         if (grids.Where((_, i) => i != s).Any(g => g.Inside(c))) continue;
                         result.Add(new Poly { C = p, Source = nextSource, Pocket = true, Group = group, Changed = true });
@@ -480,7 +488,7 @@ public static class MeshCut
         mesh["edges"] = new JsonArray(edges.SelectMany(x => new[] { renumber[x.Item1], renumber[x.Item2] }).Select(x => (JsonNode?)x).ToArray());
         mesh["edgeFlags"] = new JsonArray(flags.Select(x => (JsonNode?)x).ToArray());
         mesh["faces"] = outFaces;
-        return new Result(replaced.Count, pocketFaces, armour, movedRivets, droppedRivets);
+        return new Result(replaced.Count, pocketFaces, armour, movedRivets, droppedRivets, open);
 
         // The edge from v towards `other`: the original edge, or the first piece of it if it was split.
         int EdgeTowards(int v, int other)

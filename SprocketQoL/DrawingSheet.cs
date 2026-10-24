@@ -30,6 +30,7 @@ internal static class DrawingSheet
     const int LabelHigh = 50;      // over a view: its name
     const int RulerHigh = 100;     // at the bottom: the 1 m ruler
     const int Pad = 6;             // round each view's picture
+    const long MaxViewPixels = 40_000_000; // all views together: each pixel is kept twice (armour on and off), ~16 bytes in all
     const int Letter = 4;          // pixels per font pixel
     const int BlockGap = 60;       // between the ruler and the title block (the name, guns and description) under it
     const int BlockLine = 16;      // between the title block's parts
@@ -60,11 +61,22 @@ internal static class DrawingSheet
     static System.Collections.IEnumerator Run()
     {
         Sheet? sheet = null;
+        // The vehicle it started on: after every wait it must still be in the editor, or the capture stops (and puts
+        // everything back) rather than mix in another vehicle's parts.
+        int session = DesignEditor.Instance?.Session ?? -1;
+        bool Same()
+        {
+            if (DesignEditor.Instance is { IsReady: true } editor && editor.Session == session) return true;
+            Plugin.ModLog.LogWarning("Drawing sheet: the vehicle changed or the editor closed; capture stopped");
+            DesignEditor.Instance?.Say("Drawing sheet stopped: the vehicle changed.", 6);
+            return false;
+        }
         try
         {
             // Nothing under the mouse while the views are taken; a few frames for the editor to let go of what was.
             NoHover.On = true;
             for (int f = 0; f < 3; f++) yield return null;
+            if (!Same()) yield break;
             sheet = Sheet.Begin();
             if (sheet == null) yield break;
             // The views, then again with the armour off for the see-through sheet.
@@ -74,13 +86,14 @@ internal static class DrawingSheet
                 for (int i = 0; i < Views.Length; i++)
                 {
                     if (!sheet.Aim(i)) yield break;
-                    for (int f = 0; f < (i == 0 ? FirstSettle : Settle); f++) { sheet.Hold(); yield return null; }
+                    for (int f = 0; f < (i == 0 ? FirstSettle : Settle); f++) { sheet.Hold(); yield return null; if (!Same()) yield break; }
                     if (!sheet.Grab(i, inside)) yield break;
                 }
             }
             sheet.PutArmourBack(); // its shapes make the lines
             DesignEditor.Instance?.Say("Drawing sheet: drawing the lines...", 10);
             yield return null; // the message shows before the work (a second or two)
+            if (!Same()) yield break;
             sheet.Finish();
         }
         finally
@@ -198,16 +211,21 @@ internal static class DrawingSheet
 
             // Left column: the top and side views, as long as the vehicle. Right: the front and back, as wide.
             scale = (SheetWidth - Gap - 4 * Pad) / Math.Max(0.1f, size.z + size.x);
+            // Room for angle labels outside the barrel limits; the physical dimensions still use the original box.
+            int pad = motion.Count > 0 ? 100 : Pad;
+            var turns = Views.Select(view => Quaternion.LookRotation(view.Look, view.Up)).ToArray();
+            var extents = turns.Select(t => (Math.Abs(Vector3.Dot(size, t * Vector3.right)), Math.Abs(Vector3.Dot(size, t * Vector3.up)))).ToArray();
+            // A very tall or long design (tall and narrow scales by its width) would want pictures the GPU can't make, or
+            // gigabytes for them: the views shrink together until each fits and all of them stay within MaxViewPixels.
+            if (Drawing.FitScale(scale, extents, pad, Math.Min(SystemInfo.maxTextureSize, 16384), MaxViewPixels) is not float fitted)
+            { DesignEditor.Instance?.Say("Drawing sheet: this design is too big to draw", 6); return false; }
+            if (fitted < scale) Plugin.ModLog.LogInfo($"QOL_DRAWING views drawn at {fitted:0} px/m, not {scale:0}, to fit the GPU and memory");
+            scale = fitted;
             for (int i = 0; i < Views.Length; i++)
             {
-                var turn = Quaternion.LookRotation(Views[i].Look, Views[i].Up);
-                var right = turn * Vector3.right;
-                var up = turn * Vector3.up;
-                float across = Math.Abs(Vector3.Dot(size, right)), high = Math.Abs(Vector3.Dot(size, up));
-                // Room for angle labels outside the barrel limits; the physical dimensions still use the original box.
-                int pad = motion.Count > 0 ? 100 : Pad;
+                var (across, high) = extents[i];
                 int w = (int)MathF.Ceiling(across * scale) + 2 * pad, h = (int)MathF.Ceiling(high * scale) + 2 * pad;
-                views[i] = new Drawing.View(V(frame.center), V(right), V(up), V(Views[i].Look), scale, w, h);
+                views[i] = new Drawing.View(V(frame.center), V(turns[i] * Vector3.right), V(turns[i] * Vector3.up), V(Views[i].Look), scale, w, h);
             }
             var used = new HashSet<int>();
             var sceneRenderers = UnityEngine.Object.FindObjectsOfType(Il2CppType.Of<Renderer>());
@@ -348,6 +366,7 @@ internal static class DrawingSheet
                 cam.farClipPlane = 10 + 2 * radius + 10f;
                 if (target != null) { cam.targetTexture = null; target.Release(); UnityEngine.Object.Destroy(target); }
                 target = new RenderTexture(v.Width, v.Height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                if (!target.Create()) throw new InvalidOperationException($"the GPU couldn't make a {v.Width} x {v.Height} picture");
                 cam.targetTexture = target;
                 return true;
             }

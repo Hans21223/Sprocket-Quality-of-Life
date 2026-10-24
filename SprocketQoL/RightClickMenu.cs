@@ -154,6 +154,31 @@ public static class RightClickMenu
         new("View", "OBJ export / import", () => K("obj"), Always, _ => Keybinds.Press("obj")),
     };
 
+    internal sealed record Command(string Id, string Section, string Label, string Key, bool Enabled, string Reason, Action Run);
+
+    /// A single source of context actions for the pointer menu and searchable command palette.
+    internal static IReadOnlyList<Command> Commands()
+    {
+        var editor = DesignEditor.Instance;
+        if (editor?.IsReady != true) return Array.Empty<Command>();
+        var picked = editor.SelectedParts(); int active = picked.Count > 0 ? picked[^1] : -1;
+        var selection = new Selection(editor, picked, active, editor.SelectedParts(Conversion.AddonGuid), picked.Where(v => v != active).ToList(), Hotkeys.Current);
+        return Entries.Select(entry =>
+        {
+            bool enabled = entry.When(selection);
+            string reason = enabled ? "" : entry.Section.StartsWith("Mesh", StringComparison.Ordinal) ? "Select an editable plate structure first. The tool may also require selected points, edges or faces."
+                : entry.Section == "Add-on" ? "Select a compatible add-on and any target parts first." : "Select compatible parts before running this action.";
+            return new Command(entry.Section + "/" + entry.Label, entry.Section, entry.Label, entry.Key(), enabled, reason, () =>
+            {
+                var current = DesignEditor.Instance;
+                if (current?.IsReady != true || current.IsBusy) return;
+                var now = current.SelectedParts(); int last = now.Count > 0 ? now[^1] : -1;
+                var state = new Selection(current, now, last, current.SelectedParts(Conversion.AddonGuid), now.Where(v => v != last).ToList(), Hotkeys.Current);
+                if (entry.When(state)) entry.Run(state); else current.Say(reason);
+            });
+        }).ToArray();
+    }
+
     static List<(string Title, List<Item> Items)> Build()
     {
         if (DesignEditor.Instance is not { } editor) return new();
@@ -216,8 +241,13 @@ public static class RightClickMenu
         if (now == t.Frame && (state & GameInputState.Pressed) != 0 || now == t.Frame + 1 && (state & GameInputState.Released) != 0) result = true;
     }
 
+    // The game's Duplicate is the same machine code as PlayerState.UIToggled (identical bodies are merged), so this hook
+    // sees those calls too: answer only the editor's input handler, or a menu Duplicate would toggle the UI as well.
     [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.Duplicate))]
-    static void Duplicate(GameInputState __0, ref bool __result) => Answer("Duplicate", __0, ref __result);
+    static void Duplicate(VehicleEditorInputHandler __instance, GameInputState __0, ref bool __result)
+    {
+        if (tap?.Action == "Duplicate" && __instance.TryCast<VehicleEditorInputHandler>() != null) Answer("Duplicate", __0, ref __result);
+    }
     [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.Sprocket_VehicleDesigner_Access_IMeshEditInputProvider_Duplicate))]
     static void MeshDuplicate(GameInputState __0, ref bool __result) => Answer("MeshDuplicate", __0, ref __result);
     [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.Sprocket_VehicleDesigner_Access_ITransformInputProvider_Flip))]

@@ -151,16 +151,26 @@ static class CoreAuditTests
         }
         // BepInEx refuses these characters in setting sections and names, and a plugin whose Bind throws doesn't load at
         // all (Map Framework 1.1.0's "Garry's Mod maps' own light and sky" took away every custom map, 2026-10-17).
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root != null && !File.Exists(Path.Combine(root.FullName, "SprocketMod.props"))) root = root.Parent;
+        // The sources: above the test program, or (built somewhere else) above the folder it's run from.
+        static DirectoryInfo? Above(string start)
+        {
+            var d = new DirectoryInfo(start);
+            while (d != null && !File.Exists(Path.Combine(d.FullName, "SprocketMod.props"))) d = d.Parent;
+            return d;
+        }
+        var root = Above(AppContext.BaseDirectory) ?? Above(Environment.CurrentDirectory);
         int names = 0;
-        foreach (var file in Directory.GetFiles(Path.Combine(root!.FullName, "SprocketQoL"), "*.cs", SearchOption.AllDirectories))
-            foreach (System.Text.RegularExpressions.Match bind in System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(file),
-                         @"\.Bind(?:<[^>]*>)?\(\s*""((?:[^""\\]|\\.)*)""\s*,\s*""((?:[^""\\]|\\.)*)"""))
-                for (int g = 1; g <= 2; g++, names++)
-                    Check(bind.Groups[g].Value.IndexOfAny(new[] { '=', '\n', '\t', '\\', '"', '\'', '[', ']' }) < 0,
-                        $"{Path.GetFileName(file)}: the setting name '{bind.Groups[g].Value}' has a character BepInEx refuses");
-        Check(names >= 40, $"every setting name is checked ({names} found)");
+        if (root == null) Console.WriteLine("SETTING_NAME_CHECK_SKIPPED: the QoL sources aren't above the test program or the folder it runs in");
+        else
+        {
+            foreach (var file in Directory.GetFiles(Path.Combine(root.FullName, "SprocketQoL"), "*.cs", SearchOption.AllDirectories))
+                foreach (System.Text.RegularExpressions.Match bind in System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(file),
+                             @"\.Bind(?:<[^>]*>)?\(\s*""((?:[^""\\]|\\.)*)""\s*,\s*""((?:[^""\\]|\\.)*)"""))
+                    for (int g = 1; g <= 2; g++, names++)
+                        Check(bind.Groups[g].Value.IndexOfAny(new[] { '=', '\n', '\t', '\\', '"', '\'', '[', ']' }) < 0,
+                            $"{Path.GetFileName(file)}: the setting name '{bind.Groups[g].Value}' has a character BepInEx refuses");
+            Check(names >= 40, $"every setting name is checked ({names} found)");
+        }
         Console.WriteLine($"CORE_AUDIT_TESTS_OK: {checks} checks ({oldMisses} old normal failures reproduced)");
     }
 }

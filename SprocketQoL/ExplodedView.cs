@@ -31,6 +31,12 @@ public static class ExplodedView
         }
         if (Keybinds.Pressed("explode"))
         {
+            // Saving with the parts apart needs both serializer hooks (together back, apart again): with either missing, off.
+            if (!on && Hooks.Failures.Any(f => f.Feature == nameof(ExplodedView)))
+            {
+                DesignEditor.Instance?.Say("Exploded view is off: this game version is missing a hook it needs to save safely (Mod Options > Compatibility).", 6);
+                return;
+            }
             on = !on;
             if (on) Explode(); else Collapse();
             DesignEditor.Instance?.Say(on ? $"Exploded view: {Spread:0.00} m apart ({Keybinds.Shown("explodeCloser")} / {Keybinds.Shown("explodeFurther")} closer / further, {Keybinds.Shown("explode")} to put back)" : "Exploded view off", 4);

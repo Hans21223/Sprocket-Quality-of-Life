@@ -35,7 +35,30 @@ static class ToolTests
         FixMirror();
         MergePoints();
         Validation();
+        MirrorMatching();
         Console.WriteLine($"TOOL_TESTS_OK: {checks} checks (bridge, circle, fix mirror, mirrored merge)");
+    }
+
+    /// Review GEO-05: the nearest mirror point wins, wherever it is listed or lies in the search grid.
+    static void MirrorMatching()
+    {
+        var pos = new List<Vector3> { new(1, 0, 0), new(-1, -0.0002f, 0), new(-1, 0, 0) };
+        Check(MeshPlans.Twins(pos, new[] { 0 }, 0.0003f)[0] == 2, "an exact mirror point beats a near one listed first");
+        var reversed = new List<Vector3> { pos[0], pos[2], pos[1] };
+        Check(MeshPlans.Twins(reversed, new[] { 0 }, 0.0003f)[0] == 1, "...and listed second");
+        Check(MeshPlans.Twins(pos, new[] { 1, 2 }, 0.0003f) is var back && back[1] == 0 && back[2] == 0, "both points near the mirror pick it");
+        var onPlane = new List<Vector3> { new(0.00001f, 1, 0), new(-0.00001f, 1, 0) };
+        Check(MeshPlans.Twins(onPlane, new[] { 0 }, 0.0003f)[0] == 1, "near the plane, the true twin beats the point itself");
+        var dupes = new List<Vector3> { new(1, 0, 0), new(-1, 0, 0), new(-1, 0, 0) };
+        Check(MeshPlans.Twins(dupes, new[] { 0 }, 0.0003f)[0] == 1, "two points on one spot: the lower number, every time");
+
+        // Two plates on the mirror side, one on the very spots of the mirrored face, the other 0.2 mm off at one corner:
+        // the face on the spots is the twin, even though the other shares three of its points and comes first.
+        var shells = new List<Vector3> { new(1, 0, 0), new(2, 0, 0), new(2, 1, 0), new(1, 1, 0),
+                                         new(-1, 0, 0), new(-2, 0, 0), new(-2, 1, 0), new(-1, 1.0002f, 0), new(-1, 1, 0) };
+        var faces = new List<int[]> { new[] { 0, 1, 2, 3 }, new[] { 4, 7, 6, 5 }, new[] { 4, 8, 6, 5 } };
+        Check(FaceMerge.Mirrored(shells, faces, new[] { 0 }, 0.0003f).SequenceEqual(new[] { 2 }), "the face lying exactly on the mirrored corners is the twin");
+        Check(FaceMerge.Mirrored(shells, faces, new[] { 0 }, 0.0001f).SequenceEqual(new[] { 2 }), "with a tight tolerance only the exact one matches");
     }
 
     static void Validation()
