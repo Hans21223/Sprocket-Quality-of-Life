@@ -45,6 +45,10 @@ static class DriveSimTests
         // Far too heavy to move: no gear can, and the drive gives up rather than running out the clock.
         var stuck = Recorded(1e8f);
         Check(stuck.Gears.All(r => DriveSim.TopSpeed(stuck, r).Speed == 0), "nothing moves a 100,000 t vehicle");
+        // Review CORE-07: a run a newer design replaced stops instead of simulating on.
+        bool stopped = false;
+        try { DriveSim.Accelerate(v, cancel: new CancellationToken(true)); } catch (OperationCanceledException) { stopped = true; }
+        Check(stopped, "a cancelled acceleration run stops");
         Console.WriteLine($"DRIVE_TESTS_OK: top {top.Speed * 3.6f:0.00} km/h, 0-60 km/h {At(60):0.0} s, heavy {gears[best] * 3.6f:0.0} km/h in gear {best + 1}");
         Spacing();
     }

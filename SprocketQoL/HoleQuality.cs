@@ -15,6 +15,7 @@ namespace SprocketQoL;
 public static class HoleQuality
 {
     static int segments = 32, sizePercent = 100;
+    static bool cardinalPoints = true;
 
     static ushort? holeThickness; // the holed face's plate thickness, read before the game takes the face away
     static Num? originalSide;
@@ -38,6 +39,7 @@ public static class HoleQuality
     {
         __state = null;
         if (__instance.meshOp?.TryCast<CreateHoleOp>() == null) return;
+        lastEditor = Hotkeys.Current;
         activeEdit = __state = new HoleEdit(__instance, activeEdit);
     }
 
@@ -70,6 +72,21 @@ public static class HoleQuality
         Ui.Guard("Create Hole", () => lastEditor?.operations.NotifyError("Create Hole: " + __state.Failure + ". Shape unchanged."));
     }
 
+    /// The postfix above doesn't run when Execute throws: the hole's state goes anyway, so the next hole starts clean
+    /// (and doesn't nest under this one).
+    [HarmonyFinalizer, HarmonyPatch(typeof(MeshTopologyEditOp), nameof(MeshTopologyEditOp.Execute))]
+    static Exception? EndHoleAfterError(HoleEdit? __state, Exception? __exception)
+    {
+        if (__state == null || __exception == null || activeEdit != __state) return __exception;
+        activeEdit = __state.Previous;
+        holeThickness = null;
+        holeRivets = null;
+        faceSide = null;
+        originalSide = null;
+        Plugin.ModLog.LogWarning("Create Hole: the game stopped with an error part way; QoL's hole state was cleared. " + __exception.Message);
+        return __exception;
+    }
+
     static void Reject(string reason)
     {
         if (activeEdit != null) activeEdit.Failure ??= reason;
@@ -77,6 +94,101 @@ public static class HoleQuality
         if (activeEdit == null)
             Ui.Guard("Create Hole", () => lastEditor?.operations.NotifyError("Create Hole: " + reason + ". Shape unchanged."));
     }
+
+    static bool eachFace; // inside EachFace: the game's own one-face hole runs as it is
+    static bool holePerFace; // Hole per face: every selected face its own hole, even where they touch
+
+    /// The game's Create Hole cuts one face (and its mirror image), taking the selected points as that face's corners,
+    /// so with several faces selected it refused. Now selected faces that touch and lie flat together get one hole
+    /// through the area they make (HoleMerge), and the rest (or all, with Hole per face) a hole each, one after another
+    /// in the same edit (one Ctrl+Z undoes them all; one failing puts them all back). A face that an earlier face's
+    /// mirror image already holed is skipped.
+    [HarmonyPrefix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.ExecuteInternal))]
+    static bool EachFace(CreateHoleOp __instance, EditMesh mesh)
+    {
+        if (eachFace || mesh == null) return true;
+        var faces = new List<Face>();
+        var all = mesh.faces;
+        for (int i = 0; i < all.Count; i++) if (all[i].HasFlag(ElementFlags.Selected)) faces.Add(all[i]);
+        if (faces.Count < 2) return true;
+        eachFace = true;
+        try
+        {
+            if (!holePerFace) faces = MergedHoles(__instance, mesh);
+            int holes = 0;
+            foreach (var face in faces)
+            {
+                if (activeEdit?.Failure != null) break;
+                var now = mesh.faces;
+                bool alive = false;
+                for (int i = 0; i < now.Count && !alive; i++) alive = now[i].Pointer == face.Pointer;
+                if (!alive) continue;
+                MirrorMerge.Selection.Only(mesh, Corners(face, v => v).ToList());
+                __instance.ExecuteInternal(mesh); // the game's own hole for this face (and its mirror image)
+                holes++;
+            }
+            Plugin.ModLog.LogInfo($"Create Hole: {faces.Count} faces selected, {holes} holed one by one in one edit");
+        }
+        finally { eachFace = false; }
+        return false;
+    }
+
+    /// Holes each area of two or more touching selected faces whole (and, with Mirror, its mirror image), and returns
+    /// the selected faces left on their own.
+    static List<Face> MergedHoles(CreateHoleOp op, EditMesh mesh)
+    {
+        var v = new MeshTools.View(mesh);
+        var areas = HoleMerge.Areas(v.Pos, v.Corners, v.SelectedFaces);
+        var merged = areas.Where(a => a.Count > 1).ToList();
+        if (op.Symmetry) WithMirror(v, merged);
+        if (merged.Count > 0)
+        {
+            var plan = HoleMerge.Plan(v.Pos, v.Corners, merged, segments, sizePercent / 100f, cardinalPoints, GameFill ? Fill.Mode.Fewest : (Fill.Mode)holeFill);
+            // Rivets where the hole now is go, as with the game's own hole (2 mm), not onto its rim.
+            var (done, message) = MeshTools.Apply(mesh, v, plan, "hole through the selected faces", gaps: false, rivetReach: 0.002f);
+            if (done) Plugin.ModLog.LogInfo($"Create Hole: {merged.Sum(a => a.Count)} touching faces holed as {merged.Count} area(s): {message}");
+            else Reject(message + "; Hole per face gives each face its own hole instead");
+        }
+        return areas.Where(a => a.Count == 1).Select(a => v.Faces[a[0]]).ToList();
+    }
+
+    /// Adds each area's mirror image across the middle, unless it's the area itself or already there.
+    static void WithMirror(MeshTools.View v, List<List<int>> areas)
+    {
+        foreach (var area in areas.ToList())
+        {
+            var twin = FaceMerge.Mirrored(v.Pos, v.Corners, area, MeshTools.Tolerance);
+            if (twin.Count == area.Count && !twin.Any(f => areas.Any(a => a.Contains(f)))) areas.Add(twin);
+        }
+    }
+
+    /// While the mouse is over the game's Create Hole button: the holes it would cut (with Mirror, their mirror images
+    /// too) outlined on the part, so there's nothing to try and undo.
+    internal static void DrawHovered()
+    {
+        if (MeshTools.HoveredButton != "Create Hole" || Hotkeys.Current is not { } e || e.meshEditor.Mesh?.EditMesh is not { } mesh
+            || !MeshSelection.TryMeshFrame(e, out var matrix) || UnityEngine.Camera.main is not { } camera || UnityEngine.Event.current.type != UnityEngine.EventType.Repaint) return;
+        // Worked out once per hover (and again if the mesh, selection or settings change), not every frame.
+        string key = $"{MeshTools.HoverCount}|{mesh.Pointer}|{mesh.vertices.Count}|{mesh.faces.Count}|{mesh.selectedFaceCount}|{e.meshEditor.Symmetry}|{segments}|{sizePercent}|{cardinalPoints}|{holePerFace}|{holeFill}"
+            + $"|{MeshTools.SelectionFingerprint(mesh)}";
+        if (hoverRings?.Key != key)
+        {
+            var v = new MeshTools.View(mesh);
+            var areas = holePerFace ? v.SelectedFaces.Select(f => new List<int> { f }).ToList() : HoleMerge.Areas(v.Pos, v.Corners, v.SelectedFaces);
+            if (e.meshEditor.Symmetry) WithMirror(v, areas);
+            var points = new List<UnityEngine.Vector3>();
+            var loops = new List<int[]>();
+            foreach (var area in areas)
+                if (HoleMerge.Ring(v.Pos, v.Corners, area, segments, sizePercent / 100f, cardinalPoints, out _) is { } hole)
+                {
+                    loops.Add(Enumerable.Range(points.Count, hole.Ring.Length).ToArray());
+                    points.AddRange(hole.Ring.Select(p => new UnityEngine.Vector3(p.X, p.Y, p.Z)));
+                }
+            hoverRings = (key, points, loops);
+        }
+        if (hoverRings is { Points.Count: > 0 } rings) GeometryPreview.DrawWire(camera, rings.Points, rings.Loops, matrix, new UnityEngine.Color(1, .85f, .2f));
+    }
+    static (string Key, List<UnityEngine.Vector3> Points, List<int[]> Loops)? hoverRings;
 
     [HarmonyPrefix, HarmonyPatch(typeof(CreateHoleOp), nameof(CreateHoleOp.CreateHole))]
     static bool UseQuality(ref int resolution, EditMesh mesh, Il2CppReferenceArray<Vertex> vertices, ref Il2CppReferenceArray<Vertex> __result)
@@ -109,8 +221,10 @@ public static class HoleQuality
             var u = Num.Normalize(new[] { Num.UnitY, Num.UnitZ }.Select(a => a - Num.Dot(a, side) * side).First(a => a.LengthSquared() > 0.1f));
             var v = Num.Cross(side, u);
             var seed = Enumerable.Range(0, segments).Select(k => c + radius * ((float)Math.Cos(k * Math.Tau / segments) * u + (float)Math.Sin(k * Math.Tau / segments) * v)).ToArray();
-            if (!HoleRing.TryFit(corners, seed, c, out _, out string reason, sizePercent / 100f))
+            if (!HoleRing.TryFit(corners, seed, c, out _, out string reason, sizePercent / 100f, cardinalPoints))
                 throw new InvalidOperationException(reason);
+            if (MeshPlans.HoleLimit(mesh.vertices.Count, mesh.edges.Count, mesh.faces.Count, mesh.loops.Count, corners.Length, segments) is string full)
+                throw new InvalidOperationException(full);
             originalSide = HoleRing.Normal(Corners(face));
             holeThickness = face?.firstLoop?.thickness;
             // The game drops the holed face's rivets with it: noted here, put back on the faces round the hole after.
@@ -176,7 +290,7 @@ public static class HoleQuality
         try
         {
             var corners = outer.Select(v => ToNum(v.position)).ToArray();
-            if (!HoleRing.TryFit(corners, inner.Select(v => ToNum(v.position)).ToArray(), ToNum(centre), out var ring, out var note, sizePercent / 100f))
+            if (!HoleRing.TryFit(corners, inner.Select(v => ToNum(v.position)).ToArray(), ToNum(centre), out var ring, out var note, sizePercent / 100f, cardinalPoints))
                 throw new InvalidOperationException(note);
             for (int k = 0; k < inner.Length; k++) inner[k].position = new UnityEngine.Vector3(ring[k].X, ring[k].Y, ring[k].Z);
             int order = originalSide is { } original ? (Num.Dot(HoleRing.Normal(corners), original) > 0 ? 1 : -1) : FaceOrder(outer);
@@ -216,6 +330,12 @@ public static class HoleQuality
                                 mode == Fill.Mode.Fewest ? null : added, mode == Fill.Mode.Light, mode);
         if (HoleFill.Check(pos, corners, Enumerable.Range(outer.Length, inner.Length).ToArray(), faces, normal) is string problem)
             throw new InvalidOperationException("surrounding faces did not fit: " + problem);
+        // Its added points can take it past the game's fan, checked before the hole started.
+        long newEdges = faces.SelectMany(f => f.Select((i, k) => FaceMerge.Key(i, f[(k + 1) % f.Length]))).Distinct()
+            .LongCount(e => e.Item2 >= verts.Count || Edge.GetConnectingEdge(verts[e.Item1], verts[e.Item2]) == null);
+        if (MeshPlans.NativeLimit(mesh.vertices.Count + (long)added.Count, mesh.edges.Count + newEdges, mesh.faces.Count + (long)faces.Count,
+                mesh.loops.Count + faces.Sum(f => (long)f.Length), "this hole would make the part") is string full)
+            throw new InvalidOperationException(full);
         foreach (var a in added)
         {
             // CreateVertex copies its prototype's position, so place each new vertex after creating it.
@@ -391,8 +511,15 @@ public static class HoleQuality
         if (ui == null || __instance.TryCast<FreeformPlateStructureEditor>() == null) return; // Create Hole is a freeform tool
         lastEditor = __instance;
         Ui.Section(layout, "Hole quality");
-        ui.InfoField("Faces mode: these settings apply to Create Hole. Ctrl+Z undoes each hole.", 2);
+        ui.InfoField("Faces mode: touching faces get one hole through them,\nor one each with Hole per face. Ctrl+Z undoes it all.", 2);
+        ui.ToggleField("Hole per face", holePerFace, Ui.BoolCallback(v => holePerFace = v),
+            "On: every selected face gets its own hole. Off: selected faces that touch and lie flat together get one hole through the area they make.");
         ui.Slider("Circle segments", segments, 4, 96, Ui.FloatCallback(v => segments = (int)Math.Round(v)));
+        ui.Button(cardinalPoints ? "Ring: cardinal points" : "Ring: flat sides", Ui.Callback(() =>
+        {
+            cardinalPoints = !cardinalPoints;
+            __instance.RequestRedraw();
+        }), new Tip("Hole ring alignment", "Cardinal points puts a vertex at the top, bottom, left and right with a segment count divisible by four (such as 32). Flat sides keeps QoL's previous half-segment rotation. Applies to new holes."));
         // Applied in HoleRing.Fit, never through the game's CreateHoleOp.HoleRadiusScale: see there.
         ui.Slider("Relative size (%)", sizePercent, 10, 300, Ui.FloatCallback(v => sizePercent = (int)Math.Round(v)));
         var tip = new Tip("Surrounding faces", "Click to cycle the faces around the hole. Fewest points uses the circle and existing corners. Light fill adds a few points so no faces are long and thin. Smooth fill adds a ring of quads round the hole and more points for even faces. Original triangle fan uses the game's layout. The circle stays inside the selected face.");

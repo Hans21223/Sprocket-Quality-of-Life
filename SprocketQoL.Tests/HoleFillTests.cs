@@ -65,8 +65,53 @@ static class HoleFillTests
         Check(HoleFill.Check(good.P, good.Outer, good.Inner,
             good.Faces.Skip(1).Concat(new[] { good.Faces[1] }).ToArray(), Vector3.UnitZ) != null,
             "balanced dropped and overlapping faces cannot bypass boundary coverage");
+        MergedHoles();
         CombinedSweep();
         Console.WriteLine($"Hole fill: {checks} checks passed.");
+    }
+
+    /// Create Hole on touching faces: one hole through the area they make, centred on the whole area (not on one face),
+    /// keeping the points along its sides so neighbouring plates stay joined, and passing the mesh checks.
+    static void MergedHoles()
+    {
+        // A 2 x 1 plate of two quads facing +z, and a third quad bent 90° down at its right side.
+        var pos = new List<Vector3> { new(0, 0, 0), new(1, 0, 0), new(2, 0, 0), new(2, 1, 0), new(1, 1, 0), new(0, 1, 0), new(2, 0, -1), new(2, 1, -1) };
+        var faces = new List<int[]> { new[] { 0, 1, 4, 5 }, new[] { 1, 2, 3, 4 }, new[] { 2, 6, 7, 3 } };
+        var areas = HoleMerge.Areas(pos, faces, new[] { 0, 1, 2 });
+        Check(areas.Count == 2 && areas.Any(a => a.OrderBy(f => f).SequenceEqual(new[] { 0, 1 })) && areas.Any(a => a.SequenceEqual(new[] { 2 })),
+              "merged hole: flat touching faces make one area, a face bent 90° stays apart");
+        foreach (Fill.Mode mode in Enum.GetValues<Fill.Mode>().Distinct())
+        {
+            var plan = HoleMerge.Plan(pos, faces, new[] { new List<int> { 0, 1 } }, 16, 1, true, mode);
+            Check(plan.Why == null && MeshPlans.Check(pos, faces, plan, gaps: false) is null, $"merged hole ({mode}): a valid plan: {plan.Why}");
+            Check(plan.Remove.OrderBy(f => f).SequenceEqual(new[] { 0, 1 }), $"merged hole ({mode}): both faces go");
+            var ring = plan.Points.Take(16).Select(p => p.P).ToArray();
+            var middle = ring.Aggregate(Vector3.Zero, (s, p) => s + p) / ring.Length;
+            Check(Vector3.Distance(middle, new Vector3(1, .5f, 0)) < 1e-4f && ring.All(p => Math.Abs(Vector3.Distance(p, middle) - .45f) < 1e-4f),
+                  $"merged hole ({mode}): the ring is round the middle of both faces, 90% of the room to the sides");
+            var at = pos.Concat(plan.Points.Select(p => p.P)).ToList();
+            Check(plan.Add.All(f => Vector3.Dot(HoleRing.Normal(f.Corners.Select(v => at[v]).ToArray()), Vector3.UnitZ) > 0),
+                  $"merged hole ({mode}): the faces round it face the way the plate did");
+            Check(new[] { 1, 4 }.All(v => plan.Add.Any(f => f.Corners.Contains(v))), $"merged hole ({mode}): the points along the sides stay");
+        }
+        // An L of three squares: the middle by area is inside, so the ring fits there.
+        var lPos = new List<Vector3> { new(0, 0, 0), new(1, 0, 0), new(2, 0, 0), new(2, 1, 0), new(1, 1, 0), new(0, 1, 0), new(1, 2, 0), new(0, 2, 0) };
+        var lFaces = new List<int[]> { new[] { 0, 1, 4, 5 }, new[] { 1, 2, 3, 4 }, new[] { 5, 4, 6, 7 } };
+        var lPlan = HoleMerge.Plan(lPos, lFaces, HoleMerge.Areas(lPos, lFaces, new[] { 0, 1, 2 }), 16, 1, true, Fill.Mode.Fewest);
+        Check(lPlan.Why == null && MeshPlans.Check(lPos, lFaces, lPlan, gaps: false) is null, $"merged hole: an L-shaped area gets one hole: {lPlan.Why}");
+        // Eight squares round a gap already: refused, not a second hole over the first.
+        var gPos = Enumerable.Range(0, 16).Select(i => new Vector3(i % 4, i / 4, 0)).ToList();
+        var gFaces = Enumerable.Range(0, 9).Where(c => c != 4).Select(c => { int i = c % 3, j = c / 3; return new[] { j * 4 + i, j * 4 + i + 1, (j + 1) * 4 + i + 1, (j + 1) * 4 + i }; }).ToList();
+        var gAreas = HoleMerge.Areas(gPos, gFaces, Enumerable.Range(0, 8));
+        Check(gAreas.Count == 1 && HoleMerge.Plan(gPos, gFaces, gAreas, 16, 1, true, Fill.Mode.Fewest).Why != null, "merged hole: an area round an existing hole is refused");
+        // Two squares meeting only at a corner ((1, 0) and (0, 1) of the grid) are two areas.
+        Check(HoleMerge.Areas(gPos, gFaces, new[] { 1, 3 }).Count == 2, "merged hole: faces touching only at a corner stay apart");
+        // One lopsided face: centred on its corners' average, as the game cuts it (so the hover outline matches the cut),
+        // not on its middle by area, (1.083, 0.417) here.
+        var qPos = new List<Vector3> { new(0, 0, 0), new(3, 0, 0), new(1, 1, 0), new(0, 1, 0) };
+        var one = HoleMerge.Ring(qPos, new List<int[]> { new[] { 0, 1, 2, 3 } }, new List<int> { 0 }, 16, 1, true, out var oneWhy);
+        var oneMiddle = one is { } r ? r.Ring.Aggregate(Vector3.Zero, (s, p) => s + p) / r.Ring.Length : new Vector3(float.NaN);
+        Check(Vector3.Distance(oneMiddle, new Vector3(1, .5f, 0)) < 1e-4f, $"single face: the hole is centred on the corners' average, as the game's: {oneMiddle} {oneWhy}");
     }
 
     static void CombinedSweep()
@@ -90,6 +135,7 @@ static class HoleFillTests
         foreach (int segments in new[] { 4, 8, 16, 32, 64, 96 })
         foreach (float size in new[] { .1f, 1f, 3f })
         foreach (var transform in transforms)
+        foreach (bool cardinalPoints in new[] { true, false })
         {
             // The concave fixture starts outside its plate, exercising the safe-centre search rather than
             // merely covering convex plates. The source radius stays physical when relative size changes.
@@ -101,8 +147,8 @@ static class HoleFillTests
             centre = Vector3.Transform(centre, transform.Matrix);
             var outer = shape.Corners.Select(p => Vector3.Transform(p, transform.Matrix)).ToArray();
             var before = outer.ToArray(); var seedBefore = seed.ToArray();
-            string label = $"{shape.Name}, {segments} segments, {size * 100:0}% size, {transform.Name}";
-            Check(HoleRing.TryFit(outer, seed, centre, out var ring, out string fitNote, size), $"combined fit {label}: {fitNote}");
+            string label = $"{shape.Name}, {segments} segments, {size * 100:0}% size, {transform.Name}, {(cardinalPoints ? "cardinal points" : "flat sides")}";
+            Check(HoleRing.TryFit(outer, seed, centre, out var ring, out string fitNote, size, cardinalPoints), $"combined fit {label}: {fitNote}");
             Check(outer.SequenceEqual(before) && seed.SequenceEqual(seedBefore), "fitting never changes the supplied plate or native ring");
             Check(ring.Length == segments, "fitting keeps every requested hole vertex");
             var normal = Vector3.Normalize(HoleRing.Normal(outer));

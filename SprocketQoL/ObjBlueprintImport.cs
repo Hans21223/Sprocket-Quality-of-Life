@@ -18,9 +18,10 @@ public static class ObjBlueprintImport
     /// The result is the bare PlateStructureMeshBlueprint JSON expected by a .blueprint file in
     /// Factions/<faction>/Blueprints/Plate Structures, not a vehicle blueprint or a live-tank edit.
     public static ObjBlueprintImportResult Build(ObjDocument document, string name,
-        float scale = 1f, float armourMm = 10f, float weldTolerance = 0.000001f)
+        float scale = 1f, float armourMm = 10f, float weldTolerance = 0.000001f,
+        ObjImportUnits sourceUnits = ObjImportUnits.Metres, ObjUpAxis sourceUp = ObjUpAxis.Y)
     {
-        var (parts, skipped) = Prepare(document, scale, armourMm, weldTolerance);
+        var (parts, skipped) = Prepare(document, scale, armourMm, weldTolerance, sourceUnits, sourceUp);
         var vertices = new List<Vector3>();
         var faces = new List<int[]>();
         foreach (var part in parts)
@@ -29,12 +30,17 @@ public static class ObjBlueprintImport
             vertices.AddRange(part.Vertices);
             faces.AddRange(part.Faces.Select(face => face.Select(index => checked(index + offset)).ToArray()));
         }
+        // All objects land in one structure, which the game can only hold so much of: refuse before anything is written.
+        // Edges aren't counted: each lies along a face corner, so the corners run out first.
+        if (MeshPlans.NativeLimit(vertices.Count, 0, faces.Count, faces.Sum(f => (long)f.Length), "this OBJ would make one structure of") is string full)
+            throw new FormatException(full + ". Import fewer or simpler objects, or split the OBJ.");
         string blueprintName = string.IsNullOrWhiteSpace(name) ? "Imported OBJ" : name.Trim();
         var data = Mesh(blueprintName, vertices.ToArray(), faces.ToArray(), armourMm);
         return new(data.ToJsonString(Indented), parts.Length, vertices.Count, faces.Count, skipped);
     }
 
-    static (Prepared[] Parts, int Skipped) Prepare(ObjDocument document, float scale, float armourMm, float weldTolerance)
+    static (Prepared[] Parts, int Skipped) Prepare(ObjDocument document, float scale, float armourMm, float weldTolerance,
+        ObjImportUnits sourceUnits, ObjUpAxis sourceUp)
     {
         ArgumentNullException.ThrowIfNull(document);
         if (!float.IsFinite(scale) || scale <= 0 || scale > 1000)
@@ -56,7 +62,7 @@ public static class ObjBlueprintImport
                 throw new FormatException($"{label}: an editable object needs vertices and faces.");
             totalVertices += mesh.Vertices.Length;
             if (totalVertices > ObjMeshFormat.MaxVertices) throw new FormatException("The OBJ contains too many vertices.");
-            var sourceVertices = mesh.Vertices.Select(v => new Vector3(-v.X, v.Y, v.Z) * scale).ToArray();
+            var sourceVertices = mesh.Vertices.Select(v => GeometryPreviewMath.ImportPosition(v, scale, sourceUnits, sourceUp)).ToArray();
             if (sourceVertices.Any(v => !Finite(v) || Maximum(v) > ObjMeshFormat.MaxCoordinate))
                 throw new FormatException($"{label}: vertices must be finite and within the supported coordinate range.");
             // Render meshes split a geometric vertex at hard normals and UV seams. Joining these copies within

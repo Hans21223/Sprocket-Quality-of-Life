@@ -70,9 +70,9 @@ public static class ShapeTools
         ui.Button("Cut through-hole", Ui.Callback(() => Cut(addon, targets, pocket: false)), new Tip("Cut through-hole",
             "Makes an opening through every plate this add-on overlaps. Mirrored plates are cut on both sides. Ctrl+Z undoes the cut."));
         ui.Button("Cut recess (walls and floor)", Ui.Callback(() => Cut(addon, targets, pocket: true)), new Tip("Cut recess",
-            "Makes a recess with walls and a floor, shaped by this add-on. The new plates inherit the add-on's armour. Ctrl+Z undoes the cut."));
+            "Makes a recess with walls and a floor, shaped by this add-on. The new plates inherit the add-on's armour. Where the plates don't enclose a space (single open plates), it's a plain hole. Ctrl+Z undoes the cut."));
         ui.Button("Keep only the overlap", Ui.Callback(() => Cut(addon, targets, pocket: false, keepInside: true)), new Tip("Keep only the overlap",
-            "The opposite of a cut (an intersect): keeps only the part of the plates inside this add-on and removes the rest. The add-on's surface closes it off with the add-on's armour. Mirrored plates change on both sides. Ctrl+Z undoes it."));
+            "The opposite of a cut (an intersect): keeps only the part of the plates inside this add-on and removes the rest. The add-on's surface closes it off with the add-on's armour; plates that don't enclose a space there (single open plates) are only trimmed. Mirrored plates change on both sides. Ctrl+Z undoes it."));
         ui.Button("Join into one shape (union)", Ui.Callback(() => Union(addon, targets)), new Tip("Join (union)",
             "This add-on and the one shape it overlaps become one shape, its outside only: each loses its surface inside the other, then the add-on joins the shape, like Merge without the hidden insides. Both must be closed shapes. Ctrl+Z undoes it."));
         ui.Button("Slice in two", Ui.Callback(() => Slice(addon, targets)), new Tip("Slice in two",
@@ -80,18 +80,25 @@ public static class ShapeTools
 
         Ui.Section(layout, "Drape as cloth");
         ui.InfoField("Turns this add-on into a cloth sheet as wide and long as its top, dropped onto the vehicle until it settles: a tarp, a cover, a camouflage net. Place it above where it should land first.", 3);
-        ui.Slider("Spacing (cm)", clothCell * 100, 5, 25, Ui.FloatCallback(v => clothCell = MathF.Round(v) / 100));
+        ui.Slider("Spacing (cm)", clothCell * 100, 5, 25, Ui.FloatCallback(v => { clothCell = MathF.Round(v) / 100; __instance.RequestRedraw(); }));
         ui.Slider("Stiffness (%)", clothStiffness * 100, 2, 100, Ui.FloatCallback(v => clothStiffness = MathF.Round(v) / 100));
         ui.ToggleField("Net", clothNet, Ui.BoolCallback(v => { clothNet = v; __instance.RequestRedraw(); }),
             "On: the sheet becomes a net, each cell between points a hole framed by the net's cords, for a camouflage net. Off: solid cloth.");
-        if (clothNet) ui.Slider("Hole size (%)", netHole * 100, 40, 85, Ui.FloatCallback(v => netHole = MathF.Round(v) / 100));
+        if (clothNet)
+        {
+            ui.Slider("Hole size (%)", netHole * 100, 40, 85, Ui.FloatCallback(v => { netHole = MathF.Round(v) / 100; __instance.RequestRedraw(); }));
+            // Smaller holes than the spacing gives: the settled sheet's cells are cut finer (AddonEdits.PlanDrape).
+            ui.Slider("Holes (mm)", netHoleMm, 2, 200, Ui.FloatCallback(v => { netHoleMm = MathF.Round(v); __instance.RequestRedraw(); }));
+            int split = (int)MathF.Ceiling(clothCell * netHole * 1000 / netHoleMm - 1e-4f);
+            ui.InfoField($"Holes come out {clothCell * netHole * 1000 / Math.Max(1, split):0.#} mm wide{(split > 1 ? $", {split} x {split} to each {clothCell * 100:0} cm of spacing" : " (one per spacing)")}. Small holes on a big add-on can pass the game's limit per part.", 2);
+        }
         ui.Button($"Lands on: {LandsOnNames[(int)landsOn]}", Ui.Callback(() =>
         {
             landsOn = (AddonEdits.LandsOn)(((int)landsOn + 1) % LandsOnNames.Length);
             __instance.RequestRedraw();
         }), new Tip("Lands on", "Click to cycle. Everything: every other plate catches it. Only the selected parts: select the parts it should lie on, then this add-on last. All but the selected parts: it falls through them (an antenna, a gun barrel). A mirror twin counts with its partner."));
         ui.Button(clothNet ? "Drape as a net" : "Drape as cloth", Ui.Callback(() => Drape(addon)), new Tip("Drape as cloth",
-            "The add-on's top becomes a sheet of points that falls onto the hull, turret and add-ons below and settles; hatches, periscopes, wheels, tracks and other parts catch it as boxes around them. Closer points follow shapes better but make more faces and take longer; a stiffer sheet bends less over edges. The settled sheet replaces the add-on's shape, thin (10 mm at most). A mirrored add-on drapes on both sides. Ctrl+Z undoes it."));
+            "The add-on's top becomes a sheet of points that falls onto the hull, turret and add-ons below and settles; hatches, periscopes, wheels, tracks and other parts catch it as boxes around them. Closer points follow shapes better but make more faces and take longer; a stiffer sheet bends less over edges. The settled sheet replaces the add-on's shape, thin (10 mm at most). As a net, Holes sets how big each hole is, down to 2 mm: the sheet still drapes at its spacing, then each of its cells is cut into smaller ones. Very small holes only fit a small add-on (the game's limit per part). A mirrored add-on drapes on both sides. Ctrl+Z undoes it."));
 
         Ui.Section(layout, "Mirror side");
         ui.Button("Make the mirror side a real add-on", Ui.Callback(() => RealMirror(addon)), new Tip("Make the mirror side real",
@@ -103,7 +110,7 @@ public static class ShapeTools
     internal static void Drape(int addon)
     {
         if (DesignEditor.Instance is not { } editor) return;
-        var options = new AddonEdits.DrapeOptions(clothCell, clothNet ? netHole : 0, clothStiffness, landsOn, editor.SelectedParts().Where(v => v != addon).ToList());
+        var options = new AddonEdits.DrapeOptions(clothCell, clothNet ? netHole : 0, clothStiffness, landsOn, editor.SelectedParts().Where(v => v != addon).ToList(), netHoleMm / 1000);
         editor.RequestLiveEdit(clothNet ? "Draping the net" : "Draping the cloth", clothNet ? "Net draped." : "Cloth draped.", json => AddonEdits.PlanDrape(json, addon, options, editor.LiveShapes(json), editor.PartBoxes()));
     }
 
@@ -167,7 +174,7 @@ public static class ShapeTools
     static bool keepCutter;
     static bool rectangleBox;
     static Fill.Mode fill = Fill.Mode.Fewest;
-    static float clothCell = 0.1f, clothStiffness = 0.15f, netHole = 0.6f;
+    static float clothCell = 0.1f, clothStiffness = 0.15f, netHole = 0.6f, netHoleMm = 60;
     static bool clothNet;
     static AddonEdits.LandsOn landsOn;
     static readonly string[] LandsOnNames = { "everything", "only the selected parts", "all but the selected parts" };

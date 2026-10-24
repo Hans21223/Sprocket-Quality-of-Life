@@ -23,6 +23,8 @@ internal static class QolMenu
     static readonly List<InputAction> paused = new();
     static CursorLockMode lockBefore;
     static bool cursorBefore, rebuild;
+    static int keyPage;
+    const int KeysPerPage = 20;
     internal static bool IsOpen => canvas != null;
 
     // ---------- every frame (from DesignEditor.Update) ----------
@@ -31,7 +33,8 @@ internal static class QolMenu
     {
         if (!IsOpen)
         {
-            if (Time.frameCount > closedAt + 1 && Keybinds.Pressed("menu") && !MeshTools.Typing()) Open();
+            // Not over a photo or drawing being taken: they need the frames to finish and put the screen back.
+            if (Time.frameCount > closedAt + 1 && Keybinds.Pressed("menu") && !MeshTools.Typing() && !PhotoShot.Capturing && !DrawingSheet.Capturing) Open();
             return;
         }
         PauseGame();
@@ -87,7 +90,9 @@ internal static class QolMenu
         NativeUi.Click(font, keep, panel.transform, $"Close ({Keybinds.Shown("menu")} / Esc)", 800, 12, 180, 32, Close);
         hint = NativeUi.Label(font, panel.transform, "Click a key to change it, then press the new key (with Ctrl, Shift or Alt if wanted).", 22, 50, 960, 24, 15);
         float y = 80;
-        foreach (var b in Keybinds.All)
+        int pageCount = Math.Max(1, (Keybinds.All.Length + KeysPerPage - 1) / KeysPerPage);
+        keyPage = Math.Clamp(keyPage, 0, pageCount - 1);
+        foreach (var b in Keybinds.All.Skip(keyPage * KeysPerPage).Take(KeysPerPage))
         {
             NativeUi.Label(font, panel.transform, $"{b.Group}:  {b.Name}", 22, y + 3, 520, 22, 15);
             string id = b.Id;
@@ -96,6 +101,9 @@ internal static class QolMenu
             NativeUi.Click(font, keep, panel.transform, "Default", 790, y, 90, 24, () => { Keybinds.Reset(id); Refresh(); });
             y += 25.5f;
         }
+        NativeUi.Click(font, keep, panel.transform, "Previous", 22, 676, 130, 32, () => { keyPage = (keyPage + pageCount - 1) % pageCount; rebuild = true; });
+        NativeUi.Label(font, panel.transform, $"Keys {keyPage + 1} / {pageCount}", 168, 682, 210, 25, 16);
+        NativeUi.Click(font, keep, panel.transform, "Next", 384, 676, 130, 32, () => { keyPage = (keyPage + 1) % pageCount; rebuild = true; });
         Refresh();
     }
 

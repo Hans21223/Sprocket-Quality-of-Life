@@ -71,6 +71,28 @@ internal static class Drawing
         return shape;
     }
 
+    /// The largest scale up to `scale` (pixels a metre) at which views of these sizes (metres across and high), each with
+    /// `pad` pixels round it, are each at most `maxSide` pixels a side and `maxPixels` in all; null if none is.
+    internal static float? FitScale(float scale, IReadOnlyList<(float Across, float High)> views, int pad, int maxSide, long maxPixels)
+    {
+        if (!float.IsFinite(scale) || scale <= 0 || views.Any(v => !float.IsFinite(v.Across) || !float.IsFinite(v.High) || v.Across < 0 || v.High < 0)) return null;
+        bool Fits(float s)
+        {
+            double all = 0;
+            foreach (var (across, high) in views)
+            {
+                double w = Math.Ceiling(across * (double)s) + 2.0 * pad, h = Math.Ceiling(high * (double)s) + 2.0 * pad;
+                if (w > maxSide || h > maxSide || (all += w * h) > maxPixels) return false;
+            }
+            return true;
+        }
+        if (Fits(scale)) return scale;
+        if (!Fits(scale * 1e-6f)) return null; // even tiny views won't fit: the pads alone are too big
+        float lo = scale * 1e-6f, hi = scale; // the views only grow with the scale: halve the gap until it's small
+        for (int k = 0; k < 40; k++) { float mid = (lo + hi) / 2; if (Fits(mid)) lo = mid; else hi = mid; }
+        return lo;
+    }
+
     /// One orthographic view: its centre, the sheet's right and up, the way it looks, pixels per metre, and its size.
     internal readonly struct View
     {

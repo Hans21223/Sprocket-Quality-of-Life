@@ -11,12 +11,12 @@ public static class HoleRing
     /// inner = the ring the game made, centre = where the game put the hole, size = the Hole size slider (1 = the
     /// game's size). The size is applied here, never through the game's own hole radius: a hole the game cuts bigger
     /// than its face crashes the game in its own code, before this can shrink it.
-    public static Vector3[] Fit(Vector3[] outer, Vector3[] inner, Vector3 centre, out string note, float size = 1f) =>
-        TryFit(outer, inner, centre, out var ring, out note, size) ? ring : inner;
+    public static Vector3[] Fit(Vector3[] outer, Vector3[] inner, Vector3 centre, out string note, float size = 1f, bool cardinalPoints = true) =>
+        TryFit(outer, inner, centre, out var ring, out note, size, cardinalPoints) ? ring : inner;
 
     /// A rejected fit has no usable ring. Live callers must check this result before replacing a face;
     /// Fit above retains its historical fallback only for callers that already handle their own failure.
-    public static bool TryFit(Vector3[] outer, Vector3[] inner, Vector3 centre, out Vector3[] ring, out string note, float size = 1f)
+    public static bool TryFit(Vector3[] outer, Vector3[] inner, Vector3 centre, out Vector3[] ring, out string note, float size = 1f, bool cardinalPoints = true)
     {
         ring = Array.Empty<Vector3>();
         int n = outer.Length, m = inner.Length;
@@ -107,7 +107,9 @@ public static class HoleRing
         var result = new Vector3[m];
         for (int k = 0; k < m; k++)
         {
-            double angle = 2 * Math.PI * (k + 0.5) / m;
+            // Start on the part axis. A half-step here puts an edge, rather than
+            // a vertex, at each cardinal direction (for counts divisible by four).
+            double angle = 2 * Math.PI * (k + (cardinalPoints ? 0 : 0.5)) / m;
             result[k] = c + radius * ((float)Math.Cos(angle) * u + (float)Math.Sin(angle) * v);
         }
         if (result.Any(p => !Inside(p))) { note = "round hole could not stay inside the face"; return false; }

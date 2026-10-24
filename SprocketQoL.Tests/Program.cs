@@ -2,18 +2,25 @@ using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
 if (args.Contains("--photo-only")) { PhotoOutputTests.Run(); return; }
-if (args.Contains("--hole-only")) { CoreAuditTests.Run(); HoleFillTests.Run(); return; }
-if (args.Contains("--obj-only")) { ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run(); return; }
-if (args.Contains("--paint-only")) { PartPaintPersistenceTests.Run(); return; }
+if (args.Contains("--hole-only")) { CoreAuditTests.Run(); HoleRingAlignmentTests.Run(); HoleFillTests.Run(); return; }
+if (args.Contains("--obj-only")) { ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run(); GeometryPreviewMathTests.Run(); ObjStreamingImportTests.Run(); return; }
+if (args.Contains("--paint-only")) { PartPaintPersistenceTests.Run(); OwnPaintEditTests.Run(); return; }
 if (args.Contains("--ui-only")) { UiPresentationTests.Run(); return; }
-if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); CutTests.RunGeometry(); HoleFillTests.Run(); return; }
-if (args.Contains("--core-only")) { CoreAuditTests.Run(); GizmoPickingTests.Run(); return; }
+if (args.Contains("--mesh-only")) { ToolTests.Run(); SmoothSplitTests.Run(); FilletTests.Run(); BevelEdgeTests.Run(); NativeMeshBudgetTests.Run(); CutTests.RunGeometry(); HoleFillTests.Run(); SmoothEdgeRegressionTests.Run(); PrecisionGeometryTests.Run(); return; }
+if (args.Contains("--core-only")) { CoreAuditTests.Run(); GizmoPickingTests.Run(); VehicleSessionTests.Run(); LiveEditCheckTests.Run(); return; }
 if (args.Contains("--drive-only")) { DriveSimTests.Run(); return; }
 if (args.Contains("--cloth-only")) { ClothTests.Run(); return; }
-if (args.Contains("--fillet-only")) { FilletTests.Run(); BevelEdgeTests.Run(); return; }
+if (args.Contains("--fillet-only")) { FilletTests.Run(); BevelEdgeTests.Run(); NativeMeshBudgetTests.Run(); return; }
 if (args.Contains("--smooth-split-only")) { SmoothSplitTests.Run(); BevelEdgeTests.Run(); return; }
+if (args.Contains("--smooth-sphere-only")) { SmoothEdgeRegressionTests.Run(); return; }
 if (args.Contains("--bevel-only")) { BevelEdgeTests.Run(); return; }
 if (args.Contains("--gizmo-only")) { GizmoPickingTests.Run(); return; }
+if (args.Contains("--picking-only")) { MeshPickingTests.Run(); return; }
+if (args.Contains("--prediction-only")) { BuildPredictionTests.Run(); return; }
+if (args.Contains("--precision-only")) { PrecisionGeometryTests.Run(); SmartCornersTests.Run(); return; }
+if (args.Contains("--workshop-only")) { WorkshopStorageTests.Run(); return; }
+if (args.Contains("--assist-only")) { MeshAssistTests.Run(); return; }
+if (args.Contains("--patterns-only")) { PartPatternTests.Run(); return; }
 if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
 if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
 if (args.Contains("--clipboard-only")) { SprocketQoL.Tests.ClipboardTests.Run(); return; }
@@ -21,11 +28,26 @@ TurretDriveTests.Run();
 PhotoOutputTests.Run();
 ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run();
 PartPaintPersistenceTests.Run();
+OwnPaintEditTests.Run();
 GizmoPickingTests.Run();
+MeshPickingTests.Run();
+BuildPredictionTests.Run();
+PrecisionGeometryTests.Run();
+SmartCornersTests.Run();
+WorkshopStorageTests.Run();
+MeshAssistTests.Run();
+PartPatternTests.Run();
+GeometryPreviewMathTests.Run();
+ObjStreamingImportTests.Run();
 BevelEdgeTests.Run();
 SmoothSplitTests.Run();
+SmoothEdgeRegressionTests.Run();
 FilletTests.Run();
+NativeMeshBudgetTests.Run();
 CoreAuditTests.Run();
+VehicleSessionTests.Run();
+LiveEditCheckTests.Run();
+HoleRingAlignmentTests.Run();
 HoleFillTests.Run();
 UiPresentationTests.Run();
 int checks=0, conversions=0;
@@ -53,8 +75,10 @@ void Run(string json,int id)
     conversions++;
 }
 ToolTests.Run(); // Bridge, Circle, Fix mirror, mirrored merge: small shapes, no blueprints needed
-string root=Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)+@"\My Games\Sprocket\Factions\PMC\Blueprints\Vehicles";
-var files=Directory.GetFiles(root,"*.blueprint").OrderBy(f=>new FileInfo(f).Length).Take(12).ToList();
+// Real designs: this PC's PMC faction unless SPROCKET_QOL_VEHICLES names another folder; none there, those checks are skipped.
+string root=Environment.GetEnvironmentVariable("SPROCKET_QOL_VEHICLES")??Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)+@"\My Games\Sprocket\Factions\PMC\Blueprints\Vehicles";
+var files=Directory.Exists(root)?Directory.GetFiles(root,"*.blueprint").OrderBy(f=>new FileInfo(f).Length).Take(12).ToList():new List<string>();
+if(files.Count==0)Console.WriteLine($"REAL_BLUEPRINTS_SKIPPED: no designs in {root}");
 SprocketQoL.Tests.ClipboardTests.Run(files);
 foreach(var f in files)
 {
@@ -94,7 +118,6 @@ foreach(string kind in new[]{"cycle","missing","bad-selection"})
 Console.WriteLine($"CONVERSION_TESTS_OK: {checks} checks, {conversions} conversions, {files.Count} real blueprint files plus rotated fixtures");
 
 // ---------------- Add-on shape edits ----------------
-const string Compartment = "7f8a9d20-eb45-482e-b149-014c964c4e2c";
 void CheckRefs(JsonObject bp, string what)
 {
     var blockIds = bp["blueprints"]!.AsArray().Select(x => x!["id"]!.GetValue<int>()).ToList();
@@ -141,7 +164,9 @@ Vector3[] Verts(JsonObject bp, JsonObject o)
 
 // 2) The round palette part has the cube part's layout and is a closed, outward-facing, cube-sized shell.
 {
-    var cube = Conversion.Parse(File.ReadAllText(@"C:\Program Files (x86)\Steam\steamapps\common\Sprocket\Sprocket_Data\StreamingAssets\Parts\cubePlateStructurePart.json"));
+    // The game's own palette cube: SPROCKET_GAME_DIR names the game folder if it isn't Steam's usual one.
+    string game = Environment.GetEnvironmentVariable("SPROCKET_GAME_DIR") ?? @"C:\Program Files (x86)\Steam\steamapps\common\Sprocket";
+    var cube = Conversion.Parse(File.ReadAllText(Path.Combine(game, "Sprocket_Data", "StreamingAssets", "Parts", "cubePlateStructurePart.json")));
     var part = Conversion.Parse(AddonEdits.RoundAddonPart("00000000-0000-0000-0000-000000000016", "roundAddonTest", 16));
     string Shape(JsonNode n) => string.Join(",", n.AsObject().Select(kv => kv.Key)); // key names at one level
     var cubeInfo = cube["components"]![0]!["info"]!; var partInfo = part["components"]![0]!["info"]!;
@@ -268,7 +293,7 @@ CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.1f,
     Check(HoleRing.Fit(square, game, new Vector3(0.5f, 0.5f, 0), out _, float.NaN).All(p => MathF.Abs(Vector2.Distance(new(p.X, p.Y), new(0.5f, 0.5f)) - 0.2f) < 1e-4f), "bad size value: game's size");
 }
 {
-    // Square to the part, whatever the face's shape or first corner (a player saw circles 5-10° off): flat top and bottom,
+    // Optional flat-sides orientation stays square to the part, whatever the face's shape or first corner:
     // 4 segments an upright square, and a mirrored face (x -> -x, corners reversed) gets the mirror image.
     foreach (int m in new[] { 4, 6, 8, 12, 24, 32 })
     foreach (var face in new[] { new[] { new Vector3(0.1f, 0, 0.3f), new Vector3(0.9f, 0, 0.5f), new Vector3(0.9f, 1, 0.5f), new Vector3(0.1f, 0.4f, 0.3f) },
@@ -276,14 +301,14 @@ CheckHole(Matrix4x4.Identity, 0.2f, false, new Vector3(0.5f, 0.5f, 0.03f), 0.1f,
     {
         var centre = face.Aggregate(Vector3.Zero, (a, p) => a + p) / 4;
         var game = Enumerable.Range(0, m).Select(k => centre + 0.1f * new Vector3(MathF.Cos(k * 2.3f), MathF.Sin(k * 2.3f), 0)).ToArray();
-        var ring = HoleRing.Fit(face, game, centre, out _);
+        var ring = HoleRing.Fit(face, game, centre, out _, cardinalPoints: false);
         var normal = Vector3.Normalize(HoleRing.Normal(face));
         var up = Vector3.Normalize(Vector3.UnitY - normal * normal.Y);
         var heights = ring.Select(p => Vector3.Dot(p - centre, up)).OrderBy(h => h).ToArray();
         Check(MathF.Abs(heights[^1] - heights[^2]) < 1e-4f && MathF.Abs(heights[0] - heights[1]) < 1e-4f, $"{m}-segment hole has a flat top and bottom");
         if (m == 4) Check(ring.All(p => MathF.Abs(MathF.Abs(Vector3.Dot(p - centre, up)) - MathF.Abs(heights[0])) < 1e-4f), "4 segments: an upright square");
         var mirrored = face.Reverse().Select(p => p with { X = -p.X }).ToArray();
-        var twin = HoleRing.Fit(mirrored, game.Select(p => p with { X = -p.X }).ToArray(), centre with { X = -centre.X }, out _);
+        var twin = HoleRing.Fit(mirrored, game.Select(p => p with { X = -p.X }).ToArray(), centre with { X = -centre.X }, out _, cardinalPoints: false);
         Check(ring.All(p => twin.Any(q => Vector3.Distance(q, p with { X = -p.X }) < 1e-4f)), $"{m}-segment hole on the mirrored face is the mirror image");
     }
 }

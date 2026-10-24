@@ -11,12 +11,53 @@ public static class MeshPlans
 
     /// A face a tool adds: its corners (existing points, or pos.Count + i for Points[i]), turning the way `Source` did,
     /// and the old face it's made from (thickness and settings carry over).
-    public sealed record NewFace(int[] Corners, int Source);
+    public sealed record NewFace(int[] Corners, int Source)
+    {
+        // Refined curved patches can be millimetres across even when their source plate
+        // is metres across. Their physical feature area is a better degeneracy scale.
+        public float? ReferenceArea { get; init; }
+    }
 
     /// Faces to take out, faces to put in, and the points they need. Points no face uses afterwards go too.
     public sealed record Rebuild(List<int> Remove, List<NewFace> Add, List<NewPoint> Points, string? Why)
     {
         public static Rebuild Fail(string why) => new(new(), new(), new(), why);
+    }
+
+    /// The game keeps each structure's points, edges, faces and face corners in 16-bit indices: one limit for all of
+    /// them, used by every path that makes or loads geometry (tools, holes, merges, OBJ import).
+    public const int NativeElementLimit = ushort.MaxValue;
+
+    /// Why a structure with these many points, edges, faces and face corners can't exist in the game, or null. `what`
+    /// starts the message ("this hole would make the part").
+    public static string? NativeLimit(long vertices, long edges, long faces, long loops, string what)
+    {
+        foreach (var (count, kind) in new[] { (vertices, "points"), (edges, "edges"), (faces, "faces"), (loops, "face corners") })
+            if (count > NativeElementLimit) return FormattableString.Invariant($"{what} {count:N0} {kind}, above the game's {NativeElementLimit:N0} per structure");
+        return null;
+    }
+
+    /// Create Hole on one face with `corners` corners: the game adds a ring of `segments` points and, if QoL's own fill
+    /// can't be used, its fan of triangles between the face's corners and the ring. Counted at its most (nothing taken
+    /// for the face it deletes) and checked before the game starts: its native calls can't be stopped part way.
+    public static string? HoleLimit(int vertices, int edges, int faces, int loops, int corners, int segments) =>
+        NativeLimit((long)vertices + segments, (long)edges + 2L * segments + corners, (long)faces + segments + corners,
+            (long)loops + 3L * (segments + corners), "this hole would make the part");
+
+    /// The native editor stores element indices in ushorts. Apply creates the replacement
+    /// topology before deleting the old one, so its peak counts must fit, not just the result.
+    public static string? CreationLimit(int oldVertices, int oldEdges, int oldFaces, int oldLoops,
+        IReadOnlyList<int[]> faces, IEnumerable<(int, int)> looseEdges, Rebuild plan)
+    {
+        if (plan.Why != null) return plan.Why;
+        if (oldVertices < 0 || oldEdges < 0 || oldFaces < 0 || oldLoops < 0)
+            return "the mesh has invalid element counts";
+        var existingEdges = faces.SelectMany(Sides).ToHashSet();
+        existingEdges.UnionWith(looseEdges.Select(e => Key(e.Item1, e.Item2)));
+        long createdEdges = plan.Add.SelectMany(f => Sides(f.Corners)).Distinct().LongCount(e => !existingEdges.Contains(e));
+        return NativeLimit((long)oldVertices + plan.Points.Count, oldEdges + createdEdges, (long)oldFaces + plan.Add.Count,
+            oldLoops + plan.Add.Sum(f => (long)f.Corners.Length), "this edit would briefly need") is string full
+            ? full + "; use fewer segments or a smaller selection" : null;
     }
 
     // ---------- checks, before anything changes ----------
@@ -45,8 +86,12 @@ public static class MeshPlans
             var s = Newell(pos,faces[nf.Source]);
             if (!Finite(n) || !Finite(s) || !float.IsFinite(n.Length()) || !float.IsFinite(s.Length())) return "a face's area would be invalid";
             if (s.Length() < 1e-9f) continue; // made from a squashed face: nothing to compare with
-            if (n.Length() < 1e-5f * s.Length()) return "a new face would be squashed to next to no area";
+            float referenceArea = nf.ReferenceArea ?? s.Length();
+            if (!float.IsFinite(referenceArea) || referenceArea <= 0 || referenceArea > s.Length())
+                return "a new face's area reference would be invalid";
+            if (n.Length() < 1e-5f * referenceArea) return "a new face would be squashed to next to no area";
             if (Vector3.Dot(n, s) < -0.5f * n.Length() * s.Length()) return "a new face would be turned over";
+            if (c.Length == 4 && SidesCross(at[c[0]], at[c[1]], at[c[2]], at[c[3]], n)) return "a new face's sides would cross";
         }
         var removed = plan.Remove.ToHashSet();
         var after = faces.Where((_, i) => !removed.Contains(i)).Concat(plan.Add.Select(a => a.Corners)).ToList();
@@ -65,20 +110,34 @@ public static class MeshPlans
     /// Why moving points to `moved` would fold a face over or squash it flat, or null.
     public static string? Folds(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, IReadOnlyDictionary<int, Vector3> moved)
     {
+        Vector3 At(int v) => moved.TryGetValue(v, out var p) ? p : pos[v];
         foreach (var f in faces)
         {
             if (!f.Any(moved.ContainsKey)) continue;
-            if (f.Any(v => v < 0 || v >= pos.Count || !Finite(moved.TryGetValue(v,out var p) ? p : pos[v]))) return "a moved point would be invalid";
+            if (f.Any(v => v < 0 || v >= pos.Count || !Finite(At(v)))) return "a moved point would be invalid";
             var was = Newell(pos,f);
-            var origin = moved.TryGetValue(f[0],out var first) ? first : pos[f[0]];
             var now = Vector3.Zero;
-            for (int k=1;k+1<f.Length;k++) now += Vector3.Cross((moved.TryGetValue(f[k],out var a) ? a : pos[f[k]])-origin,
-                (moved.TryGetValue(f[k+1],out var b) ? b : pos[f[k+1]])-origin);
+            for (int k=1;k+1<f.Length;k++) now += Vector3.Cross(At(f[k])-At(f[0]), At(f[k+1])-At(f[0]));
             if (was.Length() < 1e-8f) continue; // squashed already: not this tool's doing
             if (now.Length() < 1e-8f) return "a face would be squashed to no area";
             if (Vector3.Dot(now, was) <= 0) return "a face would fold over";
+            if (f.Length == 4 && SidesCross(At(f[0]), At(f[1]), At(f[2]), At(f[3]), now)) return "a face's sides would cross";
         }
         return null;
+    }
+
+    /// Whether a quad's opposite sides cross (a bow tie), seen along `facing`: its facing summed over the two halves can
+    /// still look right. Hollow-cornered (concave) quads don't cross and pass.
+    static bool SidesCross(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 facing)
+    {
+        var n = Vector3.Normalize(facing);
+        var u = Vector3.Normalize(Vector3.Cross(n, MathF.Abs(n.X) < 0.9f ? Vector3.UnitX : Vector3.UnitY));
+        var w = Vector3.Cross(n, u);
+        Vector2 P(Vector3 p) => new(Vector3.Dot(p - a, u), Vector3.Dot(p - a, w));
+        static float Turn(Vector2 o, Vector2 p, Vector2 q) => (p.X - o.X) * (q.Y - o.Y) - (p.Y - o.Y) * (q.X - o.X);
+        static bool Cross(Vector2 p, Vector2 q, Vector2 r, Vector2 s) => Turn(p, q, r) * Turn(p, q, s) < 0 && Turn(r, s, p) * Turn(r, s, q) < 0;
+        var (pa, pb, pc, pd) = (P(a), P(b), P(c), P(d));
+        return Cross(pa, pb, pc, pd) || Cross(pb, pc, pd, pa);
     }
 
     /// The point of a face (its corners, fanned into triangles from the first) nearest to `p`, and how far away it is.
@@ -368,12 +427,30 @@ public static class MeshPlans
     {
         if (!float.IsFinite(width) || width <= 0) return Rebuild.Fail("width must be positive");
         if (segments < 1 || segments > 16) return Rebuild.Fail("use 1 to 16 segments");
+        if (pos.Any(p => !Finite(p)) || faces.Any(f => f.Length < 3 || f.Distinct().Count() != f.Length || f.Any(v => v < 0 || v >= pos.Count)))
+            return Rebuild.Fail("the mesh contains invalid points or faces");
         var edgeFaces = EdgeFaces(faces);
         var sel = edges.Select(e => Key(e.A, e.B)).ToHashSet();
         if (sel.Count == 0) return Rebuild.Fail("select edges with a face on each side");
         if (sel.Any(e => !edgeFaces.TryGetValue(e,out var fs) || fs.Count != 2)) return Rebuild.Fail("each selected edge needs a face on each side");
         if (sel.Any(e => e.Item1 < 0 || e.Item2 >= pos.Count || !Finite(pos[e.Item1]) || !Finite(pos[e.Item2]) || Vector3.DistanceSquared(pos[e.Item1],pos[e.Item2]) < 1e-16f))
             return Rebuild.Fail("a selected edge is invalid or too short");
+        var normals = faces.Select(f => Newell(pos,f) is var n && n.LengthSquared() > 1e-20f ? Vector3.Normalize(n) : Vector3.Zero).ToArray();
+        foreach (var edge in sel)
+        {
+            var sides = edgeFaces[edge];
+            if (sides.Any(f => normals[f].LengthSquared() < .5f)) return Rebuild.Fail("a selected edge's face has no usable area");
+            if (Vector3.Dot(normals[sides[0]],normals[sides[1]]) < -.99999f)
+                return Rebuild.Fail("opposite-facing sheets cannot be inflated with edge rounding; give the shell depth first");
+            int a = Array.FindIndex(faces[sides[0]], v => v == edge.Item1);
+            int b = Array.FindIndex(faces[sides[1]], v => v == edge.Item1);
+            if ((faces[sides[0]][(a+1)%faces[sides[0]].Length] == edge.Item2) == (faces[sides[1]][(b+1)%faces[sides[1]].Length] == edge.Item2))
+                return Rebuild.Fail("faces beside a selected edge have inconsistent winding");
+        }
+        // At a right-angle corner bevel width and fillet radius coincide. Reuse the
+        // exact cylinder/sphere junctions instead of bending strip ends toward the old corner.
+        if (segments > 1 && sel.All(edge => Math.Abs(Vector3.Dot(normals[edgeFaces[edge][0]],normals[edgeFaces[edge][1]])) < 1e-5f))
+            return EdgeFillet.Round(pos,faces,sel,width,segments);
         var pointFaces = new Dictionary<int, List<int>>();
         for (int f = 0; f < faces.Count; f++)
             foreach (int v in faces[f])
@@ -424,6 +501,13 @@ public static class MeshPlans
                         p = pos[u] + Vector3.Normalize(e1 + e2) * (width / Math.Max(0.2f, MathF.Sin(half)));
                     }
                     else p = pos[u] + Vector3.Normalize(own.Aggregate(Vector3.Zero, (s, w) => s + Vector3.Normalize(pos[w] - pos[u]))) * width;
+                    if (!Finite(p)) return Rebuild.Fail("the selected corner cannot be rounded safely");
+                    foreach (int face in sector) foreach (int neighbour in Beside(faces[face],u))
+                    {
+                        var along = pos[neighbour]-pos[u];
+                        if (along.LengthSquared() < 1e-16f || Vector3.Dot(p-pos[u],along)/along.LengthSquared() >= .49f)
+                            return Rebuild.Fail("rounding is too large for the adjoining faces; use a smaller width");
+                    }
                     int id = Add(p, u);
                     foreach (int f in sector) corner[(f, u)] = new[] { id };
                 }
@@ -590,7 +674,11 @@ public static class MeshPlans
             if (filled.Count == 0) return Rebuild.Fail("a face around the bevel couldn't be rebuilt");
             add.AddRange(filled.Select(x => new NewFace(x, source)));
         }
-        return new Rebuild(remove, add, points, null);
+        if (segments > 1)
+            add = add.Select(face => face with { ReferenceArea = Math.Min(width*width,Newell(pos,faces[face.Source]).Length()) }).ToList();
+        var result = new Rebuild(remove, add, points, null);
+        string? problem = Check(pos,faces,result);
+        return problem == null ? result : Rebuild.Fail("the rounding cannot fit these faces: " + problem);
     }
 
     /// The two corners next to `u` in a face.
@@ -647,9 +735,15 @@ public static class MeshPlans
 
     // ---------- Mirror ----------
 
-    /// For each of `points`, the point at its mirrored position across x = 0 (the game's Mirror plane) within
-    /// `tolerance` metres, if there is one. A point on the plane is its own twin.
-    public static Dictionary<int, int> Twins(IReadOnlyList<Vector3> pos, IEnumerable<int> points, float tolerance)
+    /// For each of `points`, the point nearest its mirrored position across x = 0 (the game's Mirror plane) within
+    /// `tolerance` metres, if there is one: an exact twin beats a near one, whatever order they're found in. A point on
+    /// the plane is its own twin.
+    public static Dictionary<int, int> Twins(IReadOnlyList<Vector3> pos, IEnumerable<int> points, float tolerance) =>
+        TwinCandidates(pos, points, tolerance).ToDictionary(kv => kv.Key, kv => kv.Value[0]);
+
+    /// Every point within `tolerance` of each of `points`' mirrored positions, nearest first (ties: lower number first).
+    /// Points with none are left out.
+    public static Dictionary<int, List<int>> TwinCandidates(IReadOnlyList<Vector3> pos, IEnumerable<int> points, float tolerance)
     {
         float cell = Math.Max(tolerance, 1e-5f);
         (int, int, int) Cell(Vector3 p) => ((int)MathF.Round(p.X / cell), (int)MathF.Round(p.Y / cell), (int)MathF.Round(p.Z / cell));
@@ -659,16 +753,16 @@ public static class MeshPlans
             if (!grid.TryGetValue(Cell(pos[v]), out var here)) grid[Cell(pos[v])] = here = new();
             here.Add(v);
         }
-        var twins = new Dictionary<int, int>();
+        var twins = new Dictionary<int, List<int>>();
         foreach (int v in points)
         {
             var m = new Vector3(-pos[v].X, pos[v].Y, pos[v].Z);
             var (x, y, z) = Cell(m);
-            int found = -1;
-            for (int dx = -1; dx <= 1 && found < 0; dx++) for (int dy = -1; dy <= 1 && found < 0; dy++) for (int dz = -1; dz <= 1 && found < 0; dz++)
+            var found = new List<(float Distance, int Point)>();
+            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
                 if (grid.TryGetValue((x + dx, y + dy, z + dz), out var near))
-                    foreach (int w in near) if (Vector3.Distance(pos[w], m) <= tolerance) { found = w; break; }
-            if (found >= 0) twins[v] = found;
+                    foreach (int w in near) if (Vector3.Distance(pos[w], m) is float d && d <= tolerance) found.Add((d, w));
+            if (found.Count > 0) twins[v] = found.OrderBy(f => f.Distance).ThenBy(f => f.Point).Select(f => f.Point).ToList();
         }
         return twins;
     }

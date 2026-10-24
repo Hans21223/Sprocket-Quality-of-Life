@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Text;
 using SprocketQoL;
 
 static class ObjMeshFormatTests
@@ -21,6 +22,73 @@ static class ObjMeshFormatTests
     const string Triangle = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
     static ObjMeshData Mesh(string name = "Hull") => new(name,
         new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitY }, new[] { new[] { 0, 1, 2 } });
+
+    sealed class CountingWriter : TextWriter
+    {
+        public override Encoding Encoding => Encoding.UTF8;
+        public long Characters { get; private set; }
+        public int LargestWrite { get; private set; }
+        public bool Disposed { get; private set; }
+        public override void Write(char value) { Characters++; LargestWrite = Math.Max(LargestWrite, 1); }
+        public override void Write(string? value)
+        {
+            int length = value?.Length ?? 0;
+            Characters += length; LargestWrite = Math.Max(LargestWrite, length);
+        }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+    }
+
+    sealed class FailingWriter : TextWriter
+    {
+        readonly IOException failure;
+        int remaining;
+        public override Encoding Encoding => Encoding.UTF8;
+        public bool Disposed { get; private set; }
+        public FailingWriter(IOException failure, int successfulCharacters)
+        { this.failure = failure; remaining = successfulCharacters; }
+        public override void Write(char value)
+        {
+            if (remaining-- <= 0) throw failure;
+        }
+        public override void Write(string? value)
+        {
+            if (value != null) foreach (char character in value) Write(character);
+        }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+    }
+
+    static void StreamMatches(ObjDocument document, string? library, string expected, string why)
+    {
+        // Caller culture and newline preferences must not change the OBJ wire format.
+        using var output = new StringWriter(CultureInfo.GetCultureInfo("fr-FR")) { NewLine = "\r\n" };
+        ObjMeshFormat.WriteTo(document, output, library);
+        Check(output.ToString() == expected, why);
+        output.Write("# still open");
+        Check(output.ToString().EndsWith("# still open", StringComparison.Ordinal), "streaming leaves the caller's writer open");
+    }
+
+    static void LargeStreamingExport()
+    {
+        // Geometry and attributes fit the existing limits, but round-trip float text exceeds
+        // 64 MiB. Discarding the text verifies the regression without allocating a huge string.
+        const int count = 750_000;
+        var positions = new Vector3[count];
+        var normals = new Vector3[count];
+        var uv = new Vector2[count];
+        Array.Fill(positions, new Vector3(12345.678f, -9876.543f, 0.123456789f));
+        positions[1] = positions[0] + Vector3.UnitX;
+        positions[2] = positions[0] + Vector3.UnitY;
+        Array.Fill(normals, new Vector3(0.123456789f, 0.987654321f, -0.111111119f));
+        Array.Fill(uv, new Vector2(0.123456789f, 0.987654321f));
+        var mesh = new ObjMeshData("Large tank", positions, new[] { new[] { 0, 1, 2 } }, uv, normals,
+            new[] { new[] { new ObjCorner(0, 0, 0), new ObjCorner(1, 1, 1), new ObjCorner(2, 2, 2) } },
+            new[] { "paint" });
+        using var output = new CountingWriter();
+        ObjMeshFormat.WriteTo(new(new[] { mesh }), output, "Large_tank.mtl");
+        Check(output.Characters > ObjMeshFormat.MaxTextLength, "valid streamed export crosses the former 64 MiB text ceiling");
+        Check(output.LargestWrite <= ObjMeshFormat.MaxLineLength, "streaming emits bounded pieces rather than a whole-export string");
+        Check(!output.Disposed, "large export does not dispose the caller's writer");
+    }
 
     public static void Run()
     {
@@ -117,6 +185,12 @@ static class ObjMeshFormatTests
             string french = ObjMeshFormat.Write(new(new[] { fractions }));
             Check(french.Contains("v 0.125 -0.25 1E-06") && !french.Contains("0,125"), "OBJ always uses invariant decimals and exponents");
             Check(ObjMeshFormat.Read(french).Meshes[0].Vertices.SequenceEqual(fractions.Vertices), "fractional coordinates roundtrip under a non-English culture");
+            StreamMatches(new(new[] { fractions }), null, french, "streamed fractional positions retain invariant round-trip formatting");
+            StreamMatches(streams, "Tank.mtl", written, "streaming preserves global position UV normal offsets and material transitions");
+            var seams = new ObjDocument(new[] { seam });
+            StreamMatches(seams, null, ObjMeshFormat.Write(seams), "streaming preserves independent UV and hard-normal seams");
+            var materialReset = new ObjDocument(new[] { first, second });
+            StreamMatches(materialReset, null, ObjMeshFormat.Write(materialReset), "streaming clears a preceding object's material when needed");
         }
         finally { CultureInfo.CurrentCulture = priorCulture; CultureInfo.CurrentUICulture = priorUiCulture; }
 
@@ -149,6 +223,24 @@ static class ObjMeshFormatTests
         Check(unsafeLibrary, "material reference cannot inject geometry lines");
         string safeName = ObjMeshFormat.Write(new(new[] { Mesh("Tank\nf 99 99 99 # name") }));
         Check(ObjMeshFormat.Read(safeName).Meshes[0].Faces.Length == 1, "object names cannot inject geometry lines");
+
+        var diskFailure = new IOException("simulated full export disk");
+        using (var failing = new FailingWriter(diskFailure, 80))
+        {
+            Exception? caught = null;
+            try { ObjMeshFormat.WriteTo(new(new[] { Mesh() }), failing); } catch (Exception ex) { caught = ex; }
+            Check(ReferenceEquals(caught, diskFailure), "streaming propagates the original write failure to package rollback");
+            Check(!failing.Disposed, "a write failure leaves writer disposal to its caller");
+        }
+        using (var invalid = new CountingWriter())
+        {
+            bool rejected = false;
+            try { ObjMeshFormat.WriteTo(new(new[] { Mesh() with { Faces = new[] { new[] { 0, 1, 9 } } } }), invalid); }
+            catch (ArgumentException) { rejected = true; }
+            Check(rejected, "streamed output keeps geometry validation");
+            Check(!invalid.Disposed, "validation failure leaves the caller's writer open");
+        }
+        LargeStreamingExport();
         Console.WriteLine($"OBJ format: {checks} checks passed");
     }
 }

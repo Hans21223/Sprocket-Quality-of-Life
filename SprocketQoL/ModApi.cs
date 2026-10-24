@@ -47,6 +47,7 @@ internal static class ModApi
     /// The key's first or second binding went down this frame, with that binding's modifiers held. Other modifiers may
     /// be held too (tools read Ctrl as "the other way"), so this is checked here rather than by the API's exact match.
     internal static bool KeyPressed(object handle) => Get("keys", () => Link.Pressed(handle));
+    internal static bool KeyHeld(object handle) => Get("keys", () => Link.HeldAction(handle));
 
     /// The first binding as text ("Ctrl+J"), "" when unbound, null when it can't be written so (a mouse button).
     internal static string? KeyText(object handle) => Get("keys", () => Link.Text(handle));
@@ -258,7 +259,7 @@ internal static class ModApi
                 && Side(ModifierKeys.LeftAlt, ModifierKeys.RightAlt, keys.leftAltKey, keys.rightAltKey);
         }
 
-        static bool Down(KeyChord chord)
+        static bool Down(KeyChord chord, bool held = false)
         {
             if (chord.IsEmpty || Keyboard.current is not { } keys) return false;
             ButtonControl? button = null;
@@ -269,11 +270,13 @@ internal static class ModApi
                     "leftbutton" => mouse.leftButton, "rightbutton" => mouse.rightButton, "middlebutton" => mouse.middleButton,
                     "forwardbutton" => mouse.forwardButton, "backbutton" => mouse.backButton, _ => null,
                 };
-            return button != null && button.wasPressedThisFrame && Held(chord.Modifiers, keys);
+            return button != null && (held ? button.isPressed : button.wasPressedThisFrame) && Held(chord.Modifiers, keys);
         }
 
         internal static bool Pressed(object handle) =>
             handle is IInputActionHandle h && (Down(h.Primary) || Down(h.Secondary));
+        internal static bool HeldAction(object handle) =>
+            handle is IInputActionHandle h && (Down(h.Primary, true) || Down(h.Secondary, true));
 
         internal static string? Text(object handle)
         {

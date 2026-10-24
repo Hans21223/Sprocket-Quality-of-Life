@@ -175,6 +175,14 @@ static class TurretDriveTests
         Check(Math.Abs(System.Numerics.Quaternion.Dot(followerTurn, new(leaderTurn.X, -leaderTurn.Y, -leaderTurn.Z, leaderTurn.W))) > 0.99999f, "on one parent: the twin is turned as the mirror of its partner");
         var (bp, bq) = Conversion.MirrorPose(fp, fq, parent);
         Check(System.Numerics.Vector3.Distance(bp, leaderPos) < 1e-5f && Math.Abs(System.Numerics.Quaternion.Dot(bq, rot)) > 0.99999f, "mirroring the twin back gives the partner");
+        // Review DATA-02: the twin turret's copies keep the own paint of the parts they copy.
+        var painted = Fixture();
+        painted["blueprints"]!.AsArray().Add(JsonNode.Parse("""{"id":50,"type":"paintJob","blueprint":{"name":"Green","description":"Quality of Life parts: 20 40"}}"""));
+        var twin = Conversion.Parse(Conversion.MirrorTurret(painted.ToJsonString(), 10).Json);
+        var copies = Conversion.Objects(twin).Values.Where(o => o["transform"]!["mirrorVuid"]!.GetValue<int>() is 20 or 40).Select(o => o["vuid"]!.GetValue<int>()).ToList();
+        string owners = twin["blueprints"]!.AsArray().Single(x => x!["id"]!.GetValue<int>() == 50)!["blueprint"]!["description"]!.GetValue<string>();
+        Check(copies.Count == 2 && copies.All(c => owners.Split(' ').Contains(c.ToString())) && owners.Contains(" 20") && owners.Contains(" 40"),
+            "the twin turret's body and seat copies keep their own paint");
         Console.WriteLine($"TURRET_DRIVE_TESTS_OK: {checks} checks");
     }
 }

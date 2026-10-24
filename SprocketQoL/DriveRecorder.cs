@@ -32,9 +32,42 @@ public sealed class DriveRecorder : MonoBehaviour
     static IntPtr Buffer(IntPtr p, int at) => Marshal.ReadIntPtr(p, at); // a NativeArray's data
     static int Length(IntPtr p, int at) => Marshal.ReadInt32(p, at + 8);
 
+    // The fields read at fixed places, where Sprocket 0.2.55.5 and 0.2.56 keep them: checked once against the game's own
+    // field table. If any moved (a game update), nothing is read: raw reads at the wrong place give wrong numbers or worse.
+    static readonly (Func<IntPtr> Type, string Field, uint At)[] Anchors =
+    {
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "throttleTarget", 0x18),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "inclination", 0x90),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "shiftRPMTarget", 0xA0),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "action", 0xAC),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "throttleInput", 0xB8),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "shiftState", 0xC0),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "launchState", 0xC4),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<PowertrainBehaviour>.NativeClassPtr, "appliedThrottle", 0xC8),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<EngineBehaviour>.NativeClassPtr, "physicsJob", 0x60),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<TransmissionBehaviour>.NativeClassPtr, "updateJob", 0x20),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<TransmissionBehaviour>.NativeClassPtr, "meshType", 0x90),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<TwinTransmission>.NativeClassPtr, "updateJob", 0xF0),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<ClutchBraking>.NativeClassPtr, "updateJob", 0xF8),
+        (() => Il2CppInterop.Runtime.Il2CppClassPointerStore<TrackBehaviour>.NativeClassPtr, "physicsJob", 0x1D8),
+    };
+    static bool? layoutKnown;
+
+    internal static bool LayoutKnown()
+    {
+        if (layoutKnown is bool known) return known;
+        var moved = Anchors.Where(a =>
+        {
+            var field = a.Type() is var type && type != IntPtr.Zero ? Il2CppInterop.Runtime.IL2CPP.GetIl2CppField(type, a.Field) : IntPtr.Zero;
+            return field == IntPtr.Zero || Il2CppInterop.Runtime.IL2CPP.il2cpp_field_get_offset(field) != a.At;
+        }).Select(a => a.Field).Distinct().ToList();
+        if (moved.Count > 0) Plugin.ModLog.LogWarning($"Drive recorder: this game version keeps its drivetrain differently ({string.Join(", ", moved)} moved); recording is off.");
+        return (layoutKnown = moved.Count == 0).Value;
+    }
+
     public void FixedUpdate()
     {
-        if (Plugin.RecordDrives?.Value != true) { if (file != null) Close(); module = null; vehicle = null; return; }
+        if (Plugin.RecordDrives?.Value != true || !LayoutKnown()) { if (file != null) Close(); module = null; vehicle = null; return; }
         try { Step(); }
         catch (Exception ex) { Plugin.ModLog.LogError($"Drive recorder: {ex.Message}"); Close(); }
     }

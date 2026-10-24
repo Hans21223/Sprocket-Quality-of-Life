@@ -3,6 +3,16 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.10.0** adds the **Workshop** (`Ctrl+Shift+Space`) for tool presets, saved part groups with
+geometry thumbnails, clipboard history, saved geometry selections, recovery checkpoints and support reports, and
+**tool search** (`Ctrl+Space`) with favourites, recent actions and part patterns. Tools act at once, with no Confirm
+window; Ctrl+Z undoes them. With the mouse over a mesh tool's button (QoL's, or the game's Fill, Merge, Split or
+Delete), what it would make is outlined on the part first. The structure inspector adds measurements, exact lengths,
+sliding, reference alignment, loop cuts, connected proportional editing and mesh-health inspection; **Smart corners**
+(mesh panel > Corners) gives each Auto corner the thickening that meets its neighbouring plates best. Create Hole cuts
+one hole through touching faces, the game's Split cuts both sides with Mirror on, nets drape with holes down to 2 mm,
+and every edit checks the game's size limits first. See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
 **Quality of Life 1.8.4** works out speed and acceleration with the game's own drivetrain maths (top speed within
 0.1% of a test drive), lets you change every Quality of Life key, and adds a **Mod Options** tab to the game's
 Settings for its keys and settings. 1.8.3 added an **OBJ export / import** menu (F10).
@@ -99,7 +109,8 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   part really shows is read from the game (parts on scaled mantlets or flipped parents included). The add-on must be a
   closed shape (an open plate has no inside to cut with, and is refused). The add-on is removed or kept
   (**Keep cutter**). Besides the cuts: **Keep only the overlap** (Blender's Intersect) keeps just the part of the
-  plates inside the add-on, closed off by its surface; **Join into one shape (union)** makes the add-on and the shape it
+  plates inside the add-on, closed off by its surface (single plates that don't enclose a space there are only
+  trimmed, and a recess in them is a plain hole); **Join into one shape (union)** makes the add-on and the shape it
   overlaps one shape, outside only, seams welded; **Slice in two** splits that shape along the add-on's surface, the
   inside becoming a new add-on in the same place.
 - **Drape as cloth:** an add-on's top becomes a sheet of points dropped onto the vehicle until it settles, like
@@ -137,7 +148,13 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   makes a hole. Holes come out round, stay inside their face, and no longer leave faces inside out. **Hole fill:
   fewest points** (default) joins the hole's ring to the face's corners with no new points; **light fill** adds points
   so no face is long and thin, **smooth fill** a ring of quads round the hole and evener faces, and **game's fan** gets
-  the game's own fill back. The circle sits square to the part (flat top, mirror twins match). Faces looking
+  the game's own fill back. Segment counts divisible by four (such as the default 32) place points at the four
+  cardinal directions, square to the part; mirror twins match. **Ring: flat sides** restores the previous orientation.
+  The Ring setting applies to new holes. Select several faces that touch and lie flat together (within 20°) and they
+  get one hole through the area they make, centred on the whole area, keeping the points along its sides so the plates
+  round it stay joined; faces on their own get one each. **Hole per face** gives every selected face its own hole
+  instead. It's all one edit (one Ctrl+Z), Mirror holes the mirror image too, and while the mouse is over the game's
+  Create Hole button the holes it would cut are outlined on the part. Faces looking
   straight forward or back get holes too: the game's circle collapses to a point there, and comes out too small on
   faces tilted toward them, so the mod draws the circle the game meant.
 - **Merge faces:** in a hand-made structure, select faces in Faces edit mode and press **Merge selected faces**. Faces
@@ -181,9 +198,23 @@ alongside it through the loader's MLLoader. In the vehicle editor:
     inherited from the removed edges. Bevel (V) still makes its original single chamfer.
   - **Fillet:** in Edges mode, rounds selected edges with a circular curve tangent to both adjoining faces.
     **Radius (mm)** sets the actual curve radius and **Fillet segments** (2–16, default 4) sets its
-    number of strips. Uses Mirror and one undo operation, preserves surrounding edge settings and source-corner
+    number of strips. **Auto controls** adds support loops on the flat and rounded sides, with **Spacing (mm)**
+    (default 1 mm) controlling how tightly they hold the border during subdivision. Turn it off for simpler topology.
+    Uses Mirror and one undo operation, preserves surrounding edge settings and source-corner
     thickness, and rejects a radius that cannot fit instead of shrinking it. Adjacent faces must be flat;
     unsupported junctions are rejected. Smooth Edge keeps its separate cutback-width controls.
+  - **Better point and edge selection:** clicks choose the closest visible target within 12 screen pixels by default,
+    at any zoom. Hidden geometry is skipped unless X-ray is enabled. Native add/remove, loop, plate, linked, box and
+    circle selection remain available. **Settings > Mod Options > Selection** adjusts the radius (4–30 pixels) or
+    restores the game's picker. Face and corner picking keep their original behaviour. **Hover highlight** (on by
+    default, Mod Options > Selection) marks the point or edge a click would choose, and in Faces mode outlines the face
+    under the mouse.
+  - **Advanced predictive mode** (off by default): enable **Settings > Mod Options > Build assist > Predict moves**.
+    While moving points, edges or faces, a marker previews nearby stationary points, edge midpoints and face centres.
+    Hold **N** to apply the shown target, then confirm the move normally; release N to return to free or grid movement.
+    Change **Apply prediction** under **Editing keys**. The range is in screen pixels, and midpoint and face-centre
+    suggestions can be switched off separately. Uses the current axis or plane lock, Mirror, X-ray and proportional
+    editing; Ctrl+Z undoes the move. Suggestions come from the geometry, without learning or collecting player behaviour.
   - **Split selected faces:** in Faces mode, select the face(s) to split. **Split sections** (2–16, default 2)
     makes equal straight strips; **Split direction: A/B** chooses the pair of sides on a quad. Cuts stop at
     selected-face boundaries. Neighbours remain single faces with matching border points, without extra lines
@@ -195,15 +226,19 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   - **Proportional editing (O):** moving, scaling or rotating points pulls the points around them too, less the
     further away, up to the radius in the panel. Cancelling, Ctrl+Z and redo take the followers along.
   - **0.5 mm grid:** snapping (hold Ctrl while moving) uses 0.5 mm instead of the game's smallest, 1 mm.
+  - **Relative snap** (Mesh tools or Mod Options, off by default): a snapped move goes in whole grid steps from where
+    the points started, instead of putting each point on the grid, so a shape whose points are off the grid keeps its
+    shape on a coarser grid.
   - **Orthographic view (Numpad 5):** no perspective, and the spawn pad (its deck and the blocks and rails beside the
     tracks) and ground under the vehicle are hidden (back when you leave it). Scroll zooms as usual (sized by the camera's orbit distance,
     never the ground), and **Numpad + / −** or the **Ortho zoom** slider zoom further, past the game's closest
     distance. With **Whole view** (on by default) the camera never cuts into the vehicle when zoomed in.
-    **Ortho backdrop** (click to change): **plain grey** (default), **white** or **black** draws the vehicle alone on
+    The **backdrop**: **grey** (default), **white** or **black** draws the vehicle alone on
     one colour, no sky and no map (the map's edge, hills and walls neither in front nor behind), or **scene** as it is.
+    These settings are in **Settings > Mod Options > Settings > View**.
     With **Straight views** (on by default) it snaps to front, back, sides or top, and orbiting flips between
     them; **Numpad 1 / 3 / 7** jump to front, side and top (with **Ctrl**: back, the other side, and from below), and **Numpad 9** flips to the opposite view (top to below,
-    front to back). In a straight view, **Measurements** (on by default) draws the vehicle's overall size as
+    front to back). In a straight view, **Ortho sizes** (on by default) draws the vehicle's overall size as
     dimension lines: across the screen under it, up the screen beside it, to the centimetre (antennas not counted).
     The game's fog is off in orthographic view, and the move / turn / scale arrows keep a normal size.
     Gizmo clicks also reach the pulled-back orthographic camera's full distance, so visible rotation rings can
@@ -230,6 +265,9 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   to merge each side by hand and the two sides drifted apart. Now, with Mirror on, merging points also merges their
   mirror images on the other side, the game's own merge run again in the same step (Ctrl+Z undoes both), with the
   merged point put exactly opposite the first so Mirror keeps pairing them.
+- **Split both sides with Mirror:** the game's Split (its edge cut) ignores Mirror. Now, with Mirror on, it also splits
+  from the selected edge's mirror image, in the same step (Ctrl+Z undoes both). A cut whose ring crosses the middle
+  already does both sides. Turn Mirror off to split one side only.
 - **Exploded view (F2):** the running gear (tracks, road wheels, sprockets, idlers, suspension) stays on the ground and
   the hull lifts off it; every other part moves away from the part it's on, straight up or down or outward on the
   level, and parts on parts go further; **F3 / F4** bring them closer or further apart (the spread is remembered). F2 again
@@ -303,13 +341,18 @@ alongside it through the loader's MLLoader. In the vehicle editor:
   The finished photo is saved as opaque RGB: exhaust and other transparent effects keep their rendered colour
   without leaking the render target's alpha into the PNG and being blended again by image viewers.
   Saved as PNG in `Documents\My Games\Sprocket\Photos`.
+- **Black box fix** (on by default, in **Settings > Mod Options > Settings**): on some graphics cards (older ones and
+  old drivers most), smoke and fire show black boxes. They're a few bad pixels (not a number, or infinite) that bloom
+  and anti-aliasing smear into boxes. This turns on the game cameras' **Stop NaNs** (Unity's HDRP switch for this),
+  which blacks out just those pixels first. It costs a little GPU time. It can't help a card that lacks a feature
+  the effects need: then each smoke puff draws as a solid box.
 - **Own paint (per part):** a structure's panel has **Paint: vehicle**; click it to give the part (and the other
   selected parts) its own paint job, "Own paint 1", "Own paint 2" and so on (up to 9), using spare paint slots the game
   has but doesn't use. A new one starts as a copy of the Primary paint; its colour, saturation, roughness, metallic,
   condition, grime, camo and camo scale are right there in the part's panel. Ctrl+Z undoes each change (a slider drag
   is one step).
   Only the part's outside changes. It's saved with the design (which parts use it is kept in the paint job).
-- **Zoom in close:** the camera can come within a few centimetres of small parts (on by default, in Mesh tools).
+- **Zoom in close:** the camera can come within a few centimetres of small parts (on by default, in Mod Options > Settings > View).
 - **Copy and mirror turrets:** the game's turret ring part says it can't be duplicated or mirrored; the mod lets it,
   in memory. Alt copies a turret, and a copied ring brings everything on it (turret body, guns and the rest), each on
   the copy of its parent. With Mirror on, a turret gets a mirrored twin on the other side like other parts; the game

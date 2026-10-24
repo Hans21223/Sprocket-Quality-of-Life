@@ -10,7 +10,7 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.9.0")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.10.0")]
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
@@ -29,8 +29,12 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<float>? ExplodeSpread, FlashlightPercent, FullbrightPercent;
     internal static ConfigEntry<int>? BackupsKept;
     internal static ConfigEntry<float>? RotationSnap;
-    internal static ConfigEntry<bool>? MirrorMerge;
-    internal static ConfigEntry<bool>? RecordDrives;
+    internal static ConfigEntry<bool>? MirrorMerge, RelativeSnap;
+    internal static ConfigEntry<bool>? BetterMeshPicking;
+    internal static ConfigEntry<float>? MeshPickRadius;
+    internal static ConfigEntry<bool>? PredictiveBuild, PredictEdgeMidpoints, PredictFaceCentres;
+    internal static ConfigEntry<float>? PredictionRadius;
+    internal static ConfigEntry<bool>? RecordDrives, StopNaNs;
     internal static ConfigEntry<string>? PanelMode, PanelPosition, ShortcutsPosition;
     internal static ConfigEntry<string>? PhotoResolution, PhotoMethod;
     internal static ConfigEntry<string>? MenuOpens, MenuHidden;
@@ -62,7 +66,20 @@ public sealed class Plugin : BasePlugin
         FullbrightPercent = Config.Bind("Panels", "Fullbright brightness", 25f, "How bright each of fullbright's (F7) 14 lights is, in percent of the sun");
         RotationSnap = Config.Bind("Editor", "Rotation snap (degrees)", 0f, "While the game's rotation snap is on, turns snap in steps of this many degrees instead of the game's own (7.5 makes a 48-sided circle, 5 a 72-sided one). 0 keeps the game's step.");
         MirrorMerge = Config.Bind("Editor", "Mirror merge", true, "With the editor's Mirror on, Merge (M) merges the mirrored points on the other side too.");
+        RelativeSnap = Config.Bind("Editor", "Relative snap", false, "Snapping a move (holding the snap key, normally Ctrl) moves the points in whole grid steps from where they start, instead of putting each point on the grid, so a shape whose points are off the grid keeps its shape. Off: the game's own snap.");
+        BetterMeshPicking = Config.Bind("Selection", "Better point and edge picking", true,
+            "Pick the nearest visible vertex or edge within a fixed screen-pixel radius. Avoids selecting distant corners across a face. Keeps the game's selection modifiers and X-ray mode. Off restores the game's picker.");
+        MeshPickRadius = Config.Bind("Selection", "Click radius (pixels)", 12f, new ConfigDescription(
+            "Maximum distance from the cursor to a vertex or edge, in screen pixels. Stays consistent when zooming. Smaller is more precise; larger is easier to click.",
+            new AcceptableValueRange<float>(4, 30)));
+        PredictiveBuild = Config.Bind("Build assist", "Advanced predictive mode", false,
+            "Suggest nearby movement targets while moving points, edges or faces of a hand-made structure. Shows a guide; hold the Apply prediction key (N by default) to use the target during the current move. No movement is applied automatically.");
+        PredictionRadius = Config.Bind("Build assist", "Suggestion radius (pixels)", 14f, new ConfigDescription(
+            "Screen distance within which a nearby target is suggested. Smaller values are more precise; larger values are easier to reach.", new AcceptableValueRange<float>(4, 40)));
+        PredictEdgeMidpoints = Config.Bind("Build assist", "Suggest edge midpoints", true, "Include the middle of stationary edges as possible movement targets.");
+        PredictFaceCentres = Config.Bind("Build assist", "Suggest face centres", true, "Include the centre of stationary faces as possible movement targets.");
         BackupsKept = Config.Bind("Backups", "Backups kept", 50, "How many design backups (BepInEx\\SprocketQoLBackups, one per edit) to keep; the oldest go first. 0 keeps them all.");
+        StopNaNs = Config.Bind("Graphics", "Black box fix", true, "Turns on the cameras' Stop NaNs: on some graphics cards (older ones and old drivers most), smoke and fire leave bad pixels that bloom and anti-aliasing smear into black boxes. Costs a little GPU time.");
         RecordDrives = Config.Bind("Diagnostics", "Record drives", false, "Write every physics step of your own vehicle's drivetrain to BepInEx\\SprocketQoL-drives while you drive (a few MB a minute), to check the Speed & acceleration figures against the game.");
         PanelMode = Config.Bind("Panels", "QoL panel", "Automatic", "Quality of Life's own part panel: Automatic (only when the game's part panels can't be drawn into, after a game update), Always, or Off.");
         PanelPosition = Config.Bind("Panels", "QoL panel position", "", "Where the QoL panel was dragged to (left, top), or empty for the right side.");
@@ -71,13 +88,21 @@ public sealed class Plugin : BasePlugin
             "Held with a right click that doesn't drag, opens the editor's right-click menu: Ctrl, Alt, Shift, or Off for no menu.",
             new AcceptableValueList<string>(RightClickMenu.Holds)));
         MenuHidden = Config.Bind("Right-click menu", "Hidden items", "", "Items left out of the right-click menu, as Section/Item, separated by |");
+        ToolSettings.Load(Config);
+        MeshTools.RegisterPrecisionSettings();
+        ToolSettings.RegisterFields(typeof(HoleQuality), "Holes", "segments", "sizePercent", "cardinalPoints", "holeFill", "holePerFace");
+        ToolSettings.RegisterFields(typeof(ShapeTools), "Shape tools", "keepCutter", "rectangleBox", "fill", "clothCell", "clothStiffness", "clothNet", "netHole", "netHoleMm", "landsOn", "scatterCount", "scatterUp");
+        WorkshopLibrary.Initialize(Paths.BepInExRootPath);
+        CommandPalette.Register(MeshTools.PrecisionCommands);
+        MeshAssistSettings.Load(Config);
         Keybinds.Load(Config);
         ModOptions.Register();
         ShareWithModApi();
         AddComponent<DesignEditor>();
         AddComponent<DriveRecorder>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(HoleQuality), typeof(MeshTools), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels), typeof(RightClickMenu) };
+        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(UndoStepLifetime), typeof(HoleQuality), typeof(MeshTools), typeof(MeshSelection), typeof(BuildAssist), typeof(WorkshopLibrary), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(MirrorSplit), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels), typeof(RightClickMenu) };
+        features = features.Concat(new[] { typeof(CommandPalette), typeof(PartPatterns) }).ToArray();
         // One hook at a time: a game method a game update removed turns off that hook only (Mod Options > Compatibility).
         foreach (var feature in features) Hooks.Attach(harmony, feature);
         // The engine panel's class moved assembly in Sprocket 0.2.56: found while the game runs (EngineEditor), not named.
@@ -86,7 +111,7 @@ public sealed class Plugin : BasePlugin
         PanelSections.Register();
         if (Hooks.Failures.Any()) Log.LogWarning("Quality of Life: " + Hooks.Summary());
         else Log.LogInfo("Quality of Life: " + Hooks.Summary());
-        Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo, Own paint, Bridge, Circle, Fix mirror, Mirror merge, Rotation snap, OBJ export / import (F10).");
+        Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo, Own paint, Bridge, Circle, Fix mirror, Mirror merge, Mirror split, Rotation snap, OBJ export / import (F10).");
     }
 
     /// The settings on QoL's page in the Sprocket Mod API's Mod menu, when the API is installed. The keys are in its
@@ -103,6 +128,8 @@ public sealed class Plugin : BasePlugin
                 "Panels/Flashlight brightness" => (0, 200, 5),
                 "Panels/Fullbright brightness" => (0, 100, 5),
                 "Editor/Rotation snap (degrees)" => (0, 45, 0.5),
+                "Selection/Click radius (pixels)" => (4, 30, 1),
+                "Build assist/Suggestion radius (pixels)" => (4, 40, 1),
                 "Backups/Backups kept" => (0, 500, 10),
                 _ => null,
             },

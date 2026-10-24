@@ -11,8 +11,9 @@
     <PathMap>$(MSBuildThisFileDirectory)=/kit/</PathMap>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Compile against the game's BepInEx; these are already in the game, so don't copy them into the mod. -->
-    <Reference Include="$(GameDir)\BepInEx\core\*.dll" Exclude="$(GameDir)\BepInEx\core\TerraFX*.dll"><Private>false</Private></Reference>
+    <!-- Compile against the game's BepInEx; these are already in the game, so don't copy them into the mod.
+         dobby.dll is native code (no .NET metadata): referencing it only gave warning MSB3246. -->
+    <Reference Include="$(GameDir)\BepInEx\core\*.dll" Exclude="$(GameDir)\BepInEx\core\TerraFX*.dll;$(GameDir)\BepInEx\core\dobby.dll"><Private>false</Private></Reference>
     <Reference Include="$(GameDir)\BepInEx\interop\*.dll"><Private>false</Private></Reference>
   </ItemGroup>
   <!-- Both are needed: interop is generated on first start, core is BepInEx itself (a disabled BepInEx can leave interop behind). -->

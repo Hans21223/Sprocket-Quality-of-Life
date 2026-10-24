@@ -42,6 +42,18 @@ public static class ObjTransfer
     static Task<string?>? picker;
     static Action<string>? picked;
     static float importScale = 1, armourMm = 10;
+    static ObjImportUnits importUnits;
+    static ObjUpAxis importUp;
+    static GeometryPreview? preview;
+    static RectTransform? previewRect;
+    static RawImage? previewImage;
+    static TextMeshProUGUI? dimensionsLabel;
+    static TextMeshProUGUI? loadingLabel;
+    static Task<ObjDocument>? importReader;
+    static CancellationTokenSource? importCancellation;
+    static long readCharacters;
+    static int importVersion, readerVersion, orbitFrame;
+    static bool orbitDragging;
     static Action? queued;
     const int PageSize = 12;
     const int LargeImport = 50_000; // faces; the largest structures known to work in the game have about 30,000
@@ -63,6 +75,26 @@ public static class ObjTransfer
 
     internal static void Update()
     {
+        if (importReader?.IsCompleted == true)
+        {
+            var task = importReader;
+            bool current = IsOpen && readerVersion == importVersion;
+            importReader = null; importCancellation?.Dispose(); importCancellation = null;
+            try
+            {
+                var document = task.GetAwaiter().GetResult();
+                if (current)
+                {
+                    imported = document; importScale = 1; armourMm = 10;
+                    importUnits = ObjImportUnits.Metres; importUp = ObjUpAxis.Y;
+                    blueprintName = ObjPlateFiles.BlueprintName(Path.GetFileNameWithoutExtension(importPath));
+                    preview?.Dispose(); preview = new GeometryPreview(); preview.ResetView();
+                    message = ""; rebuild = true;
+                }
+            }
+            catch (OperationCanceledException) { if (current) { message = "OBJ reading cancelled; no blueprint was saved."; rebuild = true; } }
+            catch (Exception ex) { if (current) Failed(ex); }
+        }
         if (picker?.IsCompleted == true)
         {
             var task = picker; var completion = picked;
@@ -94,6 +126,8 @@ public static class ObjTransfer
             }
         }
         if (!IsOpen) return;
+        if (importReader != null && loadingLabel != null)
+            loadingLabel.text = $"Reading model… {Interlocked.Read(ref readCharacters) / (1024.0 * 1024.0):N1} MiB of text processed.\nYou can cancel or close this menu.";
         if (rebuild) { rebuild = false; BuildPanel(); }
         else if (rebuildRows && !importTab) { rebuildRows = false; RefreshRows(); }
     }
@@ -166,6 +200,9 @@ public static class ObjTransfer
 
     static void Close()
     {
+        importVersion++; importCancellation?.Cancel();
+        preview?.Dispose(); preview = null; previewRect = null; previewImage = null; dimensionsLabel = loadingLabel = null;
+        orbitDragging = false;
         if (canvasObject != null) { canvasObject.SetActive(false); UnityEngine.Object.Destroy(canvasObject); }
         canvasObject = panel = rows = null; font = null; target = IntPtr.Zero;
         summary = pageLabel = categoryFilterLabel = messageLabel = null;
@@ -198,6 +235,7 @@ public static class ObjTransfer
     {
         if (panel != null) { panel.SetActive(false); UnityEngine.Object.Destroy(panel); }
         rows = null;
+        previewRect = null; previewImage = null; dimensionsLabel = loadingLabel = null;
         listeners.Clear(); rowListeners.Clear(); textListeners.Clear(); categoryLabels.Clear();
         summary = pageLabel = categoryFilterLabel = messageLabel = null; previous = next = exportButton = null;
         var rect = Node("OBJ menu panel", canvasObject!.transform, 0, 0, 1080, 730);
@@ -289,29 +327,78 @@ public static class ObjTransfer
     static void BuildImport()
     {
         Label(panel!.transform, "Import OBJ to your Plate Structures library", 22, 112, 1000, 35, 22);
-        Label(panel.transform, "Save one editable structure with all objects in their original relative positions. Choose it from the game's plate-structure library to place it on a tank.", 22, 156, 1030, 58, 17);
-        Label(panel.transform, "Save in faction", 22, 224, 190, 34, 17);
-        var before = Click(panel.transform, "Previous", 224, 222, 105, 36, () => ChangeFaction(-1));
-        var after = Click(panel.transform, "Next", 949, 222, 109, 36, () => ChangeFaction(1));
+        Label(panel.transform, "Save in faction", 22, 158, 140, 34, 17);
+        var before = Click(panel.transform, "Previous", 170, 156, 105, 36, () => ChangeFaction(-1));
+        var after = Click(panel.transform, "Next", 949, 156, 109, 36, () => ChangeFaction(1));
         before.interactable = after.interactable = factions.Count > 1;
-        Label(panel.transform, factions.Count == 0 ? "No faction found. Create a faction in the game first." : factions[factionIndex].Name, 341, 224, 598, 36, 18);
+        Label(panel.transform, factions.Count == 0 ? "No faction found. Create a faction in the game first." : factions[factionIndex].Name, 288, 158, 650, 36, 18);
         // Shown, not checked: a faction deleted while the menu is open is reported when saving, not by a broken panel.
-        Label(panel.transform, factions.Count == 0 ? "" : Path.Combine(factionDirectory, "Blueprints", "Plate Structures"), 22, 271, 1036, 45, 15);
-        Click(panel.transform, "Choose OBJ file…", 22, 325, 210, 40, () => queued = ChooseImport);
-        Label(panel.transform, importPath.Length == 0 ? "No file selected" : importPath, 250, 325, 808, 45, 16);
+        Label(panel.transform, factions.Count == 0 ? "" : Path.Combine(factionDirectory, "Blueprints", "Plate Structures"), 22, 202, 1036, 30, 15);
+        var choose = Click(panel.transform, "Choose OBJ file…", 22, 240, 210, 40, () => queued = ChooseImport);
+        choose.interactable = importReader == null;
+        Label(panel.transform, importPath.Length == 0 ? "No file selected" : importPath, 250, 240, 808, 45, 16);
+        if (importReader != null)
+        {
+            loadingLabel = Label(panel.transform, "Reading model in bounded chunks… You can cancel or close this menu.", 22, 300, 1000, 60, 19);
+            Click(panel.transform, "Cancel reading", 22, 370, 210, 36, () => importCancellation?.Cancel());
+            return;
+        }
         if (imported != null)
         {
             int vertices = imported.Meshes.Sum(m => m.Vertices.Length), faces = imported.Meshes.Sum(m => m.Faces.Length);
-            Label(panel.transform, $"{imported.Meshes.Length} objects   ·   {vertices:N0} vertices   ·   {faces:N0} faces", 22, 382, 1010, 28, 18);
-            Label(panel.transform, "Blueprint name", 22, 423, 330, 34, 17);
-            TextInput(panel.transform, blueprintName, "Model name", 365, 423, 693, 34, value => blueprintName = value);
-            Label(panel.transform, "Scale (1 = original metres)", 22, 469, 330, 34, 17);
-            TextInput(panel.transform, Shown(importScale), "1", 365, 469, 200, 34, value => importScale = Number(value));
-            Label(panel.transform, "Plate thickness (whole mm)", 22, 515, 330, 34, 17);
-            TextInput(panel.transform, Shown(armourMm), "10", 365, 515, 200, 34, value => armourMm = Number(value));
-            Label(panel.transform, "Geometry only; textures and functioning tank mechanisms are not imported. Existing blueprint files are preserved.", 22, 563, 1010, 40, 16);
+            Label(panel.transform, $"{imported.Meshes.Length} objects   ·   {vertices:N0} vertices   ·   {faces:N0} faces", 22, 292, 1036, 28, 18);
+            Label(panel.transform, "Blueprint name", 22, 335, 500, 26, 17);
+            TextInput(panel.transform, blueprintName, "Model name", 22, 365, 500, 34, value => blueprintName = value);
+            Label(panel.transform, "Source units", 22, 413, 220, 32, 17);
+            Click(panel.transform, importUnits + " (change)", 250, 411, 272, 34, () => { importUnits = (ObjImportUnits)(((int)importUnits + 1) % 3); rebuild = true; });
+            Label(panel.transform, "Source up axis", 22, 457, 220, 32, 17);
+            Click(panel.transform, importUp + "-up (change)", 250, 455, 272, 34, () => { importUp = (ObjUpAxis)(((int)importUp + 1) % 3); rebuild = true; });
+            Label(panel.transform, "Additional scale", 22, 501, 220, 32, 17);
+            TextInput(panel.transform, Shown(importScale), "1", 250, 499, 272, 34, value => { importScale = Number(value); RefreshPreview(); });
+            Label(panel.transform, "Plate thickness (whole mm)", 22, 545, 220, 32, 17);
+            TextInput(panel.transform, Shown(armourMm), "10", 250, 543, 272, 34, value => armourMm = Number(value));
+            Click(panel.transform, "←", 550, 308, 44, 27, () => preview?.Orbit(-15, 0));
+            Click(panel.transform, "→", 600, 308, 44, 27, () => preview?.Orbit(15, 0));
+            Click(panel.transform, "↑", 650, 308, 44, 27, () => preview?.Orbit(0, -15));
+            Click(panel.transform, "↓", 700, 308, 44, 27, () => preview?.Orbit(0, 15));
+            Click(panel.transform, "Reset view", 756, 308, 135, 27, () => preview?.ResetView());
+            previewRect = Node("Model wire preview", panel.transform, 550, 343, 508, 250);
+            previewImage = previewRect.gameObject.AddComponent<RawImage>();
+            dimensionsLabel = Label(panel.transform, "", 550, 600, 508, 64, 15);
+            RefreshPreview();
+            Label(panel.transform, "Geometry only; textures, paint and working mechanisms are not imported. Drag the preview to rotate. Existing blueprints are preserved.", 22, 584, 500, 30, 13);
             var save = Click(panel.transform, "Save plate structure", 22, 616, 300, 36, () => queued = Import);
             save.interactable = factions.Count > 0;
+        }
+        else Label(panel.transform, "Choose an OBJ model to preview its geometry, dimensions, units and up axis before saving an editable structure.", 22, 320, 1036, 100, 19);
+    }
+
+    static void RefreshPreview()
+    {
+        if (imported == null || previewImage == null || dimensionsLabel == null) return;
+        try
+        {
+            preview ??= new GeometryPreview();
+            preview.Set(imported, importScale, importUnits, importUp);
+            previewImage.texture = preview.Texture;
+            dimensionsLabel.text = preview.Description;
+        }
+        catch (Exception ex)
+        { previewImage.texture = null; dimensionsLabel.text = "Preview unavailable: " + ex.Message; }
+    }
+
+    internal static void DrawPreview()
+    {
+        if (Event.current?.type != EventType.Repaint || orbitFrame == Time.frameCount) return;
+        orbitFrame = Time.frameCount;
+        var mouse = Mouse.current;
+        if (!IsOpen || !importTab || dialog || previewRect == null || preview == null || mouse == null) { orbitDragging = false; return; }
+        if (mouse.leftButton.wasPressedThisFrame && RectTransformUtility.RectangleContainsScreenPoint(previewRect, mouse.position.ReadValue(), null)) orbitDragging = true;
+        if (!mouse.leftButton.isPressed) { orbitDragging = false; return; }
+        if (orbitDragging)
+        {
+            var delta = mouse.delta.ReadValue();
+            if (delta.sqrMagnitude > 0) preview.Orbit(delta.x * .3f, delta.y * .3f);
         }
     }
 
@@ -379,13 +466,19 @@ public static class ObjTransfer
         picked = path =>
         {
             // Parse fully before saving a structure. Never trust mtllib paths or run external programs.
-            if (new FileInfo(path).Length > ObjMeshFormat.MaxTextLength)
-                throw new FormatException("The OBJ is too large. Maximum file size is 64 MiB.");
-            var document = ObjMeshFormat.Read(File.ReadAllText(path));
-            if (document.Meshes.Length == 0) throw new FormatException("The OBJ contains no polygon objects.");
-            imported = document; importPath = path; importScale = 1; armourMm = 10;
-            blueprintName = ObjPlateFiles.BlueprintName(Path.GetFileNameWithoutExtension(path));
-            directory = Path.GetDirectoryName(path)!; message = ""; rebuild = true;
+            if (importReader != null) return;
+            imported = null; preview?.Dispose(); preview = null;
+            importPath = path; directory = Path.GetDirectoryName(path)!;
+            importCancellation = new CancellationTokenSource();
+            var cancellation = importCancellation.Token;
+            readerVersion = ++importVersion; Interlocked.Exchange(ref readCharacters, 0);
+            importReader = Task.Run(() =>
+            {
+                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 8192, FileOptions.SequentialScan);
+                using var reader = new StreamReader(file, System.Text.Encoding.UTF8, true, 8192);
+                return ObjMeshFormat.Read(reader, cancellation, chars => Interlocked.Exchange(ref readCharacters, chars));
+            });
+            message = ""; rebuild = true;
         };
     }
 
@@ -402,7 +495,7 @@ public static class ObjTransfer
         if (factions.Count == 0) throw new FormatException("Choose an existing faction first.");
         string name = ObjPlateFiles.BlueprintName(blueprintName);
         // Validate and serialize all geometry before publishing a library file. No tank snapshot or edit is needed.
-        var result = ObjBlueprintImport.Build(document, name, scale, thickness);
+        var result = ObjBlueprintImport.Build(document, name, scale, thickness, sourceUnits: importUnits, sourceUp: importUp);
         string path = ObjPlateFiles.Save(factionDirectory, name, result.Json);
         message = $"Saved {result.ObjectCount} objects ({result.FaceCount:N0} faces) as {Path.GetFileName(path)} in faction {factions[factionIndex].Name}." +
                   (result.SkippedFaces > 0 ? $" Left out {result.SkippedFaces:N0} faces with no area." : "") +

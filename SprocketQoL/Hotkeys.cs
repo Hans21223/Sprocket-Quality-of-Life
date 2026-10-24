@@ -223,6 +223,7 @@ public static class Hotkeys
         found.Add($"Add-ons: {K("join")}  merge into the last selected add-on");
         found.Add($"Mesh: {K("flatten")}  Flatten   |   {K("loopCut")}  Loop cut   |   {K("inset")}  Inset   |   {K("bevel")}  Bevel");
         found.Add($"Selection: {K("selectFlat")}  Linked flat faces   |   {K("proportional")}  Proportional editing");
+        if (Plugin.PredictiveBuild?.Value == true) found.Add($"Build assist: hold {K("applyPrediction")} during a move to use the suggested target");
         found.Add($"View: {K("ortho")}  Orthographic   |   {K("zoomIn")} / {K("zoomOut")}  Zoom");
         found.Add($"View: {K("front")} / {K("side")} / {K("top")}  Front / side / top   |   {K("opposite")}  Opposite");
         found.Add($"Spacing: {K("explode")}  Exploded view   |   {K("explodeCloser")} / {K("explodeFurther")}  Closer / further");

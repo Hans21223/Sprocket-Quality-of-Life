@@ -19,6 +19,7 @@
     <Compile Include="..\SprocketQoL\AddonEdits.cs" Link="AddonEdits.cs" />
     <Compile Include="..\SprocketQoL\HoleRing.cs" Link="HoleRing.cs" />
     <Compile Include="..\SprocketQoL\HoleFill.cs" Link="HoleFill.cs" />
+    <Compile Include="..\SprocketQoL\HoleMerge.cs" Link="HoleMerge.cs" />
     <Compile Include="..\SprocketQoL\MeshCut.cs" Link="MeshCut.cs" />
     <Compile Include="..\SprocketQoL\Fill.cs" Link="Fill.cs" />
     <Compile Include="..\SprocketQoL\FaceMerge.cs" Link="FaceMerge.cs" />
@@ -34,7 +35,19 @@
     <Compile Include="..\SprocketQoL\GearSpacing.cs" Link="GearSpacing.cs" />
     <Compile Include="..\SprocketQoL\Cloth.cs" Link="Cloth.cs" />
     <Compile Include="..\SprocketQoL\GizmoPicking.cs" Link="GizmoPicking.cs" />
+    <Compile Include="..\SprocketQoL\MeshPicking.cs" Link="MeshPicking.cs" />
+    <Compile Include="..\SprocketQoL\BuildPrediction.cs" Link="BuildPrediction.cs" />
+    <Compile Include="..\SprocketQoL\PrecisionGeometry.cs" Link="PrecisionGeometry.cs" />
+    <Compile Include="..\SprocketQoL\WorkshopGeometry.cs" Link="WorkshopGeometry.cs" />
+    <Compile Include="..\SprocketQoL\WorkshopStorage.cs" Link="WorkshopStorage.cs" />
+    <Compile Include="..\SprocketQoL\ToolPresetStore.cs" Link="ToolPresetStore.cs" />
+    <Compile Include="..\SprocketQoL\SelectionMemory.cs" Link="SelectionMemory.cs" />
+    <Compile Include="..\SprocketQoL\GeometryPreviewMath.cs" Link="GeometryPreviewMath.cs" />
+    <Compile Include="..\SprocketQoL\PartPatternMath.cs" Link="PartPatternMath.cs" />
     <Compile Include="..\SprocketQoL\BevelEdges.cs" Link="BevelEdges.cs" />
     <Compile Include="..\SprocketQoL\BlueprintClipboard.cs" Link="BlueprintClipboard.cs" />
+    <Compile Include="..\SprocketQoL\VehicleSession.cs" Link="VehicleSession.cs" />
+    <Compile Include="..\SprocketQoL\ToolSettingRanges.cs" Link="ToolSettingRanges.cs" />
+    <Compile Include="..\SprocketQoL\SmartCorners.cs" Link="SmartCorners.cs" />
   </ItemGroup>
 </Project>

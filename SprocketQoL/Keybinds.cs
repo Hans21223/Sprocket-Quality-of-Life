@@ -13,6 +13,8 @@ internal static class Keybinds
     internal static readonly Bind[] All =
     {
         new("menu", "Quality of Life", "Settings and keys (this window)", "F11"),
+        new("workshop", "Quality of Life", "Open QoL Workshop", "Ctrl+Shift+Space"),
+        new("commandSearch", "Quality of Life", "Search tools", "Ctrl+Space"),
         new("hotkeys", "Panels", "Show or hide the hotkeys box", "F1"),
         new("explode", "Spacing", "Exploded view", "F2"),
         new("explodeCloser", "Spacing", "Exploded view: closer", "F3"),
@@ -36,6 +38,9 @@ internal static class Keybinds
         new("bevel", "Mesh", "Bevel", "V"),
         new("selectFlat", "Selection", "Select linked flat faces", "U"),
         new("proportional", "Selection", "Proportional editing", "O"),
+        new("applyPrediction", "Mesh", "Apply prediction (hold)", "N"),
+        new("cycleSelection", "Selection", "Cycle overlapping targets", "Alt+N"),
+        new("cyclePrediction", "Mesh", "Cycle predicted targets", "Shift+N"),
         new("join", "Add-ons", "Merge into the last selected add-on", "Ctrl+J"),
     };
 
@@ -147,6 +152,19 @@ internal static class Keybinds
 
     /// Whether the action's own binding asks for Ctrl (then Ctrl can't also mean "the other way").
     internal static bool NeedsCtrl(string id) => parsed.TryGetValue(id, out var k) && k.Ctrl;
+
+    /// A held action, with the same configured modifiers and optional API bindings.
+    internal static bool Held(string id)
+    {
+        if (api.TryGetValue(id, out var handle)) { Compare(); return ModApi.KeyHeld(handle); }
+        if (!parsed.TryGetValue(id, out var k) || k.Key == Key.None || Keyboard.current is not { } keys) return false;
+        try
+        {
+            return keys[k.Key].isPressed && (!k.Ctrl || keys.ctrlKey.isPressed)
+                && (!k.Shift || keys.shiftKey.isPressed) && (!k.Alt || keys.altKey.isPressed);
+        }
+        catch (Exception) { return false; }
+    }
 
     internal enum Captured { Nothing, Cancelled, Cleared, Set }
 

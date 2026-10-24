@@ -67,7 +67,6 @@ internal static class ObjTankExport
             throw new IOException("Choose a new export name. Existing OBJ, material and texture files are kept.");
         var state = new ExportState(editor, selectedIds, assetName);
         state.Read(); // All native reads succeed before a package is published.
-        string obj = ObjMeshFormat.Write(new(state.Meshes.ToArray()), mtlName);
         string stage = Path.Combine(directory, ".qol-obj-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(stage);
         bool assetsMoved = false, mtlMoved = false, objMoved = false;
@@ -77,7 +76,10 @@ internal static class ObjTankExport
             Directory.CreateDirectory(stagedAssets);
             foreach (var (file, bytes) in state.Textures) File.WriteAllBytes(Path.Combine(stagedAssets, file), bytes);
             File.WriteAllText(Path.Combine(stage, mtlName), state.MaterialText.ToString(), new UTF8Encoding(false));
-            File.WriteAllText(Path.Combine(stage, Path.GetFileName(destination)), obj, new UTF8Encoding(false));
+            // Large tank exports can exceed the importer's text limit. Keep only a small
+            // encoding buffer instead of a complete OBJ string and its StringBuilder copy.
+            using (var writer = new StreamWriter(Path.Combine(stage, Path.GetFileName(destination)), false, new UTF8Encoding(false), 64 * 1024))
+                ObjMeshFormat.WriteTo(new(state.Meshes.ToArray()), writer, mtlName);
             // OBJ is the final commit marker. No existing output is replaced, including a concurrent export.
             Directory.Move(stagedAssets, assetPath); assetsMoved = true;
             File.Move(Path.Combine(stage, mtlName), mtlPath); mtlMoved = true;
