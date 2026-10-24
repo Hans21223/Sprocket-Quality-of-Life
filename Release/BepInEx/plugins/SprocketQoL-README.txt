@@ -1,5 +1,23 @@
-Quality of Life 1.9.0 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.0 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.10.0
+- Workshop (Ctrl+Shift+Space): tool presets, saved part groups, clipboard history, saved selections, checkpoints.
+- Tool search (Ctrl+Space): every action by name, favourites, and part patterns (lines and circles of copies).
+- Hover outlines: hover a mesh tool's button to see what it will make. Tools act at once; Ctrl+Z undoes.
+- Hover highlight: the point, edge or face under the mouse is marked. Mod Options > Selection
+- Precision (structure inspector): measurements, exact length, slide, alignment, loop cuts, mesh health.
+- Smart corners: Auto corners pick the thickening that meets the plates best. Mesh panel > Corners
+- Create Hole: one hole through touching faces, cardinal points, outlines on hover.
+- Split cuts both sides with Mirror on.
+- Fillet and Smooth Edge: spherical corners, smooth shading, no dented junctions.
+- Drape as a net: holes down to 2 mm. Add-on panel > Drape as cloth
+- Predictive build assist (off by default): hold N to snap a move to nearby geometry. Mod Options > Build assist
+- Relative snap: snapped moves go in whole grid steps. Mod Options
+- OBJ import and export handle large files; import shows units, up axis and size.
+- Black box fix for smoke and fire on older graphics cards (on by default). Mod Options
+- Safer edits: size limits checked first, edits stay with their vehicle, own paint follows copied parts.
+- Many fixes; QoL does much less work in the background.
 
 NEW IN 1.9.0
 - Right-click menu: Ctrl + right click (without dragging) in the editor opens a Blender-style menu with what fits
@@ -82,8 +100,23 @@ loading the saved plate structure still need in-game testing.
 FILLET
 In Edges mode, select edges with two flat adjoining faces on a hand-made structure.
 Set Radius (mm) and Fillet segments (2-16, default 4), then click Fillet.
+Auto controls adds support loops on the flat and rounded sides; Spacing (mm) defaults to 1 mm.
+Smaller spacing holds the border tighter during subdivision. Turn it off for simpler topology.
 A radius that cannot fit and unsupported junctions are rejected without changing the shape.
 Smooth Edge remains available with its separate cutback-width controls.
+
+POINT AND EDGE SELECTION
+QoL picks the nearest visible point or edge within 12 screen pixels, at any zoom.
+Hidden geometry is skipped unless X-ray is enabled. Your usual selection commands still apply.
+Settings > Mod Options > Selection adjusts the click radius (4-30 pixels) or restores the game's picker.
+
+ADVANCED PREDICTIVE MODE
+Off by default. Enable Settings > Mod Options > Build assist > Predict moves.
+While moving points, edges or faces, a marker previews nearby stationary points, edge midpoints and face centres.
+Hold N to apply the shown target and confirm the move normally. Release N for free or grid movement.
+Change Apply prediction under Editing keys; Build assist sets the pixel range and which target types are suggested.
+Uses axis or plane locks, Mirror, X-ray and proportional editing; Ctrl+Z undoes the move.
+Suggestions use geometry, without learning or collecting player behaviour.
 
 SMOOTH EDGE AND SPLITTING
 Smooth Edge uses Smooth (mm) (the width cut back) and Smooth segments to create a curved bevel.
@@ -126,13 +159,16 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   on (points and whole parts): 7.5 makes a 48-sided circle, 5 a 72-sided one. 0 keeps the game's step.
 - Merge (M) both sides: with Mirror on, merging points merges their mirror images too, in one step (Ctrl+Z undoes
   both). Turn it off in Mirror fixes.
+- Split both sides: with Mirror on, the game's Split (its edge cut) splits the mirrored edge too, in one step
+  (Ctrl+Z undoes both). Turn Mirror off to split one side only.
 - Turret to Add-on: turns a turret into a fixed add-on. Guns, crew and attached parts stay where they are.
 - Mesh tools (Blender-style; Mirror applies; Ctrl+Z undoes each; each is checked first and not done if it would crack
   the shape, turn or squash a face, or lay faces over each other; rivets on rebuilt faces stay, here and in Merge
   faces and Create Hole): P flatten selected points onto one plane
   (or one height / side / length), T loop cut through the ring of quads a selected edge crosses, I inset selected
   faces, V bevel selected edges into chamfer strips, U select linked flat faces, O proportional editing (moving
-  points pulls their neighbours, radius in the panel). Also a 0.5 mm snap grid, and Numpad 5 for an
+  points pulls their neighbours, radius in the panel). Also a 0.5 mm snap grid, Relative snap (a snapped move
+  goes in whole grid steps, so a shape off the grid keeps its shape), and Numpad 5 for an
   orthographic view (spawn pad and ground hidden; Ortho backdrop: plain grey / white / black, no sky or map, or scene; Numpad + / - zoom it; it never cuts into the vehicle; it snaps to front / side / top,
   Numpad 1 / 3 / 7, Ctrl for back / other side / from below, Numpad 9 the opposite view). In a straight view it
   shows the vehicle's width and height as dimension lines, to the centimetre (Measurements; antennas not
@@ -145,6 +181,8 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
   in Mesh tools.
 - F7 fullbright: even light from every side and corner (14 lights), no shadows (F7 again turns it off); its
   brightness is in Mesh tools.
+- Black box fix (Mod Options > Settings, on by default): on some graphics cards smoke and fire show black boxes,
+  bad pixels that bloom and anti-aliasing smear. This turns on the cameras' Stop NaNs, which removes them first.
 - F8 in photo mode takes a photo at the best graphics settings without leaving photo mode (settings and
   overlay come back after). Saved in Documents\My Games\Sprocket\Photos.
   Local build 1.7.9.7 saves opaque RGB photos: smoke retains its rendered colour instead of becoming transparent
@@ -162,7 +200,7 @@ STRUCTURE TOOLS (hand-made structures and add-ons)
 - Own paint: a structure's panel can give the part (and the selected parts) its own paint job ("Own paint 1"
   to "Own paint 9"), with its colours, camo and wear right in the panel. Saved with the design; Ctrl+Z
   undoes each change.
-- Zoom in close: the camera can come within a few centimetres of small parts (Mesh tools, on by default).
+- Zoom in close: the camera can come within a few centimetres of small parts (Mod Options > Settings > View, on by default).
 - Turrets can be copied with Alt like other parts, with everything on them (turret body, guns...), and
   mirrored with Mirror on: the twin gets the body, guns and the rest too (the design reloads once). Moving one
   turret of a mirrored pair keeps the other its mirror image.
@@ -183,7 +221,8 @@ ADD-ON TOOLS
   both sides) share one shape, so they're cut on both sides and stay mirrored. The add-on must be a closed shape. The fill around the cut uses the
   fewest points by default (Fill: rectangle box to enclose the cut in a clean rectangular box, or light / smooth fill for faces without long thin slivers).
   Also Keep only the overlap (intersect), Join into one shape (union) and Slice in two (the inside becomes a new
-  add-on).
+  add-on). Where the plates don't enclose a space (single open plates), Keep only the overlap just trims them and a
+  recess is a plain hole.
 - Drape as cloth: the add-on's top becomes a cloth sheet or net dropped onto the vehicle until it settles (at most
   4,000 points; a big sheet takes several seconds). Ctrl+Z undoes it.
 - Scatter add-ons over this: select the add-ons to scatter, then the part last; up to 300 copies land at random on
