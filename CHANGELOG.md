@@ -1,3 +1,7 @@
+# Quality of Life 1.10.1
+
+- **Orthographic view:** moving points and parts with the mouse or the arrows goes at normal speed (it jumped many times too far).
+
 # Quality of Life 1.10.0
 
 New:
