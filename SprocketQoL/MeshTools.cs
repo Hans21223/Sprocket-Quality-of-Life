@@ -1543,6 +1543,16 @@ public static partial class MeshTools
     static void ReachSingleOrthoGizmo(Sprocket.Transformations.Gizmos.TransformGizmo __instance, Ray r, ref float maxDistance)
         => ReachOrthoGizmo(__instance, r, ref maxDistance);
 
+    // A move turns mouse pixels into metres scaled by how deep its centre sits in the view (zFac, Blender's zfac): right
+    // for a normal view, but an orthographic picture is the same size at any depth, so there every pixel moved points
+    // tens of times too far (the camera stands back) and dragging an arrow jumped away. Blender uses 1 there; so does this.
+    [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.Transformations.Transformation), nameof(Sprocket.Transformations.Transformation.UpdateCentres))]
+    static void OrthoMoveScale(Sprocket.Transformations.Transformation __instance)
+    {
+        var p = __instance.projection;
+        if (p.m32 == 0 && p.m33 == 1) __instance.zFac = 1;
+    }
+
     [HarmonyPostfix, HarmonyPatch(typeof(Sprocket.GizmoRendering.TransformGizmos), nameof(Sprocket.GizmoRendering.TransformGizmos.DrawTransform))]
     static void ArrowSize(float scale, Sprocket.Transformations.Gizmos.ITransformGizmo __result) => Ui.Guard("Orthographic view", () =>
     {
