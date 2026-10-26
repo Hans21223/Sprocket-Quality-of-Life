@@ -1,5 +1,14 @@
-Quality of Life 1.10.2 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.3 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.10.3
+- Measurements and drawing sheet: the vehicle's true height (slanted plates made it look taller).
+- Point and edge picking works in creases, like under an overhang.
+- Fullbright: no white glare on glossy plates.
+- Select linked and Invert selection work from the right-click menu and tool search.
+- Fillet skips edges between faces in one plane (select all, then Fillet).
+- Support report hides the user folder in file addresses too.
+- Readable key names and labels.
 
 NEW IN 1.10.2
 - Orthographic view: the move, turn and scale arrows are easy to grab.
