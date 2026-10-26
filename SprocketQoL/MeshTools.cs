@@ -1112,6 +1112,7 @@ public static partial class MeshTools
             light.shadows = LightShadows.None;
             var hd = LikeTheSun(light, sun);
             hd.EnableShadows(false);
+            hd.affectSpecular = false; // 14 bright points shone off glossy plates as white glare
             light.shadows = LightShadows.None;
             fills.Add(go);
         }
@@ -1162,11 +1163,37 @@ public static partial class MeshTools
             foreach (var r in part.GetComponentsInChildren<Renderer>())
             {
                 if (!counted.Add(r.Pointer) || !Drawn(r)) continue;
-                var b = r.bounds;
+                var b = WorldBox(r);
                 all = Grow(all, b);
                 if (!aerials.Contains(r.Pointer)) body = Grow(body, b);
             }
         return vehicleBox = (all, body);
+    }
+
+    // Each mesh's points, read once (a copy costs about 30 ms for a whole tank) and again when the mesh changes.
+    static readonly Dictionary<IntPtr, (int Count, Bounds Local, Vector3[] Points)> meshPoints = new();
+
+    /// A renderer's box in the world from its mesh's points. The renderer's own box is its mesh's box turned with the part,
+    /// and for a plate on a slant that stands far taller than the plate: a tank 2.96 m tall measured 3.90 m.
+    internal static Bounds WorldBox(Renderer r)
+    {
+        var mesh = r.TryCast<MeshRenderer>() != null ? r.GetComponent<MeshFilter>()?.sharedMesh : null;
+        if (mesh == null || !mesh.isReadable || mesh.vertexCount == 0) return r.bounds;
+        int count = mesh.vertexCount;
+        var local = mesh.bounds;
+        if (!meshPoints.TryGetValue(mesh.Pointer, out var cached) || cached.Count != count || cached.Local != local)
+        {
+            if (meshPoints.Count > 5000) meshPoints.Clear(); // shortcut: edits leave old meshes behind; fine for one vehicle at a time
+            meshPoints[mesh.Pointer] = cached = (count, local, mesh.vertices);
+        }
+        var m = r.transform.localToWorldMatrix;
+        float x0 = float.MaxValue, y0 = float.MaxValue, z0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue, z1 = float.MinValue;
+        foreach (var p in cached.Points)
+        {
+            float x = m.m00 * p.x + m.m01 * p.y + m.m02 * p.z + m.m03, y = m.m10 * p.x + m.m11 * p.y + m.m12 * p.z + m.m13, z = m.m20 * p.x + m.m21 * p.y + m.m22 * p.z + m.m23;
+            x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); z0 = Math.Min(z0, z); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); z1 = Math.Max(z1, z);
+        }
+        return new Bounds(new Vector3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), new Vector3(x1 - x0, y1 - y0, z1 - z0));
     }
 
     /// Drawn: switched on, and not a shadow-only stand-in. The others have a size too but aren't seen, so they count in
@@ -1184,11 +1211,12 @@ public static partial class MeshTools
             foreach (var r in part.GetComponentsInChildren<Renderer>(true))
                 if (own.Add(r.Pointer) && Drawn(r) && r.gameObject.activeInHierarchy && !aerials.Contains(r.Pointer)) counted.Add(r);
         if (counted.Count == 0) return;
-        string Say(Renderer r) => $"{(r.transform.parent != null ? r.transform.parent.name + "/" : "")}{r.name} {r.bounds.min:F2}..{r.bounds.max:F2}";
+        var boxes = counted.ToDictionary(r => r.Pointer, WorldBox);
+        string Say(Renderer r) { var b = boxes.TryGetValue(r.Pointer, out var own) ? own : r.bounds; return $"{(r.transform.parent != null ? r.transform.parent.name + "/" : "")}{r.name} {b.min:F2}..{b.max:F2}"; }
         var sides = new (string Side, Func<Renderer, float> By, bool Low)[]
         {
-            ("left", r => r.bounds.min.x, true), ("right", r => r.bounds.max.x, false), ("bottom", r => r.bounds.min.y, true),
-            ("top", r => r.bounds.max.y, false), ("back", r => r.bounds.min.z, true), ("front", r => r.bounds.max.z, false),
+            ("left", r => boxes[r.Pointer].min.x, true), ("right", r => boxes[r.Pointer].max.x, false), ("bottom", r => boxes[r.Pointer].min.y, true),
+            ("top", r => boxes[r.Pointer].max.y, false), ("back", r => boxes[r.Pointer].min.z, true), ("front", r => boxes[r.Pointer].max.z, false),
         };
         var near = new Bounds(box.center, box.size + Vector3.one);
         var others = new List<string>();
@@ -1374,7 +1402,7 @@ public static partial class MeshTools
             {
                 own.Add(r.Pointer);
                 // Only what's seen sets the vehicle's bottom: an unseen renderer lower down left the pad's blocks showing.
-                if (Drawn(r)) vehicle = Grow(vehicle, r.bounds);
+                if (Drawn(r)) vehicle = Grow(vehicle, WorldBox(r));
             }
         if (vehicle is not { } box) return;
         // Anything not of the vehicle, under its footprint and low: lying under it (the ground, the pad's deck) or standing

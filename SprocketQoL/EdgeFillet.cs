@@ -23,6 +23,7 @@ public static class EdgeFillet
         var profiles = new Dictionary<(int, int), Profile>();
         float scale = pos.Count == 0 ? 1 : Math.Max(1e-3f, Vector3.Distance(pos.Aggregate(Vector3.Min), pos.Aggregate(Vector3.Max)));
         float tolerance = Math.Max(1e-7f, scale * 2e-6f);
+        var flat = new List<(int, int)>();
         foreach (var e in sel)
         {
             var sides = edgeFaces[e];
@@ -38,12 +39,14 @@ public static class EdgeFillet
             Vector3 Inward(int f) => Vector3.Normalize(Vector3.Cross(normals[f], faces[f][SideIndex(faces[f], e)] == e.Item1 ? axis : -axis));
             Vector3 d1 = Inward(sides[0]), d2 = Inward(sides[1]);
             float dot = Math.Clamp(Vector3.Dot(d1, d2), -1f, 1f);
-            if (Math.Abs(dot) > 0.99999f) return Rebuild.Fail("select a corner between two distinct face planes");
+            if (Math.Abs(dot) > 0.99999f) { flat.Add(e); continue; } // no corner to round: left as it is (select all, then Fillet)
             float setback = radius * MathF.Sqrt((1 + dot) / (1 - dot));
             Vector3 centre = (d1 + d2) * (setback / (1 + dot));
             if (!Finite(centre)) return Rebuild.Fail("this corner is too sharp for a fillet");
             profiles[e] = new Profile(axis, centre, setback, new Dictionary<int, Vector3> { [sides[0]] = d1, [sides[1]] = d2 });
         }
+        sel.ExceptWith(flat);
+        if (sel.Count == 0) return Rebuild.Fail("select a corner between two distinct face planes");
         var samples=Enumerable.Range(0,segments+1).Select(s => s/(float)segments).ToList();
         if (supportSpacing>0)
         {

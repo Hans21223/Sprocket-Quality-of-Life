@@ -1,3 +1,13 @@
+# Quality of Life 1.10.3
+
+- **Point and edge picking:** points and edges in a crease, like under an overhang, can be picked (their own faces counted as hiding them).
+- **Measurements and drawing sheet:** the vehicle's height comes from its shape, not the boxes round slanted plates (a tank 2.96 m tall showed 3.90 m).
+- **Fullbright:** no white glare on glossy plates.
+- **Select linked** (right-click menu, tool search) selects everything joined to the selection; it used to fail. **Invert selection** there works.
+- **Fillet:** edges between two faces in one plane are left as they are, so select all and Fillet works.
+- **Support report:** the user folder is hidden in file addresses too.
+- **Text:** key names read "Ctrl+Shift+Space" (not left and right keys); stars and arrows the game's font lacks are replaced; clearer OBJ export note; a refused edit is logged as a warning, not an error.
+
 # Quality of Life 1.10.2
 
 - **Orthographic view:** the move, turn and scale arrows are easy to grab (their click areas were up to 50 times too big, so a click often took the wrong handle).

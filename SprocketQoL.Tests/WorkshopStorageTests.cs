@@ -127,6 +127,10 @@ static class WorkshopStorageTests
             string absolute = Path.GetFullPath(sandbox), expected = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (absolute.StartsWith(expected, StringComparison.OrdinalIgnoreCase) && Path.GetFileName(absolute).StartsWith("qol-workshop-test-", StringComparison.Ordinal) && Directory.Exists(absolute)) Directory.Delete(absolute, true);
         }
+        string leaky = @"Image: 'file:///C:/Users/Some%20One/Documents/My%20Games/Sprocket/Decals/a.png' and C:\Users\Some One\Desktop\b.txt and c:/users/some one/c.txt";
+        string clean = WorkshopStorage.Scrub(leaky, (@"C:\Users\Some One", "[User]"), ("ab", "[too short]"));
+        Check(!clean.Contains("Some", StringComparison.OrdinalIgnoreCase) && clean.Split("[User]").Length == 4, "support report hides the user folder in every form: backslashes, file:/// with %20, any case");
+        Check(WorkshopStorage.Scrub(@"D:\Games\Sprocket\BepInEx\x", (@"D:\Games\Sprocket", "[Game]"), (@"D:\Games\Sprocket\BepInEx", "[BepInEx]")) == @"[BepInEx]\x", "the longer path is replaced first");
         Console.WriteLine($"WORKSHOP_STORAGE_TESTS_OK {checks}");
     }
 }

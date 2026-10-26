@@ -11,7 +11,7 @@ Delete), what it would make is outlined on the part first. The structure inspect
 sliding, reference alignment, loop cuts, connected proportional editing and mesh-health inspection; **Smart corners**
 (mesh panel > Corners) gives each Auto corner the thickening that meets its neighbouring plates best. Create Hole cuts
 one hole through touching faces, the game's Split cuts both sides with Mirror on, nets drape with holes down to 2 mm,
-and every edit checks the game's size limits first. See [CHANGELOG.md](CHANGELOG.md) for the full list. **1.10.1** makes moving points and parts in orthographic view go at normal speed, and **1.10.2** makes its arrows easy to grab.
+and every edit checks the game's size limits first. See [CHANGELOG.md](CHANGELOG.md) for the full list. **1.10.1** makes moving points and parts in orthographic view go at normal speed, and **1.10.2** makes its arrows easy to grab. **1.10.3** fixes the measured height, picking in creases, Select linked and Invert selection from the menu, and Fillet on flat edges.
 
 **Quality of Life 1.8.4** works out speed and acceleration with the game's own drivetrain maths (top speed within
 0.1% of a test drive), lets you change every Quality of Life key, and adds a **Mod Options** tab to the game's

@@ -79,7 +79,7 @@ internal static class PartPatterns
         var rect=NativeUi.Node("Part patterns",canvas!.transform,0,0,1000,670);rect.anchorMin=rect.anchorMax=rect.pivot=new Vector2(.5f,.5f);panel=rect.gameObject;
         panel.AddComponent<Image>().color=new Color(.08f,.09f,.105f,1);
         Label("Repeat selected parts",22,14,740,35,24);Button("Cancel / Esc",820,14,155,34,Close);
-        Button(radial?"Pattern: radial ▸":"Pattern: line ▸",22,67,350,36,()=>{radial=!radial;Build();});
+        Button(radial?"Pattern: radial ›":"Pattern: line ›",22,67,350,36,()=>{radial=!radial;Build();});
         Label("Added groups (1–100)",400,73,280,30);Input(count.ToString(CultureInfo.InvariantCulture),700,67,275,v=>{if(int.TryParse(v,out int n))count=n;Changed();});
         if(!radial)
         {
@@ -89,7 +89,7 @@ internal static class PartPatterns
         }
         else
         {
-            Button("Axis: "+new[]{"X","Y","Z"}[Math.Clamp(axis,0,2)]+" ▸",22,125,285,34,()=>{axis=(axis+1)%3;Build();});
+            Button("Axis: "+new[]{"X","Y","Z"}[Math.Clamp(axis,0,2)]+" ›",22,125,285,34,()=>{axis=(axis+1)%3;Build();});
             Label("Sweep degrees",342,129,150,28);Input(F(sweep),505,125,150,v=>{sweep=Parse(v);Changed();});
             Label("Radius (m)",687,129,140,28);Input(F(radius),830,125,145,v=>{radius=Parse(v);Changed();});
             Label("Ring centre in vehicle coordinates (metres)",22,178,950,26);

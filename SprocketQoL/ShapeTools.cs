@@ -50,7 +50,7 @@ public static class ShapeTools
         Ui.Section(layout, "Boolean with this add-on");
         var targets = editor.SelectedParts().Where(v => v != addon).ToList();
         string what = targets.Count == 0 ? "the shape it sits on" : $"{targets.Count} selected part{(targets.Count == 1 ? "" : "s")}";
-        ui.InfoField($"Like Blender's Boolean, with {what}: cut it (difference), keep only the overlap (intersect), join it with this add-on (union) or slice it in two. The add-on must overlap it. Ctrl+Z undoes a cut.", 3);
+        ui.InfoField($"Like Blender's Boolean, with {what}: cut it (difference), keep only the overlap (intersect), join it with this add-on (union) or slice it in two. The add-on must overlap it. Ctrl+Z undoes a cut; Restore undoes a slice.", 3);
         // Labels fit the game's label column (about 14 characters); the tooltip says the rest.
         ui.ToggleField("Keep cutter", keepCutter, Ui.BoolCallback(v => keepCutter = v),
             "Keep the cutting add-on. Off: removes this add-on after cutting. On: keeps it so you can move it and cut again.");

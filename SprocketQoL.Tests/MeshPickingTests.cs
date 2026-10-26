@@ -123,6 +123,27 @@ static class MeshPickingTests
                 Near(hit.Depth, world.Z, 3e-4f, "perspective near-clipped hit recovers camera-forward depth");
             }
         }
+        // Visibility skips only the target's own faces: a fake ray with faces at fixed distances along it.
+        (int Face, float At)? Cast((int Face, float At)[] faces, float from, float length)
+        {
+            (int Face, float At)? nearest = null;
+            foreach (var f in faces)
+                if (f.At >= from && f.At - from <= length && (nearest == null || f.At - from < nearest.Value.At)) nearest = (f.Face, f.At - from);
+            return nearest;
+        }
+        bool Seen(float distance, int[] own, params (int Face, float At)[] faces) => InView(distance, .001f, own, (from, length) => Cast(faces, from, length));
+        Check(Seen(10, new[] { 1 }), "nothing in the way: visible");
+        Check(Seen(10, new[] { 1, 2 }, (1, 9.9f), (2, 9.95f)), "the target's own faces, rounded in front of it, don't hide it");
+        Check(!Seen(10, new[] { 1 }, (1, 9.9f), (5, 9.95f)), "another face behind an own one still hides the target");
+        Check(!Seen(10, new[] { 1 }, (5, 4f)), "another face in front hides the target");
+        Check(Seen(10, Array.Empty<int>(), (5, 10f)), "a face at the target itself doesn't hide it");
+        Check(!InView(10, .001f, new[] { 1 }, (from, length) => (1, 0f)), "an own face hit over and over stops, counted as hiding");
+
+        // Select linked: points joined through faces, not across a gap; a loose point stays itself.
+        var islands = new List<int[]> { new[] { 0, 1, 2, 3 }, new[] { 2, 3, 4, 5 }, new[] { 6, 7, 8 } };
+        Check(Linked(islands, new[] { 0 }).SetEquals(new[] { 0, 1, 2, 3, 4, 5 }), "select linked follows shared corners across faces");
+        Check(Linked(islands, new[] { 8 }).SetEquals(new[] { 6, 7, 8 }) && Linked(islands, new[] { 9 }).SetEquals(new[] { 9 }), "select linked stops at a separate piece; a loose point is just itself");
+        Check(Linked(islands, Array.Empty<int>()).Count == 0, "nothing selected: nothing linked");
         Console.WriteLine($"MESH_PICKING_TESTS_OK: {checks} checks passed");
     }
 
