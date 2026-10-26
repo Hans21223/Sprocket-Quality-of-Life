@@ -99,6 +99,41 @@ public static class MeshPicking
         return true;
     }
 
+    /// True when no face but the target's own lies on the ray before the target, `distance` along it (less `tolerance`).
+    /// `cast(from, length)` gives the nearest face hit up to `length` beyond `from`: its index and distance from `from`.
+    /// A face through the target can't hide it, yet at a crease seen from outside (a point under an overhang) its own
+    /// faces come towards the camera, and rounding put them in front of it: those points couldn't be picked.
+    public static bool InView(float distance, float tolerance, ICollection<int> own, Func<float, float, (int Face, float At)?> cast)
+    {
+        float from = 0;
+        for (int skips = 0; skips <= 2 * own.Count; skips++) // each own face once, a bent one twice
+        {
+            float length = distance - tolerance - from;
+            if (length <= 0 || cast(from, length) is not { } hit) return true;
+            if (!own.Contains(hit.Face)) return false;
+            from += hit.At + tolerance;
+        }
+        return false;
+    }
+
+    /// The points joined to the seeds through faces (Blender's select linked).
+    public static HashSet<int> Linked(IReadOnlyList<int[]> faces, IEnumerable<int> seeds)
+    {
+        var byPoint = new Dictionary<int, List<int>>();
+        for (int f = 0; f < faces.Count; f++)
+            foreach (int v in faces[f]) { if (!byPoint.TryGetValue(v, out var list)) byPoint[v] = list = new(); list.Add(f); }
+        var found = new HashSet<int>();
+        var reached = new HashSet<int>();
+        var todo = new Stack<int>(seeds);
+        while (todo.Count > 0)
+        {
+            int v = todo.Pop();
+            if (!found.Add(v) || !byPoint.TryGetValue(v, out var around)) continue;
+            foreach (int f in around) if (reached.Add(f)) foreach (int w in faces[f]) todo.Push(w);
+        }
+        return found;
+    }
+
     static bool Positive(float value) => float.IsFinite(value) && value > 0;
     static bool Finite(Vector2 value) => float.IsFinite(value.X) && float.IsFinite(value.Y);
 

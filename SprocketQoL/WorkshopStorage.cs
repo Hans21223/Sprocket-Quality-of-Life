@@ -196,6 +196,16 @@ public static class WorkshopStorage
         foreach (string dir in unpinned) Directory.Delete(CheckedBackup(dir), true);
     }
 
+    /// Folder paths replaced by short labels, longest first. Log lines also name files as file:/// addresses (forward
+    /// slashes, spaces as %20), so each path goes in those forms too.
+    public static string Scrub(string text, params (string Path, string Label)[] paths)
+    {
+        foreach (var (path, label) in paths.Where(p => p.Path.Length > 3).OrderByDescending(p => p.Path.Length))
+            foreach (var form in new[] { path, path.Replace('\\', '/'), path.Replace('\\', '/').Replace(" ", "%20") })
+                text = text.Replace(form, label, StringComparison.OrdinalIgnoreCase);
+        return text;
+    }
+
     public static string SaveSupportReport(string text)
     {
         string path = Path.Combine(Root, "SprocketQoL", "Reports", "support-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6] + ".txt");

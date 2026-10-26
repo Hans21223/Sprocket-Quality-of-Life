@@ -131,7 +131,8 @@ public static class RightClickMenu
         new("Mesh", "Delete", () => G("MeshEdit/Delete"), Shape, _ => Tap("Delete")),
         new("Mesh", "Select all / none", () => G("MeshEdit/ToggleSelection"), Shape, _ => Tap("SelectAll")),
         new("Mesh", "Invert selection", () => G("MeshEdit/InvertSelection"), Shape, _ => Tap("SelectInverse")),
-        new("Mesh", "Select linked", () => G("MeshEdit/SelectLinked"), Shape, _ => Tap("SelectLinked")),
+        // From the selection: the game's own (its key) takes what's under the mouse, which from a menu isn't the shape.
+        new("Mesh", "Select linked", None, Shape, s => MeshSelection.SelectLinked(s.Shape!)),
         new("Mesh tools (QoL)", "Flatten", () => K("flatten"), Shape, _ => Keybinds.Press("flatten")),
         new("Mesh tools (QoL)", "Loop cut", () => K("loopCut"), Shape, _ => Keybinds.Press("loopCut")),
         new("Mesh tools (QoL)", "Inset", () => K("inset"), Shape, _ => Keybinds.Press("inset")),
@@ -272,8 +273,7 @@ public static class RightClickMenu
     static void Slope(GameInputState __0, ref bool __result) => Answer("Slope", __0, ref __result);
     [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.SelectAll))]
     static void SelectAll(GameInputState __0, ref bool __result) => Answer("SelectAll", __0, ref __result);
-    [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.SelectInverse))]
-    static void SelectInverse(GameInputState __0, ref bool __result) => Answer("SelectInverse", __0, ref __result);
-    [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.SelectLinked))]
-    static void SelectLinked(GameInputState __0, ref bool __result) => Answer("SelectLinked", __0, ref __result);
+    // The shape editor reads Invert through IMeshEditInputProvider.InvertSelection (SelectInverse never reached it).
+    [HarmonyPostfix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.InvertSelection))]
+    static void InvertSelection(GameInputState __0, ref bool __result) => Answer("SelectInverse", __0, ref __result);
 }

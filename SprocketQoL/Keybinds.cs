@@ -113,7 +113,9 @@ internal static class Keybinds
     /// The key as shown in panels and the hotkeys box ("Numpad 1", "Ctrl+J"), or "(none)".
     internal static string Shown(string id)
     {
-        if (api.TryGetValue(id, out var handle)) return ModApi.KeyShown(handle).Replace("Unbound", "(none)");
+        // The API names a key either side takes as both ("Left Ctrl + Right Ctrl + J"), which reads as holding both.
+        if (api.TryGetValue(id, out var handle)) return ModApi.KeyShown(handle).Replace("Unbound", "(none)").Replace("Left Ctrl + Right Ctrl", "Ctrl")
+            .Replace("Left Shift + Right Shift", "Shift").Replace("Left Alt + Right Alt", "Alt");
         var text = entries.TryGetValue(id, out var e) ? e.Value : All.FirstOrDefault(b => b.Id == id)?.Default ?? "";
         if (string.IsNullOrWhiteSpace(text)) return "(none)";
         return text.Replace("NumpadPlus", "Numpad +").Replace("NumpadMinus", "Numpad -").Replace("Numpad", "Numpad ").Replace("Numpad  ", "Numpad ");

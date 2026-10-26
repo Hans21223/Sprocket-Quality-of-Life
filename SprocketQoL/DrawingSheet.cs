@@ -185,7 +185,8 @@ internal static class DrawingSheet
                     if (aerials.Contains(r.Pointer) || !MeshTools.Drawn(r)) continue;
                     layers |= 1 << r.gameObject.layer;
                     vehicle.Add(r.Pointer);
-                    if (around is { } a) { a.Encapsulate(r.bounds); around = a; } else around = r.bounds;
+                    var shape = MeshTools.WorldBox(r);
+                    if (around is { } a) { a.Encapsulate(shape); around = a; } else around = shape;
                 }
             if (main == null || around is not { } b) { DesignEditor.Instance?.Say("Drawing sheet: no vehicle to draw", 4); return false; }
             box = b;

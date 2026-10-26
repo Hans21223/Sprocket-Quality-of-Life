@@ -109,6 +109,20 @@ static class ToolTests
         var merged=FaceMerge.Plan(meshPoints,patches,Enumerable.Range(0,patches.Count).ToHashSet(),new HashSet<(int,int)>(),FaceMerge.SidePoints.Keep);
         Check(merged.Count==count&&merged.All(g=>g.Why==null&&g.NewFaces.Count==1&&g.NewFaces[0].Length==4&&g.Removed.Count==2),"large face selection merges every patch independently and removes only its straight boundary points");
         Console.WriteLine($"  FACE_MERGE_BENCHMARK: {count} patches / {patches.Count} faces in {clock.ElapsedMilliseconds} ms");
+
+        // A closed block from the game after a loop cut round it, every face selected (it crashed in game): the merge must
+        // keep every point a new face still uses, and leave a closed block.
+        var blockPos = new List<Vector3> { new(-0.148f, 0.117f, 0.146f), new(0.148f, 0.117f, 0.146f), new(0.148f, 0.117f, 0.19f), new(-0.148f, 0.117f, 0.19f), new(-0.148f, 0.685f, 0.388f), new(-0.148f, 0.685f, 0.653f), new(0.148f, 0.685f, 0.653f), new(0.148f, 0.685f, 0.388f), new(-0.148f, 0.117f, -0.195f), new(0.148f, 0.117f, -0.195f), new(-0.148f, 0.718f, 0.388f), new(0.148f, 0.718f, 0.388f), new(0.148f, 0.718f, -0.26f), new(-0.148f, 0.718f, -0.26f), new(0.148f, 0.685f, -0.26f), new(-0.148f, 0.685f, -0.26f), new(-0.148f, 0.401f, 0.4215f), new(-0.148f, 0.401f, 0.267f), new(0.148f, 0.401f, 0.4215f), new(-0.148f, 0.401f, -0.2275f), new(0.148f, 0.401f, 0.267f), new(0.148f, 0.401f, -0.2275f) };
+        var blockFaces = new List<int[]> { new[] {0, 1, 2, 3}, new[] {4, 5, 6, 7}, new[] {1, 0, 8, 9}, new[] {10, 11, 12, 13}, new[] {4, 7, 11, 10}, new[] {14, 15, 13, 12}, new[] {7, 14, 12, 11}, new[] {15, 4, 10, 13}, new[] {3, 16, 17, 0}, new[] {16, 5, 4, 17}, new[] {5, 16, 18, 6}, new[] {16, 3, 2, 18}, new[] {0, 17, 19, 8}, new[] {17, 4, 15, 19}, new[] {6, 18, 20, 7}, new[] {18, 2, 1, 20}, new[] {8, 19, 21, 9}, new[] {19, 15, 14, 21}, new[] {7, 20, 21, 14}, new[] {20, 1, 9, 21} };
+        foreach (var sides in new[] { FaceMerge.SidePoints.TakeOutLine, FaceMerge.SidePoints.RunPast, FaceMerge.SidePoints.Keep })
+        {
+            var all = FaceMerge.Plan(blockPos, blockFaces, Enumerable.Range(0, blockFaces.Count).ToHashSet(), new HashSet<(int, int)>(), sides).Where(g => g.Why == null).ToList();
+            var gone = all.SelectMany(g => g.Removed).ToHashSet();
+            Check(all.SelectMany(g => g.NewFaces).All(f => !f.Any(gone.Contains)), $"merging every face ({sides}): no new face uses a point another merge removes");
+            var replaced = all.SelectMany(g => g.Faces).ToHashSet();
+            var result = blockFaces.Where((_, i) => !replaced.Contains(i)).Concat(all.SelectMany(g => g.NewFaces)).ToList();
+            Check(Consistent(result, closed: true), $"merging every face ({sides}) leaves a closed block");
+        }
     }
 
     static void Bridge()

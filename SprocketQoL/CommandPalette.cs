@@ -116,7 +116,7 @@ internal static class CommandPalette
             float y=row*47;var button=NativeUi.Click(font,rowCallbacks,rows.transform,command.Label+(command.Key.Length>0?"  ["+command.Key+"]":""),22,y,825,28,()=>Execute(command),true);
             if(!command.Enabled)button.GetComponent<Image>().color=new Color(.13f,.14f,.15f);
             NativeUi.Label(font,rows.transform,command.Section+(!command.Enabled?" · "+command.Reason:""),32,y+29,815,17,12);
-            NativeUi.Click(font,rowCallbacks,rows.transform,favourites.Contains(command.Id)?"★":"☆",862,y,113,29,()=>{if(!favourites.Add(command.Id))favourites.Remove(command.Id);Save();redrawRows=true;});row++;
+            NativeUi.Click(font,rowCallbacks,rows.transform,favourites.Contains(command.Id)?"Starred":"Star",862,y,113,29,()=>{if(!favourites.Add(command.Id))favourites.Remove(command.Id);Save();redrawRows=true;});row++;
         }
         if(shown.Count==0)NativeUi.Label(font,rows.transform,"No matching commands. Try another word or turn off the favourites filter.",22,10,950,60,18);
         NativeUi.Click(font,rowCallbacks,rows.transform,"Previous",22,392,150,32,()=>{page--;redrawRows=true;});

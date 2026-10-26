@@ -404,6 +404,11 @@ static class FilletTests
         Reject(EdgeFillet.Round(flat,new[]{new[]{0,1,2},new[]{0,2,3}},new[]{(0,2)},.1f,4),"coplanar edge rejected");
         var warped=cube.ToList(); warped[7]+=new Vector3(0,.03f,0);
         Reject(EdgeFillet.Round(warped,faces,new[]{(2,3)},.1f,4),"warped neighbouring face rejected");
+        // Select all, then Fillet: an edge between two faces in one plane has no corner and is left as it is.
+        var (flatP, flatF) = Prism(new Vector2[] { new(0, 0), new(1, 0), new(2, 0), new(2, 2), new(0, 2) });
+        var vertical = Enumerable.Range(0, 5).Select(i => (i, i + 5)).ToArray(); // (1, 6) lies flat between two side faces
+        Valid(flatP, flatF, EdgeFillet.Round(flatP, flatF, vertical, 0.1f, 4), true);
+        Check(EdgeFillet.Round(flatP, flatF, new[] { (1, 6) }, 0.1f, 4).Why == "select a corner between two distinct face planes", "only flat edges selected: nothing to round");
         Console.WriteLine($"FILLET_TESTS_OK: {checks} checks");
     }
 }

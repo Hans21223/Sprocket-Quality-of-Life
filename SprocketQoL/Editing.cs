@@ -618,7 +618,9 @@ public sealed class DesignEditor : MonoBehaviour
         {
             busy = false; waits = 0; afterEdit = null;
             Say("Could not complete: " + ex.Message, 10);
-            Plugin.ModLog.LogError(ex);
+            // The plans refuse with a plain Exception and a reason for the player: not a crash, so no stack in the log.
+            if (ex.GetType() == typeof(Exception)) Plugin.ModLog.LogWarning("Could not complete: " + ex.Message);
+            else Plugin.ModLog.LogError(ex);
         }
     }
 

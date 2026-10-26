@@ -218,7 +218,7 @@ public static class ObjTransfer
 
     static string Title(ObjExportCategory category) => category switch
     {
-        ObjExportCategory.Exterior => "Exterior and other parts",
+        ObjExportCategory.Exterior => "Exterior parts",
         ObjExportCategory.Engine => "Engines",
         ObjExportCategory.Powertrain => "Powertrain",
         ObjExportCategory.Transmission => "Transmissions",
@@ -268,7 +268,7 @@ public static class ObjTransfer
             categoryLabels[category] = button.GetComponentInChildren<TextMeshProUGUI>();
             y += 36;
         }
-        Label(panel.transform, "Defaults exclude the internal equipment you listed. External fuel tanks remain included.", 22, 542, 278, 68, 15);
+        Label(panel.transform, "Defaults leave out internal equipment (engine, crew, ammunition and the like). External fuel tanks stay in.", 22, 542, 278, 68, 15);
         Click(panel.transform, "Defaults", 22, 616, 88, 32, () => { Defaults(); rebuildRows = true; });
         Click(panel.transform, "All", 117, 616, 88, 32, () => { selected.Clear(); foreach (var p in parts) selected.Add(p.Id); rebuildRows = true; });
         Click(panel.transform, "None", 212, 616, 88, 32, () => { selected.Clear(); rebuildRows = true; });

@@ -91,7 +91,7 @@ internal static class MeshSelection
                 float y = projection.m10 * p.x + projection.m11 * p.y + projection.m12 * p.z + projection.m13;
                 return new((x / w + 1) * .5f * size.x, (y / w + 1) * .5f * size.y);
             }
-            bool Visible(Vector3 target, MeshPicking.Hit hit)
+            bool Visible(Vector3 target, MeshPicking.Hit hit, ICollection<int> own)
             {
                 if (xRayMode) return true;
                 // In orthographic view each pixel has its own ray origin. Using
@@ -103,8 +103,9 @@ internal static class MeshSelection
                 if (!Finite(distance)) return false;
                 float tolerance = Math.Max(1e-5f, Math.Abs(distance) * 1e-6f);
                 if (distance < -tolerance) return false;
-                return distance <= tolerance || !MeshSampling.RaycastFaces(mesh, origin, direction,
-                    distance - tolerance, out MeshSampling.ElementHit face, FaceMode.Both);
+                return MeshPicking.InView(distance, tolerance, own, (from, length) =>
+                    MeshSampling.RaycastFaces(mesh, origin + direction * from, direction, length, out MeshSampling.ElementHit face, FaceMode.Both)
+                        ? (face.index, face.distance) : null);
             }
             var endpoints = new Dictionary<int, (Vector3 A, Vector3 B)>();
             MeshPicking.ScreenEdge? ProjectEdge(Edge edge, int id)
@@ -127,7 +128,7 @@ internal static class MeshSelection
                 return new(id, screenA, screenB, Depth(clippedA), Depth(clippedB), From: from, To: to);
             }
             bool EdgeVisible(MeshPicking.Hit hit) => Visible(
-                Vector3.LerpUnclamped(endpoints[hit.Id].A, endpoints[hit.Id].B, hit.SegmentT), hit);
+                Vector3.LerpUnclamped(endpoints[hit.Id].A, endpoints[hit.Id].B, hit.SegmentT), hit, FacesAround(mesh, null, mesh.edges[hit.Id]).Keys);
 
             candidates.Clear();
             var result = Empty(type);
@@ -159,7 +160,8 @@ internal static class MeshSelection
                     points.Add(new(id, Project(p), depth));
                 }
                 var hit = Choose(MeshPicking.PointHits(points, new(pointer.x, pointer.y), radius,
-                    accept: h => Visible(positions[h.Id], h), limit: MeshAssistSettings.CyclePicking?.Value == false ? 1 : 32));
+                    accept: h => Visible(positions[h.Id], h, FacesAround(mesh, mesh.vertices[h.Id], null).Keys),
+                    limit: MeshAssistSettings.CyclePicking?.Value == false ? 1 : 32));
                 if (hit is { } picked)
                 {
                     var at = Project(positions[picked.Id]);
@@ -384,6 +386,22 @@ internal static class MeshSelection
         if(done)DesignEditor.Instance?.Say(message);
     });
 
+    /// Everything joined to what's selected (Blender's Ctrl+L), as one selection step.
+    internal static void SelectLinked(PlateStructureEditor editor) => Ui.Guard("Select linked", () =>
+    {
+        if (editor.meshEditor.Mesh?.EditMesh is not { } mesh) return;
+        var v = new MeshTools.View(mesh);
+        var seeds = v.SelectedPoints.Concat(v.SelectedFaces.SelectMany(f => v.Corners[f])).Concat(v.SelectedEdges.SelectMany(e => new[] { e.A, e.B }));
+        var points = MeshPicking.Linked(v.Corners, seeds).Select(i => v.Verts[i].Pointer).ToHashSet();
+        if (points.Count == 0) { editor.operations.NotifyError("Select linked: select a point, edge or face first"); return; }
+        SelectAsStep(editor, "Select linked", editor.meshEditor.SelectType, m =>
+        {
+            foreach (var p in m.vertices) if (points.Contains(p.Pointer)) p.EnableFlag(ElementFlags.Selected);
+            foreach (var e in m.edges) if (points.Contains(e.v0.Pointer) && points.Contains(e.v1.Pointer)) e.EnableFlag(ElementFlags.Selected);
+            foreach (var f in m.faces) if (HoleQuality.Corners(f, p => p.Pointer).All(points.Contains)) f.EnableFlag(ElementFlags.Selected);
+        }, add: true);
+    });
+
     /// Selects with one of the game's own selection steps, so Ctrl+Z gives back the selection before: `select` marks the
     /// elements on the shape, after everything was deselected (unless `add`). False if the editor is busy.
     internal static bool SelectAsStep(PlateStructureEditor editor,string name,MeshEditType mode,Action<EditMesh> select,bool add=false)
@@ -449,36 +467,43 @@ internal static class MeshSelection
     static bool Finite(float n) => float.IsFinite(n);
     static SampleResult Empty(ElementType type) => new()
         { type = type, faceIndex = -1, loopIndex = -1, vertexIndex = -1, edgeIndex = -1 };
-    static void Incident(EditMesh mesh, MeshOperatorContext context, ref SampleResult result)
+    /// The faces at a point, keyed by face index with the face's corner at the point; or, with `edge`, along that edge.
+    static Dictionary<int, Loop> FacesAround(EditMesh mesh, Vertex? vertex, Edge? edge)
     {
-        var incident = new Dictionary<int, Loop>();
-        void OnEdge(Edge edge, Vertex? vertex)
+        var faces = new Dictionary<int, Loop>();
+        void OnEdge(Edge along)
         {
-            var first = edge.loop;
+            var first = along.loop;
             var loop = first;
             for (int i = 0; loop != null && i < mesh.loops.Count; i++)
             {
                 var at = loop;
                 if (vertex != null && at.vertex.Pointer != vertex.Pointer) at = at.next;
                 if (at.face != null && !at.face.HasFlag(ElementFlags.Delete)
-                    && (vertex == null || at.vertex.Pointer == vertex.Pointer)) incident.TryAdd(at.face.index, at);
+                    && (vertex == null || at.vertex.Pointer == vertex.Pointer)) faces.TryAdd(at.face.index, at);
                 loop = loop.radialNext;
                 if (loop == null || loop.Pointer == first?.Pointer) break;
             }
         }
-        if (result.type == ElementType.Edge) OnEdge(mesh.edges[result.edgeIndex], null);
-        else
+        if (edge != null) OnEdge(edge);
+        else if (vertex != null)
         {
-            var vertex = mesh.vertices[result.vertexIndex];
             var first = vertex.firstEdge;
-            var edge = first;
-            for (int i = 0; edge != null && i < mesh.edges.Count; i++)
+            var around = first;
+            for (int i = 0; around != null && i < mesh.edges.Count; i++)
             {
-                OnEdge(edge, vertex);
-                edge = edge.GetNextDiskEdge(vertex);
-                if (edge == null || edge.Pointer == first?.Pointer) break;
+                OnEdge(around);
+                around = around.GetNextDiskEdge(vertex);
+                if (around == null || around.Pointer == first?.Pointer) break;
             }
         }
+        return faces;
+    }
+
+    static void Incident(EditMesh mesh, MeshOperatorContext context, ref SampleResult result)
+    {
+        var incident = result.type == ElementType.Edge ? FacesAround(mesh, null, mesh.edges[result.edgeIndex])
+            : FacesAround(mesh, mesh.vertices[result.vertexIndex], null);
         // Preserve native plate-selection intent: the incident face under the cursor,
         // rather than whichever face happened to be first in an edge's radial list.
         var ray = context.PointerRay;

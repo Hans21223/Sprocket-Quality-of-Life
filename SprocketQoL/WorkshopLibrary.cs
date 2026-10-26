@@ -122,7 +122,7 @@ internal static class WorkshopLibrary
         if (tab == 0)
         {
             var groups = ToolSettings.Groups; group = Math.Clamp(group, 0, Math.Max(0, groups.Count - 1));
-            Click(groups.Count == 0 ? "No registered tools" : groups[group] + " ▸", 455, 157, 350, 34, () => { if (groups.Count > 0) group = (group + 1) % groups.Count; redraw = true; });
+            Click(groups.Count == 0 ? "No registered tools" : groups[group] + " ›", 455, 157, 350, 34, () => { if (groups.Count > 0) group = (group + 1) % groups.Count; redraw = true; });
             Click("Save current values", 817, 157, 218, 34, () => Run(() =>
             {
                 if (groups.Count == 0) throw new InvalidOperationException("No tool settings are registered.");
@@ -156,7 +156,7 @@ internal static class WorkshopLibrary
         rowCallbacks.Clear(); rows = NativeUi.Node("Workshop rows", panel!.transform, 0, 205, 1060, 500).gameObject;
         bool Matches(params string[] text) => search.Length == 0 || text.Any(s => s.Contains(search, StringComparison.OrdinalIgnoreCase));
         var list = tab == 0 ? presets.Where(p => Matches(p.Name, p.Group)).Select(p => (p.Id, Title: p.Name + "  ·  " + p.Group, Detail: p.CreatedUtc.ToLocalTime().ToString("g"))).ToArray()
-            : tab == 3 ? backups.Where(b => Matches(b.Name, b.Operation)).Select(b => (b.Id, Title: (b.Pinned ? "★ " : "") + b.Name, Detail: b.Operation + "  ·  " + b.CreatedUtc.ToLocalTime().ToString("g"))).ToArray()
+            : tab == 3 ? backups.Where(b => Matches(b.Name, b.Operation)).Select(b => (b.Id, Title: (b.Pinned ? "Pinned · " : "") + b.Name, Detail: b.Operation + "  ·  " + b.CreatedUtc.ToLocalTime().ToString("g"))).ToArray()
             : tab == 4 ? selectionSets.Where(s => Matches(s)).Select(s => (Id: s, Title: s, Detail: "Geometry selection on this structure")).ToArray()
             : parts.Where(p => Matches(p.Name, p.Tags)).Select(p => (p.Id, Title: p.Name + $"  ·  {p.Count} parts", Detail: (p.TooLarge ? "Too large to open: delete it here.  " : "") + p.Tags + "  " + p.CreatedUtc.ToLocalTime().ToString("g"))).ToArray();
         int pages = Math.Max(1, (list.Length + PageSize - 1) / PageSize); page = Math.Clamp(page, 0, pages - 1);
@@ -167,7 +167,7 @@ internal static class WorkshopLibrary
             var id = item.Id;
             bool geometry = tab is 1 or 2 or 3;
             float left = geometry ? 194 : 22;
-            NativeUi.Click(font, rowCallbacks, rows.transform, (selected == id ? "▶ " : "") + item.Title, left, row * 98, 1035-left, 35, () => { selected = id; confirmDelete = ""; redrawRows = true; }, true);
+            NativeUi.Click(font, rowCallbacks, rows.transform, (selected == id ? "› " : "") + item.Title, left, row * 98, 1035-left, 35, () => { selected = id; confirmDelete = ""; redrawRows = true; }, true);
             NativeUi.Label(font, rows.transform, item.Detail, left+12, row * 98 + 40, 1010-left, 42, 13);
             if (geometry)
             {
@@ -211,7 +211,7 @@ internal static class WorkshopLibrary
             {
                 var b = backups.First(b => b.Id == selected);
                 RowClick(b.Pinned ? "Unpin" : "Pin checkpoint", 22, 359, 180, () => Run(() => { WorkshopStorage.SetPinned(selected, !b.Pinned); message = b.Pinned ? "Unpinned checkpoint." : "Pinned checkpoint: automatic cleanup keeps it."; }));
-                RowClick(factions.Count == 0 ? "No faction" : "Faction: " + factions[faction].Name + " ▸", 214, 359, 490, () => { if (factions.Count > 0) faction = (faction + 1) % factions.Count; redrawRows = true; });
+                RowClick(factions.Count == 0 ? "No faction" : "Faction: " + factions[faction].Name + " ›", 214, 359, 490, () => { if (factions.Count > 0) faction = (faction + 1) % factions.Count; redrawRows = true; });
                 RowClick("Restore as a new copy", 716, 359, 319, () => Run(() =>
                 {
                     if (factions.Count == 0) throw new InvalidOperationException("Create a faction before recovering a copy.");
@@ -278,10 +278,8 @@ internal static class WorkshopLibrary
             }
             catch (IOException ex) { report.AppendLine("Could not read log: " + ex.Message); }
         }
-        string text = report.ToString();
-        foreach (var replacement in new[] { (WorkshopStorage.Root, "[BepInEx]"), (Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "[User]"), (Path.GetDirectoryName(WorkshopStorage.Root) ?? "", "[Game]") }.OrderByDescending(p => p.Item1.Length))
-            if (replacement.Item1.Length > 3) text = text.Replace(replacement.Item1, replacement.Item2, StringComparison.OrdinalIgnoreCase);
-        return text;
+        return WorkshopStorage.Scrub(report.ToString(), (WorkshopStorage.Root, "[BepInEx]"),
+            (Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "[User]"), (Path.GetDirectoryName(WorkshopStorage.Root) ?? "", "[Game]"));
     }
 
     static void OpenFolder(string path)
