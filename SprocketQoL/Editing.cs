@@ -897,6 +897,12 @@ public sealed class DesignEditor : MonoBehaviour
         pending = core.Load(serializer!.DeserializeJSON(recoveryJson), Il2CppSystem.Threading.CancellationToken.None);
     }
 
+    public void OnDestroy()
+    {
+        Ui.Guard("Close exploded view", ExplodedView.LeftEditor);
+        if (ReferenceEquals(Instance, this)) Instance = null;
+    }
+
     // Result message and the hotkeys box; the controls live in the game's inspector.
     public void OnGUI()
     {

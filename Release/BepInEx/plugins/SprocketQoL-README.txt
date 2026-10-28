@@ -1,5 +1,11 @@
-Quality of Life 1.10.3 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.4 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+FIXED IN 1.10.4
+- Point and edge picking around thick, warped plates and nearby seams.
+- Clicks check again after view, transform and mesh changes.
+- Exploded view closes before Play starts physics and when the editor component is destroyed.
+- Bug fixes only; no new tools or settings.
 
 NEW IN 1.10.3
 - Measurements and drawing sheet: the vehicle's true height (slanted plates made it look taller).

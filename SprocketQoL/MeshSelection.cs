@@ -49,7 +49,11 @@ internal static class MeshSelection
     // Unity samples on its main thread. Reuse the native broad-phase output instead
     // of allocating a native list, or reading every element through interop, each frame.
     static readonly Il2CppSystem.Collections.Generic.List<int> candidates = new();
-    static (int Frame, IntPtr Mesh, ElementType Type, bool XRay, Vector2 Pointer, SampleResult Result)? lastSample;
+    readonly record struct SampleKey(int Frame, IntPtr Mesh, IntPtr Context, ElementType Type, bool XRay,
+        Vector2 Pointer, Vector2 Size, float Radius, float Near, float Far,
+        Matrix4x4 Projection, Matrix4x4 View, Matrix4x4 WorldToMesh, Matrix4x4 CameraToWorld, Matrix4x4 CameraProjection,
+        int Vertices, int Edges, int Faces, int Loops);
+    static (SampleKey Key, SampleResult Result)? lastSample;
 
     [HarmonyPrefix, HarmonyPatch(typeof(PickOp), nameof(PickOp.Sample))]
     static bool Sample(EditMesh mesh, MeshOperatorContext context, ElementType type, bool xRayMode, ref SampleResult __result)
@@ -71,18 +75,23 @@ internal static class MeshSelection
             float near = Math.Max(1e-5f, camera.nearClipPlane), far = camera.farClipPlane;
             if (!Finite(near) || !Finite(far) || far <= near) return true;
             sampledMesh = mesh; sampledContext = context;
-            // Once a frame: the hover marks (Tick) and the editor both ask, and a second pass would also cycle twice.
-            if (lastSample is { } last && last.Frame == Time.frameCount && last.Mesh == mesh.Pointer && last.Type == type
-                && last.XRay == xRayMode && last.Pointer == pointer) { __result = last.Result; return false; }
-
             // SampleResult indices are list slots. Keep incident face/loop indices current as well: native plate/linked
             // selection can use those fields. Only when the mesh says they're out of date (every sample did all four).
             const ElementType indexed = ElementType.Vertex | ElementType.Edge | ElementType.Face | ElementType.Loop;
-            if ((mesh.GetIndexDirtyFlags() & indexed) != 0) mesh.ReIndex(indexed);
+            bool reindexed = (mesh.GetIndexDirtyFlags() & indexed) != 0;
+            if (reindexed) mesh.ReIndex(indexed);
             var projection = Matrix4x4.identity;
             context.GetPerspectiveMatrix(ref projection); // P * V, without the mesh transform
             projection *= context.MeshToWorld;
             var view = context.ViewMatrix * context.MeshToWorld;
+            var sampleKey = new SampleKey(Time.frameCount, mesh.Pointer, context.Pointer, type, xRayMode,
+                pointer, size, radius, near, far, projection, view, context.WorldToMesh,
+                camera.cameraToWorldMatrix, camera.projectionMatrix, mesh.vertices.Count, mesh.edges.Count, mesh.faces.Count, mesh.loops.Count);
+            // Hover and native sampling may share work only for the same view and mesh
+            // context. A click always samples afresh, including after a same-frame edit.
+            if (!reindexed && Mouse.current?.leftButton.wasPressedThisFrame != true
+                && lastSample is { } last && last.Key.Equals(sampleKey))
+            { __result = last.Result; return false; }
             float Depth(Vector3 p) => -(view.m20 * p.x + view.m21 * p.y + view.m22 * p.z + view.m23);
             N2 Project(Vector3 p)
             {
@@ -98,14 +107,18 @@ internal static class MeshSelection
                 // camera.position here would hide otherwise visible points.
                 var ray = camera.ViewportPointToRay(new Vector3(hit.ClosestPixel.X / size.x, hit.ClosestPixel.Y / size.y, 0));
                 var origin = context.WorldToMesh.MultiplyPoint3x4(ray.origin);
-                var direction = context.WorldToMesh.MultiplyVector(ray.direction).normalized;
+                var localRay = context.WorldToMesh.MultiplyVector(ray.direction);
+                float unitsPerMetre = localRay.magnitude;
+                if (!Finite(unitsPerMetre) || unitsPerMetre <= 0) return false;
+                var direction = localRay / unitsPerMetre;
                 float distance = Vector3.Dot(target - origin, direction);
                 if (!Finite(distance)) return false;
-                float tolerance = Math.Max(1e-5f, Math.Abs(distance) * 1e-6f);
+                float tolerance = Math.Max(1e-5f * unitsPerMetre, Math.Abs(distance) * 1e-6f);
                 if (distance < -tolerance) return false;
+                float allowance = MeshPicking.SurfaceAllowance(unitsPerMetre);
                 return MeshPicking.InView(distance, tolerance, own, (from, length) =>
                     MeshSampling.RaycastFaces(mesh, origin + direction * from, direction, length, out MeshSampling.ElementHit face, FaceMode.Both)
-                        ? (face.index, face.distance) : null);
+                        ? (face.index, face.distance) : null, allowance);
             }
             var endpoints = new Dictionary<int, (Vector3 A, Vector3 B)>();
             MeshPicking.ScreenEdge? ProjectEdge(Edge edge, int id)
@@ -223,11 +236,12 @@ internal static class MeshSelection
             }
             if (ordinal < 0) hovered = null;
             __result = result;
-            lastSample = (Time.frameCount, mesh.Pointer, type, xRayMode, pointer, result);
+            lastSample = (sampleKey, result);
             return false;
         }
         catch (Exception ex)
         {
+            lastSample = null;
             unavailable = true;
             Plugin.ModLog.LogWarning($"Better point and edge picking is off for this session; using the game's picker. {ex}");
             return true;

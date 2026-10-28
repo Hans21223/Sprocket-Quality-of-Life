@@ -138,6 +138,64 @@ static class MeshPickingTests
         Check(!Seen(10, new[] { 1 }, (5, 4f)), "another face in front hides the target");
         Check(Seen(10, Array.Empty<int>(), (5, 10f)), "a face at the target itself doesn't hide it");
         Check(!InView(10, .001f, new[] { 1 }, (from, length) => (1, 0f)), "an own face hit over and over stops, counted as hiding");
+        Check(Seen(10, new[] { 1 }, (1, 9f), (1, 9.2f), (1, 9.4f), (1, 9.6f)),
+            "all four outer/inner triangle crossings of an own warped quad leave its point visible");
+        Check(!Seen(10, new[] { 1 }, (1, 9f), (1, 9.2f), (1, 9.4f), (1, 9.6f), (5, 9.8f)),
+            "another plate after the fourth own crossing still hides the point");
+        const float numerical = .00001f;
+        float allowance = SurfaceAllowance(1);
+        Near(allowance, .002f, 1e-8f, "near-surface repair is bounded to two world millimetres");
+        bool SurfaceSeen(float distance, float slack, int[] own, params (int Face, float At)[] faces)
+            => InView(distance, numerical, own, (from, length) => Cast(faces, from, length), slack);
+        Check(SurfaceSeen(10, allowance, Array.Empty<int>(), (5, 9.999f)),
+            "a point one millimetre inside a neighbouring plate can be picked");
+        Check(!SurfaceSeen(10, 0, Array.Empty<int>(), (5, 9.999f)),
+            "zero surface allowance preserves strict visibility");
+        Check(!SurfaceSeen(10, allowance, Array.Empty<int>(), (5, 9.995f)),
+            "a point five millimetres behind another plate stays hidden");
+        Check(!SurfaceSeen(10, allowance, new[] { 1 }, (1, 9f), (5, 9.0005f)),
+            "surface slack is never used to advance past own faces and hop a real blocker");
+        Check(SurfaceSeen(10, allowance, new[] { 1 }, (1, 9f), (1, 9.2f), (1, 9.4f), (1, 9.6f), (5, 9.999f)),
+            "own quad crossings and a near-target neighbour can both be handled");
+        Check(SurfaceSeen(.001f, allowance, Array.Empty<int>(), (5, .0005f)),
+            "a near-plane ray shorter than the surface allowance needs no cast");
+
+        // Transform world rays to local space before normalizing: the distance factor
+        // depends on direction for nonuniform scaling, including mirrored parts.
+        foreach (var scale3 in new[] { new Vector3(.01f), new Vector3(100), new Vector3(2, .5f, 4), new Vector3(-2, .5f, -4) })
+        foreach (var worldDirection in new[] { Vector3.UnitZ, Vector3.Normalize(new Vector3(1, 2, 3)) })
+        {
+            float factor = Vector3.TransformNormal(worldDirection, Matrix4x4.CreateScale(scale3)).Length();
+            float localAllowance = SurfaceAllowance(factor);
+            bool AtWorldDistance(float blocker) => InView(10 * factor, numerical * factor, Array.Empty<int>(),
+                (from, length) => Cast(new[] { (Face: 5, At: blocker * factor) }, from, length), localAllowance);
+            Check(AtWorldDistance(9.999f), "scaled or mirrored ray accepts the same one millimetre world seam");
+            Check(!AtWorldDistance(9.99f), "scaled or mirrored ray still rejects a ten millimetre world blocker");
+        }
+        foreach (float invalid in new[] { 0f, -1f, float.NaN, float.NegativeInfinity, float.PositiveInfinity })
+            Check(SurfaceAllowance(invalid) == 0, "invalid transform scale cannot create an unbounded allowance");
+        foreach (float invalid in new[] { -1f, float.NaN, float.PositiveInfinity })
+        {
+            Check(!InView(invalid, numerical, new[] { 1 }, (_, _) => null), "invalid target distance is not visible");
+            Check(!InView(10, invalid, new[] { 1 }, (_, _) => null), "invalid numerical tolerance is not visible");
+            Check(!InView(10, numerical, new[] { 1 }, (_, _) => null, invalid), "invalid surface allowance is not visible");
+        }
+        Check(!InView(10, 0, new[] { 1 }, (_, _) => null), "zero advancement tolerance is rejected");
+        foreach (float invalid in new[] { -1f, float.NaN, float.PositiveInfinity, 11f })
+            Check(!InView(10, numerical, new[] { 1 }, (_, _) => (1, invalid)), "invalid native hit distance fails closed");
+        Check(!InView(10, numerical, new[] { 1 }, (_, _) => (-1, 1f)), "invalid native face index fails closed");
+        int casts = 0;
+        Check(!InView(10, numerical, new[] { 1 }, (_, _) => { casts++; return (1, 0f); }, allowance) && casts == 5,
+            "repeated own hits remain bounded and do not become visible on budget exhaustion");
+
+        var seamCandidates = new[] { new ScreenPoint(1, pointer, 10), new ScreenPoint(2, pointer, 11), new ScreenPoint(3, pointer + Vector2.UnitX, 12) };
+        bool SeamEligible(Hit hit) => SurfaceSeen(hit.Depth, allowance, Array.Empty<int>(), (5, 9.999f));
+        Check(PickPoint(seamCandidates, pointer, 2, accept: SeamEligible)?.Id == 1,
+            "nearest point tucked inside a surface can be selected");
+        Check(PointHits(seamCandidates, pointer, 2, accept: SeamEligible).Select(h => h.Id).SequenceEqual(new[] { 1 }),
+            "overlap cycling includes the surface point and excludes deeper hidden ones");
+        Check(PointHits(seamCandidates, pointer, 2).Count == 3,
+            "X-ray caller bypass can still include all overlapping targets");
 
         // Select linked: points joined through faces, not across a gap; a loose point stays itself.
         var islands = new List<int[]> { new[] { 0, 1, 2, 3 }, new[] { 2, 3, 4, 5 }, new[] { 6, 7, 8 } };
