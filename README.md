@@ -3,6 +3,9 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.10.4** fixes point/edge picking around thick plates and seams, stale click results, and
+exploded-view cleanup before Play. This is a bug-fix release with no new tools or settings.
+
 **Quality of Life 1.10.0** adds the **Workshop** (`Ctrl+Shift+Space`) for tool presets, saved part groups with
 geometry thumbnails, clipboard history, saved geometry selections, recovery checkpoints and support reports, and
 **tool search** (`Ctrl+Space`) with favourites, recent actions and part patterns. Tools act at once, with no Confirm

@@ -1,3 +1,11 @@
+# Quality of Life 1.10.4
+
+Bug fixes only; no new tools or settings.
+
+- **Point and edge picking:** accounts for every outer/inner triangle crossing of thick, warped plates. Points tucked just inside a nearby plate are easier to grab; deeper hidden geometry still needs X-ray.
+- **Fresh clicks:** changed views, part transforms and reindexed meshes invalidate cached hover results. Clicks always check again.
+- **Exploded view and Play:** parts collapse and exploded view switches off before the vehicle is built for play, preventing the save finalizer from spreading parts again before physics starts. Editor destruction also restores the view.
+
 # Quality of Life 1.10.3
 
 - **Point and edge picking:** points and edges in a crease, like under an overhang, can be picked (their own faces counted as hiding them).

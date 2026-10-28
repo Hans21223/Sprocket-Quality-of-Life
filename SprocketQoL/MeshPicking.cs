@@ -16,6 +16,19 @@ public static class MeshPicking
     // point to win. Candidates are compared with the global minimum, so ties do not
     // depend on enumeration order or a non-transitive sequence of pairwise comparisons.
     public const float DistanceTiePixels = .001f;
+    // Points tucked a millimetre into a neighbouring plate must remain grabbable.
+    // Keep this repair narrowly bounded in world space; deeper geometry needs X-ray.
+    public const float SurfaceAllowanceMetres = .002f;
+
+    /// Convert the fixed two-millimetre repair to distance along the mesh-local ray.
+    /// Transform the world ray direction before measuring its length, including on
+    /// nonuniformly scaled or mirrored parts.
+    public static float SurfaceAllowance(float meshUnitsPerMetre)
+    {
+        if (!Positive(meshUnitsPerMetre)) return 0;
+        double allowance = (double)SurfaceAllowanceMetres * meshUnitsPerMetre;
+        return allowance <= float.MaxValue ? (float)allowance : 0;
+    }
 
     /// The optional acceptance callback can perform a visibility test. It runs in pick
     /// priority order and stops at the first accepted hit, rather than testing every point.
@@ -99,19 +112,27 @@ public static class MeshPicking
         return true;
     }
 
-    /// True when no face but the target's own lies on the ray before the target, `distance` along it (less `tolerance`).
+    /// True when no face but the target's own lies on the ray before the target.
     /// `cast(from, length)` gives the nearest face hit up to `length` beyond `from`: its index and distance from `from`.
-    /// A face through the target can't hide it, yet at a crease seen from outside (a point under an overhang) its own
-    /// faces come towards the camera, and rounding put them in front of it: those points couldn't be picked.
-    public static bool InView(float distance, float tolerance, ICollection<int> own, Func<float, float, (int Face, float At)?> cast)
+    /// Surface allowance shortens only the target end of the ray. Numerical tolerance
+    /// advances past an own hit; a large surface allowance must never skip a blocker
+    /// just behind an own face. Native quad plates have two outer and two inner triangles.
+    public static bool InView(float distance, float tolerance, ICollection<int> own,
+        Func<float, float, (int Face, float At)?> cast, float surfaceAllowance = 0)
     {
+        if (!float.IsFinite(distance) || distance < 0 || !Positive(tolerance)
+            || !float.IsFinite(surfaceAllowance) || surfaceAllowance < 0) return false;
+        float end = distance - Math.Max(tolerance, surfaceAllowance);
         float from = 0;
-        for (int skips = 0; skips <= 2 * own.Count; skips++) // each own face once, a bent one twice
+        for (long skips = 0; skips <= 4L * own.Count; skips++) // four crossings per own quad, then check the clear tail
         {
-            float length = distance - tolerance - from;
+            float length = end - from;
             if (length <= 0 || cast(from, length) is not { } hit) return true;
+            if (hit.Face < 0 || !float.IsFinite(hit.At) || hit.At < 0 || hit.At > length) return false;
             if (!own.Contains(hit.Face)) return false;
-            from += hit.At + tolerance;
+            float next = from + hit.At + tolerance;
+            if (!float.IsFinite(next) || next <= from) return false;
+            from = next;
         }
         return false;
     }

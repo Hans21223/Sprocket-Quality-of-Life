@@ -1,4 +1,5 @@
 using HarmonyLib;
+using Sprocket.VehicleDesigner;
 using Sprocket.Vehicles;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -140,6 +141,12 @@ public static class ExplodedView
             moved.Clear();
         });
     }
+
+    // Play saves the current editor vehicle, then enables behaviour on that same
+    // vehicle synchronously. The save finalizer must not spread it again before
+    // physics starts; next-frame editor cleanup would happen too late.
+    [HarmonyPrefix, HarmonyPatch(typeof(VehicleDesignerCore), nameof(VehicleDesignerCore.BuildDesign))]
+    static void BeforeBuild() => LeftEditor();
 
     // The design is read from the parts (saving, the mod's own edits): the parts go back first, and apart again after.
     [HarmonyPrefix, HarmonyPatch(typeof(VehicleBlueprintSerializer), nameof(VehicleBlueprintSerializer.ToBlueprint))]
