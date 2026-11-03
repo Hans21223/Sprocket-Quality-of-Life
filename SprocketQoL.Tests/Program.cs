@@ -227,13 +227,22 @@ foreach (var file in Directory.GetFiles(Path.GetDirectoryName(root)!.Replace(@"\
     if (others.Count == 0) continue;
     var before = Conversion.WorldMatrices(objs);
     // Where a part's points show: a flipped mirror twin mirrors its shape along its own x (AddonEdits.Shape), and a part
-    // saved once that the game shows twice (mirrored mark, no twin part) shows its image across the centre too.
+    // saved once that the game shows twice (mirrored mark, no twin part) shows its image too: mirrored across the centre
+    // of its nearest moving parent (a turret ring, trunnions, a gun barrel), else the vehicle's (PlateStructure.GetMirrorMatrix).
     IEnumerable<Vector3> Shown(JsonObject b, JsonObject o, Matrix4x4 world)
     {
         var shape = AddonEdits.Shape(o, world);
         var all = Conversion.Objects(b);
         bool imaged = (o["flags"]!.GetValue<int>() & 4) != 0 && !(o["transform"]!["mirrorVuid"]?.GetValue<int>() is int t && all.ContainsKey(t));
-        return (imaged ? new[] { shape, shape * Matrix4x4.CreateScale(-1, 1, 1) } : new[] { shape }).SelectMany(m => Verts(b, o).Select(p => Vector3.Transform(p, m)));
+        var mirror = Matrix4x4.CreateScale(-1, 1, 1);
+        if (imaged)
+        {
+            var frames = Conversion.WorldMatrices(all);
+            var moving = new[] { Conversion.RingGuid, DrawingMounts.TrunnionGuid, "c56166b7-89f3-4791-9a22-a9c3c8e8ce16" };
+            for (int p = o["pvuid"]!.GetValue<int>(); all.TryGetValue(p, out var up); p = up["pvuid"]!.GetValue<int>())
+                if (moving.Contains(Conversion.GuidOf(up)) && Matrix4x4.Invert(frames[p], out var into)) { mirror = into * mirror * frames[p]; break; }
+        }
+        return (imaged ? new[] { shape, shape * mirror } : new[] { shape }).SelectMany(m => Verts(b, o).Select(p => Vector3.Transform(p, m)));
     }
     AddonEdits.EditPlan mergePlan;
     try { mergePlan = AddonEdits.PlanMerge(json, target, others); }

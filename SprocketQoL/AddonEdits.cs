@@ -52,6 +52,19 @@ public static class AddonEdits
 
     static readonly Matrix4x4 Flip = Matrix4x4.CreateScale(-1, 1, 1);
 
+    /// The parts the game moves in battle ("dynamic" in their part files): a turret ring, trunnions, a gun barrel.
+    static readonly HashSet<string> MovingParts = new() { Conversion.RingGuid, DrawingMounts.TrunnionGuid, "c56166b7-89f3-4791-9a22-a9c3c8e8ce16" };
+
+    /// Where the game shows the image of part `v` shown twice, `shape` being where the part itself shows: mirrored across
+    /// the centre plane of its nearest moving parent (on an off-centre turret, across that turret's centre), else across
+    /// the vehicle's (PlateStructure.GetMirrorMatrix: GetFirstPlaceTarget(Dynamic), else the vehicle root).
+    static Matrix4x4 MirrorImage(Dictionary<int, JsonObject> objects, Dictionary<int, Matrix4x4> world, int v, Matrix4x4 shape)
+    {
+        for (int p = Conversion.Id(objects[v], "pvuid"); p >= 0 && objects.TryGetValue(p, out var o); p = Conversion.Id(o, "pvuid"))
+            if (MovingParts.Contains(Conversion.GuidOf(o)) && Matrix4x4.Invert(world[p], out var into)) return shape * into * Flip * world[p];
+        return shape * Flip;
+    }
+
     /// Where a part's shape sits: mirrored along its own x only as the flipped one of a linked mirror twin pair. The game
     /// shows a part of its own (or one shown twice) as saved, Flipped or not: PlateStructure.Mirrored reads only the twin's
     /// runtime mark (a flags-3 add-on read as mirrored made Set origin move it by twice its box's offset).
@@ -71,7 +84,7 @@ public static class AddonEdits
     }
 
     /// A part saved once that the game shows twice: marked mirrored, with no twin part. The second one (its image) is its
-    /// shape reflected across the vehicle's centre plane.
+    /// shape reflected across the centre plane of its nearest moving parent, else the vehicle's (MirrorImage).
     static bool Imaged(Dictionary<int, JsonObject> objects, int v) =>
         ((objects[v]["flags"]?.GetValue<int>() ?? 0) & 4) != 0
         && !(objects[v]["transform"]?["mirrorVuid"] is JsonValue m && m.TryGetValue<int>(out int t) && t != v && objects.ContainsKey(t));
@@ -628,7 +641,7 @@ public static class AddonEdits
             inPlace = false; // the game's mirrored mark changes, which only a reload shows
         }
 
-        // Each shape as it shows in the vehicle (mirrored if flipped; an image reflected across the centre), then into
+        // Each shape as it shows in the vehicle (mirrored if flipped; an image as MirrorImage reflects it), then into
         // the target's shape (mirrored if the target is).
         foreach (var (v, image) in shapes.Select(v => (v, false)).Concat(images.Select(v => (v, true))))
         {
@@ -905,14 +918,14 @@ public static class AddonEdits
     }
 
     /// Where shapes show: as the running game reports (when it did), else by the design's maths (a flipped part mirrored
-    /// along its own x; an image reflected across the centre). The third function names parts where the two disagree, for
-    /// the log.
+    /// along its own x; an image reflected as MirrorImage says). The third function names parts where the two disagree,
+    /// for the log.
     static (Func<int, Matrix4x4> At, Func<int, Matrix4x4> ImageAt, Func<IEnumerable<int>, string> Differ) Placement(
         Dictionary<int, JsonObject> objects, Dictionary<int, Matrix4x4> world, LiveShapes? live)
     {
         Matrix4x4 Model(int v) => Shape(objects[v], world[v]);
         Matrix4x4 At(int v) => live != null && live.Parts.TryGetValue(v, out var m) ? m : Model(v);
-        Matrix4x4 ImageAt(int v) => live != null && live.Images.TryGetValue(v, out var m) ? m : At(v) * Flip;
+        Matrix4x4 ImageAt(int v) => live != null && live.Images.TryGetValue(v, out var m) ? m : MirrorImage(objects, world, v, At(v));
         // How far apart the two put the corners of a 1 m cube at the shape's origin.
         float Gap(Matrix4x4 a, Matrix4x4 c) => Enumerable.Range(0, 8).Select(i => new Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1))
             .Max(p => Vector3.Distance(Vector3.Transform(p, a), Vector3.Transform(p, c)));
