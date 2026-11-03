@@ -1,3 +1,10 @@
+# Quality of Life 1.10.5
+
+Bug fixes only; no new tools or settings.
+
+- **Make the mirror side a real add-on** on a turret off the centre line: the game shows such an add-on's mirror side across the centre of its turret (its nearest moving part: a turret ring, trunnions or gun barrel), not across the tank. QoL now does the same, so the new add-on lands on that turret where the mirror side was, instead of across the tank. Merge, Boolean cuts and Separate place mirror sides the same way.
+- **Its done message** is shorter, so it fits the status bar: "Done: the mirror side is its own add-on. Mirror was switched off so each side moves alone."
+
 # Quality of Life 1.10.4
 
 Bug fixes only; no new tools or settings.

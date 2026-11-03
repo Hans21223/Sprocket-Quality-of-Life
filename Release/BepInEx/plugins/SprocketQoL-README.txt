@@ -1,5 +1,10 @@
-Quality of Life 1.10.4 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.5 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+FIXED IN 1.10.5
+- Make the mirror side a real add-on works on turrets off the centre line (the copy lands on that turret).
+- Its done message is short enough to read in full.
+- Bug fixes only; no new tools or settings.
 
 FIXED IN 1.10.4
 - Point and edge picking around thick, warped plates and nearby seams.

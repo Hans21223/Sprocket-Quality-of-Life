@@ -639,6 +639,39 @@ static class CutTests
             Check(refused, "mirror side made real: an add-on that isn't mirrored is refused");
         }
         {
+            // An add-on shown twice on a turret off the centre line (Discord, 2026-11-03: "on a non centre turret it will just
+            // not work"): the game mirrors it across its nearest moving parent's centre (the ring), not the vehicle's, so the
+            // real copy shows there, on the same turret.
+            var b = Conversion.Parse(design);
+            JsonObject Part(int vuid, int parent, string guid, int flags, float[] pos, float[] rot, int block) => new()
+            {
+                ["guid"] = guid, ["vuid"] = vuid, ["pvuid"] = parent, ["flags"] = flags, ["structureBlueprintVuid"] = block > 0 ? block : null,
+                ["transform"] = new JsonObject
+                {
+                    ["mirrorVuid"] = -1, ["pos"] = new JsonArray(pos.Select(x => (JsonNode?)x).ToArray()),
+                    ["rot"] = new JsonArray(rot.Select(x => (JsonNode?)x).ToArray()), ["scale"] = new JsonArray(1f, 1f, 1f),
+                },
+            };
+            var list = b["objects"]!.AsArray();
+            list.Add(Part(20, 1, Conversion.RingGuid, 2, new[] { 1.2f, 1f, 0.3f }, new[] { 0f, 10, 0 }, 0));
+            list.Add(Part(21, 20, Conversion.CompartmentGuid, 2, new[] { 0f, 0.2f, 0 }, new[] { 0f, 0, 0 }, 16));
+            list.Add(Part(22, 21, Conversion.AddonGuid, 6, new[] { 0.4f, 0.3f, 0.1f }, new[] { 0f, 25, 0 }, 15));
+            foreach (var o in list) if (o!["structureBlueprintVuid"] == null) o.AsObject().Remove("structureBlueprintVuid");
+            string onTurret = b.ToJsonString();
+            var before = Conversion.WorldMatrices(Conversion.Objects(Conversion.Parse(onTurret)));
+            Matrix4x4.Invert(before[20], out var intoRing);
+            var image = before[22] * intoRing * Matrix4x4.CreateScale(-1, 1, 1) * before[20];
+            var real = AddonEdits.PlanRealMirror(onTurret, 22);
+            var after = Conversion.Parse(real.DesignJson);
+            var world = Conversion.WorldMatrices(Conversion.Objects(after));
+            List<Vector3> Points(JsonNode d, int v, Matrix4x4 at) =>
+                MeshVerts(AddonEdits.MeshOf(d["meshes"]!.AsArray(), AddonEdits.MeshIdOf(d.ToJsonString(), v))!["mesh"]!.AsObject()).Select(p => Vector3.Transform(p, at)).ToList();
+            int added = real.Focus;
+            Check(Obj(real.DesignJson, added)["pvuid"]!.GetValue<int>() == 21
+                  && SamePoints(Points(Conversion.Parse(onTurret), 22, image), Points(after, added, AddonEdits.Shape(Obj(real.DesignJson, added), world[added]))),
+                  $"mirror side made real on an off-centre turret: the copy shows mirrored across the turret's centre, on the same turret ({real.Summary})");
+        }
+        {
             // Scatter add-ons 8 and 12 (12 is shown twice) over the hull's top: copies on the hull, each standing on the top
             // face (the types stand upright: lowest point 10 mm plates + 1 mm above it), inside its outline, once each.
             var scatter = AddonEdits.PlanScatter(design, 1, new[] { 8, 12 }, 30, 1, upOnly: true);
@@ -1420,6 +1453,9 @@ static class CutTests
             string json = File.ReadAllText(file);
             if (!json.Contains("\"objects\"")) continue;
             var objs = Conversion.Objects(Conversion.Parse(json));
+            // A broken save (N-120MBT 2 1, 2026-11-03: positions written as "NaN") has no places to cut at; a copy is in
+            // TestFixtures\CutFailures\20261103.
+            try { Conversion.WorldMatrices(objs); } catch (InvalidOperationException) { Console.WriteLine($"  real cut: skipped {Path.GetFileName(file)}, a part's place isn't numbers"); continue; }
             foreach (int addon in objs.Values.Where(o => Conversion.GuidOf(o) == Conversion.AddonGuid).Select(o => o["vuid"]!.GetValue<int>()).Take(6))
             {
                 bool pocket = cuts % 2 == 1;

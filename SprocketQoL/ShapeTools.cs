@@ -102,7 +102,7 @@ public static class ShapeTools
 
         Ui.Section(layout, "Mirror side");
         ui.Button("Make the mirror side a real add-on", Ui.Callback(() => RealMirror(addon)), new Tip("Make the mirror side real",
-            "The mirrored copy the game shows on the other side becomes an add-on of its own, to edit, move or delete apart from this one. A mirror twin pair stops being a pair, each with its own shape. Nothing moves. Mirror (symmetry) goes off: with it on, the game mirrors any part you drag, so either side would be mirrored again. Restore undoes it."));
+            "The mirrored copy the game shows on the other side (of the tank, or of the turret it sits on) becomes an add-on of its own, to edit, move or delete apart from this one. A mirror twin pair stops being a pair, each with its own shape. Nothing moves. Mirror (symmetry) is switched off, so each side moves alone. Restore undoes it."));
     });
 
     /// Drapes add-on `addon` as cloth onto the vehicle (AddonEdits.PlanDrape) with the panel's settings; the other
@@ -133,8 +133,8 @@ public static class ShapeTools
         var modes = UnityEngine.Object.FindObjectOfType<DesignerFramework.UI.TransformModeSelectUI>()?.modes;
         bool mirrorOn = modes?.Symmetry == true;
         editor.RequestLiveEdit("Making the mirror side real",
-            mirrorOn ? "The mirror side is an add-on of its own, and Mirror is off now: with it on, dragging either side mirrors it again. Restore undoes it."
-                     : "The mirror side is an add-on of its own. Keep Mirror off to move each side alone. Restore undoes it.",
+            mirrorOn ? "Done: the mirror side is its own add-on. Mirror was switched off so each side moves alone."
+                     : "Done: the mirror side is its own add-on. Keep Mirror off to move each side alone.",
             json => AddonEdits.PlanRealMirror(json, addon, editor.LiveShapes(json)),
             () => { if (mirrorOn && modes!.Symmetry) modes.Symmetry = false; });
     }
