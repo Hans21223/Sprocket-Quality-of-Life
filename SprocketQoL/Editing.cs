@@ -917,6 +917,7 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Selection measurements", MeshTools.DrawSelectionMeasures);
             Ui.Guard("Create Hole preview", HoleQuality.DrawHovered);
             Ui.Guard("Tool hover outline", MeshTools.DrawHoverTool);
+            Ui.Guard("Rotation angle", RotationSnap.DrawAngle);
             Ui.Guard("Right-click menu", RightClickMenu.Draw);
         }
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;

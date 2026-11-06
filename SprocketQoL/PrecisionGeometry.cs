@@ -11,6 +11,16 @@ public static class PrecisionGeometry
         int DuplicatePoints, int DegenerateFaces, int InvalidFaces, int[] ProblemVertices, int[] ProblemFaces);
     static bool Finite(Vector3 p) => float.IsFinite(p.X) && float.IsFinite(p.Y) && float.IsFinite(p.Z);
     static (int,int) Key(int a,int b) => a < b ? (a,b) : (b,a);
+    /// Moved points that sit on points staying where they are: a fresh extrusion's faces on their base (or a copy on its
+    /// source). Proportional editing leaves such a move alone: with the base following, the faces wouldn't extrude.
+    public static bool OnUnmoved(IReadOnlyList<Vector3> points,ICollection<int> moving)
+    {
+        // The base's points are exact copies of the moved ones: the same place to a tenth of a millimetre.
+        static (long,long,long) At(Vector3 p)=>((long)MathF.Round(p.X*1e4f),(long)MathF.Round(p.Y*1e4f),(long)MathF.Round(p.Z*1e4f));
+        var moved=moving.Where(i=>i>=0&&i<points.Count).Select(i=>At(points[i])).ToHashSet();
+        for(int i=0;i<points.Count;i++) if(!moving.Contains(i)&&moved.Contains(At(points[i]))) return true;
+        return false;
+    }
     public static Dictionary<int,Vector3> Align(IReadOnlyList<Vector3> points,ICollection<int> selected,Vector3 from,Vector3 to)
     {
         var ids=selected.Distinct().ToArray();

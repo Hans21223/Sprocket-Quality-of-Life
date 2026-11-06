@@ -1892,6 +1892,13 @@ public static partial class MeshTools
         for (int i = 0; i < list.Count; i++) { all.Add(list[i]); pos.Add(HoleQuality.ToNum(list[i].position)); }
         var moving = Enumerable.Range(0, all.Count).Where(i => all[i].HasFlag(ElementFlags.Selected)).ToHashSet();
         if (Hotkeys.Current?.meshEditor.Symmetry == true) moving.UnionWith(MeshPlans.Twins(pos, moving.ToList(), Tolerance).Values); // the game moves those too
+        // Extrude leaves the new faces on their base (the points they came from): with the base following them at full
+        // weight, the faces moved instead of extruding. A move off such copies leaves everything else where it is.
+        if (PrecisionGeometry.OnUnmoved(pos, moving))
+        {
+            Plugin.ModLog.LogInfo("Proportional editing: the moving points sit on points that stay (a fresh extrusion or copy), so nothing else follows this move");
+            return;
+        }
         var s = new Session { Mesh = mesh };
         var slot = new Dictionary<int, int>();
         foreach (int m in moving) { slot[m] = s.Movers.Count; s.Movers.Add(all[m]); s.MoverFrom.Add(pos[m]); }

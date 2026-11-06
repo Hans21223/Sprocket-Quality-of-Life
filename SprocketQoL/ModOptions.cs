@@ -256,6 +256,7 @@ internal static class ModOptions
         }), ref placeTip);
         // Labels fit the game's label column (about 14 characters for a toggle, 17 for a slider); tooltips say the rest.
         Toggle(ui, Plugin.ShowHotkeys, "Hotkeys box", "The box listing the editing keys, beside a hand-made structure's panel (its key toggles it too).");
+        Toggle(ui, Plugin.RotationAngle, "Rotation angle", "While turning a part or points with the game's rotation tool, the angle turned so far shows beside the mouse, in the game's snap steps when snap is on.");
         Toggle(ui, Plugin.PartMassMarkers, "Mass markers", "Each part's blue mass marker while the editor's COM view filter is on.");
         Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");
         Toggle(ui, Plugin.RelativeSnap, "Relative snap", "Snapping a move moves the points in whole grid steps from where they start, instead of putting each point on the grid: off-grid shapes keep their shape.");

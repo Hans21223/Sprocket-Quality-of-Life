@@ -40,6 +40,11 @@ static class PrecisionGeometryTests
         Check(length.Count==1&&length[1]==new Vector3(.3f,0,0),"exact length leaves anchor fixed and moves the other endpoint along its existing line");
         Check(PrecisionGeometry.SetDistance(quad,0,0,1).Count==0,"reject zero-length source direction");
         var shells=quad.Concat(quad.Select(p=>p+new Vector3(0,0,.01f))).ToArray();
+        // A fresh extrusion: its moved cap (4-7) sits on its base (0-3), which must not follow, or the face won't extrude.
+        var extruded=quad.Concat(quad).ToArray();
+        Check(PrecisionGeometry.OnUnmoved(extruded,new HashSet<int>{4,5,6,7})&&!PrecisionGeometry.OnUnmoved(shells,new HashSet<int>{4,5,6,7})
+            &&!PrecisionGeometry.OnUnmoved(extruded,new HashSet<int>{0,1,2,3,4,5,6,7}),
+            "moved points on unmoved copies (a fresh extrusion) are told apart from a shell 10 mm away and from moving both");
         var shellFaces=new[]{face[0],new[]{4,5,6,7}};
         var free=PrecisionGeometry.Influence(shells,shellFaces,new[]{0},2,false,false,PrecisionGeometry.FalloffShape.Smooth);
         var connected=PrecisionGeometry.Influence(shells,shellFaces,new[]{0},2,true,false,PrecisionGeometry.FalloffShape.Smooth);
