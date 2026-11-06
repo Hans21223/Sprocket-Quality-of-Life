@@ -10,13 +10,14 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.10.5")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.10.6")]
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource ModLog = null!;
     internal static ConfigEntry<string>? Folded;
     internal static ConfigEntry<bool>? ShowHotkeys;
+    internal static ConfigEntry<bool>? RotationAngle;
     internal static ConfigEntry<bool>? PartMassMarkers;
     internal static ConfigEntry<bool>? DrawingNoWireframe;
     internal static ConfigEntry<bool>? DrawingSeeThroughOutline;
@@ -60,6 +61,7 @@ public sealed class Plugin : BasePlugin
         DrawingHiddenGunLimits = Config.Bind("Drawing sheet", "Hidden gun limits", "[]", "Guns excluded from movement-limit annotations only. Managed by This gun's limits in the cannon panel. Stored per design name and gun ID; renaming a design starts a separate selection.");
         Folded = Config.Bind("Panels", "Folded sections", "", "Quality of Life sections folded away in the editor panels, separated by |");
         ShowHotkeys = Config.Bind("Panels", "Show hotkeys box", true, "The Hotkeys box beside a hand-made structure's panel (F1 in the editor shows or hides it)");
+        RotationAngle = Config.Bind("Editor", "Rotation angle", true, "While turning a part or points with the game's rotation tool, the angle turned so far shows beside the mouse");
         PartMassMarkers = Config.Bind("Panels", "Show part mass markers", true, "Show the blue mass marker for each part when COM is enabled in the editor view filters. Disabling COM hides both vehicle and part mass markers.");
         ExplodeSpread = Config.Bind("Panels", "Exploded view spread", 0.5f, "How far apart the exploded view (F2) moves parts, in metres (F3 / F4 change it)");
         FlashlightPercent = Config.Bind("Panels", "Flashlight brightness", 80f, "How bright the flashlight (F6) is where it lands, in percent of the sun");

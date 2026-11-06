@@ -3,6 +3,9 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.10.6** shows the angle beside the mouse while you rotate parts or points, and makes Extrude work
+with proportional editing on.
+
 **Quality of Life 1.10.5** fixes "Make the mirror side a real add-on" on turrets off the centre line: the new add-on
 now shows on that turret, where the game showed the mirror side. This is a bug-fix release with no new tools or settings.
 

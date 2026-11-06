@@ -10,10 +10,13 @@ namespace SprocketQoL;
 /// step: 7.5° makes a 48-sided circle, 5° a 72-sided one. Only while the game's rotation snap is on (its key still
 /// switches snapping off). The game rounds each turn to the transform's `snap` in both rotate functions (points in a
 /// hand-made structure, and whole parts), and sets `snap` again every frame before them, so it's swapped just before.
+/// The same two calls give the turn's angle for the readout by the mouse (Mod Options "Rotation angle"): the transform's
+/// `inputValue.x` in degrees, the value TransformModes.ApplyRotate reads first, rounded to the step as the game rounds it.
 [HarmonyPatch]
 public static class RotationSnap
 {
     static float? gameStep; // the game's own step, as first seen (logged)
+    static float angle, shownAt = -1; // the turn's angle, and when a rotate call last said so
 
     [HarmonyPrefix, HarmonyPatch(typeof(MeshTransformation), nameof(MeshTransformation.ApplyRotation))]
     static void Points(Transformation op) => Ui.Guard("Rotation snap", () => Use(op));
@@ -23,14 +26,33 @@ public static class RotationSnap
 
     static void Use(Transformation op)
     {
+        if (op == null) return;
         float step = Plugin.RotationSnap?.Value ?? 0;
-        if (op == null || op.snap <= 0 || step <= 0) return; // snapping off, or the game's own step wanted
-        if (gameStep == null)
+        if (op.snap > 0 && step > 0) // snapping on, and QoL's step wanted instead of the game's
         {
-            gameStep = op.snap;
-            Plugin.ModLog.LogInfo($"Rotation snap: the game's step is {op.snap:0.###}°, turning in steps of {step:0.###}° instead");
+            if (gameStep == null)
+            {
+                gameStep = op.snap;
+                Plugin.ModLog.LogInfo($"Rotation snap: the game's step is {op.snap:0.###}°, turning in steps of {step:0.###}° instead");
+            }
+            op.snap = step;
         }
-        op.snap = step;
+        float raw = op.inputValue.x;
+        angle = op.snap > 0 ? MathF.Round(raw / op.snap) * op.snap : raw;
+        shownAt = Time.unscaledTime;
+    }
+
+    static GUIStyle? style;
+
+    /// From DesignEditor.OnGUI: the angle beside the mouse while a turn is under way (the rotate calls come every frame).
+    internal static void DrawAngle()
+    {
+        if (Time.unscaledTime - shownAt > 0.2f || !(Plugin.RotationAngle?.Value ?? true) || UnityEngine.InputSystem.Mouse.current is not { } mouse) return;
+        style ??= new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+        var p = mouse.position.ReadValue();
+        var box = new Rect(p.x + 18, Screen.height - p.y + 14, 86, 26);
+        GUI.Box(box, ""); GUI.Box(box, ""); // twice: the skin's box is see-through
+        GUI.Label(box, $"{angle:0.##}°", style);
     }
 }
 

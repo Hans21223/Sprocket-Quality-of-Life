@@ -1,3 +1,8 @@
+# Quality of Life 1.10.6
+
+- **Rotation angle** (new, Discord suggestion): while you turn a part or points with the game's rotation tool, the angle turned so far shows beside the mouse, rounded to the snap step when snapping. Mod Options → Rotation angle turns it off.
+- **Extrude with proportional editing:** faces extrude again with proportional editing on. Extrude leaves the new faces exactly on the points they came from, and proportional editing dragged those base points along at full strength, so the faces only moved. A move whose points sit on points that stay (a fresh extrusion or copy) now moves only the selection.
+
 # Quality of Life 1.10.5
 
 Bug fixes only; no new tools or settings.

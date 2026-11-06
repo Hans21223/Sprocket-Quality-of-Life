@@ -1,5 +1,9 @@
-Quality of Life 1.10.5 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.6 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.10.6
+- Rotation angle: the angle turned so far shows beside the mouse while rotating (Mod Options turns it off).
+- Extrude works with proportional editing on.
 
 FIXED IN 1.10.5
 - Make the mirror side a real add-on works on turrets off the centre line (the copy lands on that turret).
