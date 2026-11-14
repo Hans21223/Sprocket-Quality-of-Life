@@ -1,5 +1,10 @@
-Quality of Life 1.10.6 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.7 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+FIXED IN 1.10.7
+- Play crash from tiny faces: Horizontal corners on faces too small for a normal are set straight in.
+- Play crash after switching Mirror off while placing a turret.
+- Bug fixes only; no new tools or settings.
 
 NEW IN 1.10.6
 - Rotation angle: the angle turned so far shows beside the mouse while rotating (Mod Options turns it off).

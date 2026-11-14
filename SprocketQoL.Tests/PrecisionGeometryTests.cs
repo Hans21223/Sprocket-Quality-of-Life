@@ -40,6 +40,18 @@ static class PrecisionGeometryTests
         Check(length.Count==1&&length[1]==new Vector3(.3f,0,0),"exact length leaves anchor fixed and moves the other endpoint along its existing line");
         Check(PrecisionGeometry.SetDistance(quad,0,0,1).Count==0,"reject zero-length source direction");
         var shells=quad.Concat(quad.Select(p=>p+new Vector3(0,0,.01f))).ToArray();
+        // The game's zero normal: a 2 x 2 mm triangle has none, and a Horizontal (16) corner on it crashes Play; the guard
+        // sets those corners straight in (0) and leaves other modes and bigger faces alone.
+        var risky = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"meshes":[{"meshData":{"mesh":{"vertices":[0,0,0, 0.002,0,0, 0,0.002,0, 1,0,0, 0,1,0],
+              "faces":[{"v":[0,1,2],"tm":1052688},{"v":[0,1,2],"tm":65808},{"v":[0,3,4],"tm":1052688}]}}}]}
+            """)!;
+        Check(MeshPlans.HorizontalOnZeroNormal(risky, fix: false) == 4 && risky["meshes"]![0]!["meshData"]!["mesh"]!["faces"]![0]!["tm"]!.GetValue<int>() == 1052688,
+            "Horizontal corners on faces too small for a normal are counted, and only counted");
+        var riskyFaces = risky["meshes"]![0]!["meshData"]!["mesh"]!["faces"]!;
+        Check(MeshPlans.HorizontalOnZeroNormal(risky, fix: true) == 4 && riskyFaces[0]!["tm"]!.GetValue<int>() == 0 && riskyFaces[1]!["tm"]!.GetValue<int>() == 65792
+            && riskyFaces[2]!["tm"]!.GetValue<int>() == 1052688 && MeshPlans.HorizontalOnZeroNormal(risky, fix: false) == 0,
+            "the guard sets them straight in, keeps other corners' modes, and leaves a big Horizontal face alone");
         // A fresh extrusion: its moved cap (4-7) sits on its base (0-3), which must not follow, or the face won't extrude.
         var extruded=quad.Concat(quad).ToArray();
         Check(PrecisionGeometry.OnUnmoved(extruded,new HashSet<int>{4,5,6,7})&&!PrecisionGeometry.OnUnmoved(shells,new HashSet<int>{4,5,6,7})
