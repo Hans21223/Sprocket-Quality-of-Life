@@ -74,6 +74,7 @@ found while building Quality of Life and the Battle Editor.
 | `tools\RoundAddonParts\` | Regenerates the round add-on part files |
 | `tools\ApiLister\` | Lists the game's classes and methods from `BepInEx\interop` (reads files only) |
 | `tools\deploy.ps1` | Builds a mod and copies it into `Sprocket\BepInEx\plugins` |
+| `tools/deploy.sh` | Linux (Proton) version of `deploy.ps1`: `./tools/deploy.sh SprocketQoL [--game-dir DIR]` |
 | `SprocketMod.props` | Shared build settings: target framework and where your Sprocket folder is |
 | `docs\` | The modding guide: `Making-Mods-for-Sprocket.pdf`, and its source `.html` (open it in a browser and print to PDF to rebuild it) |
 | `Release\BepInEx\plugins\` | The built Quality of Life mod and its user guide, ready to use (also on the Releases page as a zip) |
