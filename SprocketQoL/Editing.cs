@@ -554,7 +554,7 @@ public sealed class DesignEditor : MonoBehaviour
         });
         if (!EditorModal.BlocksInput) Ui.Guard("OBJ menu", ObjTransfer.Update);
         if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
-        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); }
+        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); Ui.Guard("Play crash guard", () => ZeroNormalGuard.Tick(core!)); }
         if (ready && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput)
         {
             if (!busy && !PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Right-click menu", RightClickMenu.Update);
@@ -658,6 +658,17 @@ public sealed class DesignEditor : MonoBehaviour
         PruneBackups();
     }
 
+    /// An edited design with no Horizontal corner left on a face the game gives a zero normal (MeshPlans.ZeroNormal):
+    /// an edit that cuts a small face out of a Horizontal plate would otherwise crash the game on Play.
+    private static string Guarded(string json)
+    {
+        var design = Conversion.Parse(json);
+        int corners = MeshPlans.HorizontalOnZeroNormal(design, fix: true);
+        if (corners == 0) return json;
+        Plugin.ModLog.LogInfo($"QOL_GUARD {corners} Horizontal corner(s) on faces too small for a normal set to straight in (they would crash Play)");
+        return design.ToJsonString();
+    }
+
     private void SetRecovery(string original, int focus)
     {
         recoveryJson = original;
@@ -684,6 +695,7 @@ public sealed class DesignEditor : MonoBehaviour
         if (!EditorIdle(RunEdit)) return;
         string original = Snapshot();
         var result = edit!(original);
+        result = result with { Json = Guarded(result.Json) };
         var nativeBlueprint = serializer!.DeserializeJSON(result.Json);
         Backup(original, result.Json);
         SetRecovery(original, result.FocusPart);
@@ -698,6 +710,7 @@ public sealed class DesignEditor : MonoBehaviour
         if (!EditorIdle(RunLiveEdit)) return;
         string original = Snapshot();
         var plan = liveEdit!(original);
+        plan = plan with { DesignJson = Guarded(plan.DesignJson) };
         Backup(original, plan.DesignJson);
         Plugin.ModLog.LogInfo($"QOL_EDIT {editName}: {plan.Summary}; in place={plan.Live}; backup={recoveryDir}");
         if (plan.Live)

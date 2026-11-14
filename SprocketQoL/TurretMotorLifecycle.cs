@@ -38,11 +38,14 @@ public static class TurretMotorLifecycle
         if (__instance == null || motor == null) return false;
         // A mirror twin made while placing would take over the original's motor; once the twin is gone, Play crashes in
         // TurretAudioAssemblyStage ("Parameter name: turret").
-        if (TwinOwner(__instance, motor) is { } partner)
+        bool borrowed = false;
+        Ui.Guard("Turret motor lifecycle", () =>
         {
+            if (TwinOwner(__instance, motor) is not { } partner) return;
+            borrowed = true;
             Plugin.ModLog.LogInfo($"Turret motor lifecycle: twin ring {Vuid(__instance.VehicleObject)} kept off motor {Vuid(motor.VehicleObject)} of ring {Vuid(partner.VehicleObject)}");
-            return false;
-        }
+        });
+        if (borrowed) return false;
         Ui.Guard("Turret motor lifecycle", () =>
         {
             DetachCurrent(__instance);

@@ -60,6 +60,41 @@ public static class MeshPlans
             ? full + "; use fewer segments or a smaller selection" : null;
     }
 
+    // ---------- the game's zero normal ----------
+
+    /// Under this, the game's BuildFace gives a face no normal: the cross product of its first three corners' two sides
+    /// (metres squared, so any triangle under 5 mm2, any quad corner under about 3 x 3 mm).
+    public const float NativeZeroNormal = 9.99999974738e-6f;
+
+    /// The game gives this face a zero normal. A Horizontal (16) corner on such a face divides by zero: NaN plate points,
+    /// a NaN centre of mass, and PhysX crashes on Play (the 240 and N-120MBT designs, 2026-10).
+    public static bool ZeroNormal(Vector3 a, Vector3 b, Vector3 c) => !(Vector3.Cross(b - a, c - a).Length() >= NativeZeroNormal);
+
+    /// A design's Horizontal corners on zero-normal faces, counted; with `fix` each becomes straight in (along the face
+    /// normal, 0), which is finite there: the change that repaired both designs. Nothing else is touched.
+    public static int HorizontalOnZeroNormal(System.Text.Json.Nodes.JsonNode design, bool fix)
+    {
+        int found = 0;
+        if (design?["meshes"] is not System.Text.Json.Nodes.JsonArray meshes) return 0;
+        foreach (var m in meshes)
+        {
+            if (m?["meshData"]?["mesh"] is not System.Text.Json.Nodes.JsonObject mesh || mesh["vertices"] is not System.Text.Json.Nodes.JsonArray raw
+                || mesh["faces"] is not System.Text.Json.Nodes.JsonArray faces) continue;
+            Vector3 At(int i) => new(MeshCut.F(raw[3 * i]), MeshCut.F(raw[3 * i + 1]), MeshCut.F(raw[3 * i + 2]));
+            foreach (var f in faces)
+            {
+                if (f?["v"] is not System.Text.Json.Nodes.JsonArray v || v.Count < 3 || f["tm"] == null) continue;
+                var c = v.Select(x => x!.GetValue<int>()).ToArray();
+                if (c.Any(i => i < 0 || 3 * i + 2 >= raw.Count) || !ZeroNormal(At(c[0]), At(c[1]), At(c[2]))) continue;
+                ulong tm = (ulong)MeshCut.L(f["tm"]), fixedTm = tm;
+                for (int k = 0; k < c.Length; k++)
+                    if (((tm >> (8 * k)) & 0xff) == 16) { found++; fixedTm &= ~(0xffUL << (8 * k)); }
+                if (fix && fixedTm != tm) f["tm"] = (int)fixedTm;
+            }
+        }
+        return found;
+    }
+
     // ---------- checks, before anything changes ----------
 
     /// Why a rebuild would leave the shape broken, or null: a new face repeating a corner, squashed to next to no area, or

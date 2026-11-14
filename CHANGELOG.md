@@ -1,3 +1,11 @@
+# Quality of Life 1.10.7
+
+Bug fixes only; no new tools or settings.
+
+- **Play crash from tiny faces:** a Horizontal corner on a face too small for the game to give a normal (a triangle under about 5 mm2) made Play crash (NaN plate points, then PhysX). QoL now sets such corners straight in: on every design-level edit (Boolean cuts, merge, union, slice, drape, scatter, mirror side, set origin; the whole design is checked, so older bad corners are fixed too), on each new face of its mesh tools (bevel, fillet, loop cut, inset, subdivide, merged holes), and after each change to the shape being edited (points moved or scaled, the game's own Create Hole, Separate). Larger faces and other thickening modes are never touched. Each fix writes a `QOL_GUARD` line to the log.
+- **Turret mirroring crash** (PR #28, by madisavage): a mirror twin made while placing a turret no longer takes over the original's traverse motor, so switching Mirror off mid-placement no longer crashes Play.
+- **Linux deploy script** (PR #28): `tools/deploy.sh`, the Proton version of `deploy.ps1`.
+
 # Quality of Life 1.10.6
 
 - **Rotation angle** (new, Discord suggestion): while you turn a part or points with the game's rotation tool, the angle turned so far shows beside the mouse, rounded to the snap step when snapping. Mod Options → Rotation angle turns it off.

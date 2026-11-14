@@ -309,6 +309,8 @@ public static partial class MeshTools
             {
                 var from = From(source, ids[l.vertex.Pointer]);
                 CopyThickening(l, from);
+                // Horizontal on a face too small for a normal divides by zero in the game and crashes Play: straight in there.
+                if (l.thickenMode == ThickenMode.Horizontal && TooSmallForNormal(face)) l.thickenMode = ThickenMode.AlongFaceNormal;
             }
         }
         if (smoothing != null)
@@ -381,6 +383,12 @@ public static partial class MeshTools
             layer?.MarkModified();
             return (moved, lost);
         }
+    }
+
+    internal static bool TooSmallForNormal(Face face)
+    {
+        var l = face.firstLoop;
+        return MeshPlans.ZeroNormal(HoleQuality.ToNum(l.vertex.position), HoleQuality.ToNum(l.next.vertex.position), HoleQuality.ToNum(l.next.next.vertex.position));
     }
 
     /// Copy authored corner settings; a new point cannot use its source point's edge.
