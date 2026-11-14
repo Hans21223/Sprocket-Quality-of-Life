@@ -17,15 +17,18 @@ public static class TurretMotorLifecycle
     {
         if (obj == null || obj.behaviours is not { } components) return;
         foreach (var component in components)
-            if (component?.TryCast<TurretRing>() is { } ring) DetachCurrent(ring);
+            if (component?.TryCast<TurretRing>() is { } ring) { DetachCurrent(ring); DropBorrowedMotor(ring); }
     });
 
     [HarmonyPrefix, HarmonyPatch(typeof(VehicleComponent), nameof(VehicleComponent.ReleaseInternal))]
     static void BeforeRelease(VehicleComponent __instance)
     {
         if (__instance.TryCast<TurretRing>() is not { } ring) return;
-        Ui.Guard("Turret motor lifecycle", () => DetachCurrent(ring));
+        Ui.Guard("Turret motor lifecycle", () => { DetachCurrent(ring); DropBorrowedMotor(ring); });
     }
+
+    [HarmonyPrefix, HarmonyPatch(typeof(TurretRing), nameof(TurretRing.Uninstall))]
+    static void BeforeUninstall(TurretRing __instance) => Ui.Guard("Turret motor lifecycle", () => DropBorrowedMotor(__instance));
 
     // Native initialization always adds another listener, including when loading an
     // existing ring's state. Make it idempotent without touching other listeners.
@@ -33,6 +36,13 @@ public static class TurretMotorLifecycle
     static bool BeforeInitiate(TurretRing __instance, TraverseMotor motor)
     {
         if (__instance == null || motor == null) return false;
+        // A mirror twin made while placing would take over the original's motor; once the twin is gone, Play crashes in
+        // TurretAudioAssemblyStage ("Parameter name: turret").
+        if (TwinOwner(__instance, motor) is { } partner)
+        {
+            Plugin.ModLog.LogInfo($"Turret motor lifecycle: twin ring {Vuid(__instance.VehicleObject)} kept off motor {Vuid(motor.VehicleObject)} of ring {Vuid(partner.VehicleObject)}");
+            return false;
+        }
         Ui.Guard("Turret motor lifecycle", () =>
         {
             DetachCurrent(__instance);
@@ -80,6 +90,29 @@ public static class TurretMotorLifecycle
     {
         if (ring != null && ring.motor is { } motor && motor != null) Detach(ring, motor.VehicleTransform);
     }
+
+    /// A mirror twin ring made while placing copies the original's motor link without a motor
+    /// of its own. Released with that link (Mirror switched off mid-placement), the game would disconnect the
+    /// original's motor: drop the link first and hand the motor back to the original.
+    static void DropBorrowedMotor(TurretRing ring)
+    {
+        if (ring == null || ring.motor is not { } motor || motor == null || TwinOwner(ring, motor) is not { } partner) return;
+        DetachCurrent(ring);
+        ring.motor = null;
+        partner.InitiateMotor(motor);
+        Plugin.ModLog.LogInfo($"Turret motor lifecycle: twin ring {Vuid(ring.VehicleObject)} released; motor {Vuid(motor.VehicleObject)} handed back to ring {Vuid(partner.VehicleObject)}");
+    }
+
+    /// The ring's mirror partner when `motor` sits on the partner's turret (so the motor isn't this ring's), else null.
+    static TurretRing? TwinOwner(TurretRing ring, TraverseMotor motor)
+    {
+        if (ring.VehicleTransform?.Mirror is not { } twin || twin == null) return null;
+        for (var t = motor.VehicleTransform; t != null; t = t.Parent)
+            if (t.Pointer == twin.Pointer) return twin.VehicleObject?.GetComponent<TurretRing>() is { } r && r != null ? r : null;
+        return null;
+    }
+
+    static int Vuid(VehicleObject? o) => o == null ? -1 : (int)o.VUID;
 
     static void Detach(TurretRing ring, VehicleTransform transform)
     {
