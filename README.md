@@ -3,6 +3,8 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.10.8** fixes a Play crash after copying a turret with Alt, and repairs designs saved that way.
+
 **Quality of Life 1.10.7** fixes two Play crashes: Horizontal corners on faces too small for a normal, and
 switching Mirror off while placing a turret. This is a bug-fix release with no new tools or settings.
 

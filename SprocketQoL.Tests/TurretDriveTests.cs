@@ -183,6 +183,30 @@ static class TurretDriveTests
         string owners = twin["blueprints"]!.AsArray().Single(x => x!["id"]!.GetValue<int>() == 50)!["blueprint"]!["description"]!.GetValue<string>();
         Check(copies.Count == 2 && copies.All(c => owners.Split(' ').Contains(c.ToString())) && owners.Contains(" 20") && owners.Contains(" 40"),
             "the twin turret's body and seat copies keep their own paint");
+        // An Alt-copied turret (KHeavy, Discord 2026-11-16): the copy's ring still links the original's body and motor,
+        // sharing its settings block. The copy gets its own; the original and an empty mirror twin are left as they are.
+        var copied = Fixture();
+        var copyRing = Part(200, 0, Conversion.RingGuid, 4); copyRing["turretRing"] = 201; copyRing["ringBlueprintVuid"] = 1; copyRing["structureID"] = 20;
+        var copyBody = Part(210, 200, Conversion.CompartmentGuid); copyBody["plateStructure"] = 211;
+        var copyMotor = Part(220, 210, Conversion.MotorGuid); copyMotor["motor"] = 221;
+        foreach (var p in new[] { copyRing, copyBody, copyMotor }) copied["objects"]!.AsArray().Add(p);
+        Check(Conversion.RepairTurretLinks(copied) == 2, "a copied ring's body and motor links are both repaired");
+        var cos = Conversion.Objects(copied);
+        Check(Motor(copied, 200) == 221 && cos[200]["structureID"]!.GetValue<int>() == 210, "the copy links its own body and motor");
+        Check(Motor(copied, 10) == 31 && cos[10]["structureID"]!.GetValue<int>() == 20, "the original keeps its links");
+        Check(Motor(copied, 100) == 31 && cos[100]["structureID"]!.GetValue<int>() == 20, "a mirror twin with nothing on it is left alone");
+        Check(Conversion.RepairTurretLinks(copied) == 0 && Conversion.RepairTurretLinks(Fixture()) == 0, "nothing more to repair; healthy turrets untouched");
+        // The real design (TestFixtures\TurretLinks, next to the backups folder): its right turret linked the left one's.
+        if (Environment.GetEnvironmentVariable("SPROCKET_QOL_BACKUPS") is { Length: > 0 } backups
+            && Path.Combine(backups, "..", "TurretLinks", "KHeavy.blueprint") is var kheavy && File.Exists(kheavy))
+        {
+            var real = Conversion.Parse(File.ReadAllText(kheavy));
+            Check(Conversion.RepairTurretLinks(real) == 2, "KHeavy: the copied turret's two links repaired");
+            var ros = Conversion.Objects(real);
+            Check(Motor(real, 318) == 343 && ros[318]["structureID"]!.GetValue<int>() == 323 && Motor(real, 432) == 438 && ros[432]["structureID"]!.GetValue<int>() == 440,
+                "KHeavy: each ring on its own motor and body");
+        }
+        else Console.WriteLine("  (KHeavy turret links skipped: set SPROCKET_QOL_BACKUPS)");
         Console.WriteLine($"TURRET_DRIVE_TESTS_OK: {checks} checks");
     }
 }

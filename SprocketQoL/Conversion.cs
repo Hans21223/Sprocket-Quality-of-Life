@@ -48,6 +48,7 @@ public static class Conversion
     public static ConversionResult Convert(string json, int ringId)
     {
         var b = Parse(json); // Work only on a new parsed copy, never the live vehicle.
+        RepairTurretLinks(b); // a copied turret linked to the original's body would be refused below
         var objects = Objects(b);
         if (!objects.TryGetValue(ringId, out var ring) || GuidOf(ring) != RingGuid) throw new Exception("That turret is no longer present. Refresh the turret list.");
         int bodyId = Body(ring), parentId = Id(ring, "pvuid");
@@ -116,6 +117,46 @@ public static class Conversion
         own["blueprint"]!["motorVuid"] = replacement;
         blocks.Add(own);
         ring["ringBlueprintVuid"] = nextBlock++;
+    }
+
+    /// Rings linked to another turret's body or motor, put back on their own (in `b`); how many links changed. A copied
+    /// ring (Alt-copy) kept the original's links: Play then crashes in the game's turret audio stage ("turret" null). A
+    /// ring's own motor is the only one whose nearest ring is this one; its own body is the part under the ring that motor
+    /// sits on (else the only shape part under it). A link is changed only when it points at another ring's part.
+    public static int RepairTurretLinks(JsonObject b)
+    {
+        var objects = Objects(b);
+        if (b["blueprints"] is not JsonArray blocks) return 0;
+        int nextBlock = blocks.Select(x => Id(x!, "id")).DefaultIfEmpty(0).Max() + 1;
+        int Owner(JsonObject part)
+        {
+            var seen = new HashSet<int>();
+            for (int p = Id(part, "pvuid"); objects.TryGetValue(p, out var parent) && seen.Add(p); p = Id(parent, "pvuid"))
+                if (GuidOf(parent) == RingGuid) return p;
+            return -1;
+        }
+        var motorObjects = objects.Values.Where(o => GuidOf(o) == MotorGuid && o["motor"] is JsonValue).ToList();
+        var motorOwner = motorObjects.ToDictionary(o => Id(o, "motor"), Owner);
+        var ownMotors = motorObjects.GroupBy(Owner).ToDictionary(g => g.Key, g => g.ToList());
+        int changed = 0;
+        foreach (var ring in objects.Values.Where(o => GuidOf(o) == RingGuid).ToList())
+        {
+            int id = Id(ring, "vuid");
+            var own = ownMotors.GetValueOrDefault(id);
+            var block = ring["ringBlueprintVuid"] is JsonValue slot ? blocks.FirstOrDefault(x => Id(x!, "id") == slot.GetValue<int>()) : null;
+            if (own?.Count == 1 && block?["blueprint"]?["motorVuid"] is JsonValue mv && mv.GetValue<int>() is int linked
+                && motorOwner.TryGetValue(linked, out int owner) && owner != id)
+            {
+                RemapRingMotor(ring, blocks, new Dictionary<int, int> { [linked] = Id(own[0], "motor") }, ref nextBlock);
+                changed++;
+            }
+            if (ring["structureID"] is not JsonValue sv || objects.TryGetValue(sv.GetValue<int>(), out var body) && Id(body, "pvuid") == id) continue;
+            if (!objects.TryGetValue(sv.GetValue<int>(), out var linkedBody) || Owner(linkedBody) == id) continue; // not another ring's
+            var shapes = objects.Values.Where(o => Id(o, "pvuid") == id && o["plateStructure"] is JsonValue).Select(o => Id(o, "vuid")).ToList();
+            int? mine = own?.Count == 1 && shapes.Contains(Id(own[0], "pvuid")) ? Id(own[0], "pvuid") : shapes.Count == 1 ? shapes[0] : null;
+            if (mine is int m) { ring["structureID"] = m; changed++; }
+        }
+        return changed;
     }
 
     /// Repair existing explicit mirror pairs using their own motor's parent hierarchy. Ambiguous/missing motors
