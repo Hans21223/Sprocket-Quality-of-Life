@@ -554,7 +554,7 @@ public sealed class DesignEditor : MonoBehaviour
         });
         if (!EditorModal.BlocksInput) Ui.Guard("OBJ menu", ObjTransfer.Update);
         if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
-        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); Ui.Guard("Play crash guard", () => ZeroNormalGuard.Tick(core!)); }
+        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); Ui.Guard("Play crash guard", () => ZeroNormalGuard.Tick(core!)); Ui.Guard("Turret links", RepairTurretLinks); }
         if (ready && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput)
         {
             if (!busy && !PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Right-click menu", RightClickMenu.Update);
@@ -664,9 +664,42 @@ public sealed class DesignEditor : MonoBehaviour
     {
         var design = Conversion.Parse(json);
         int corners = MeshPlans.HorizontalOnZeroNormal(design, fix: true);
-        if (corners == 0) return json;
-        Plugin.ModLog.LogInfo($"QOL_GUARD {corners} Horizontal corner(s) on faces too small for a normal set to straight in (they would crash Play)");
+        int links = Conversion.RepairTurretLinks(design);
+        if (corners == 0 && links == 0) return json;
+        if (corners > 0) Plugin.ModLog.LogInfo($"QOL_GUARD {corners} Horizontal corner(s) on faces too small for a normal set to straight in (they would crash Play)");
+        if (links > 0) Plugin.ModLog.LogInfo($"QOL_GUARD {links} turret ring link(s) to another turret's body or motor put back on the ring's own (they would crash Play)");
         return design.ToJsonString();
+    }
+
+    private (int Session, int Undo) turretLinksChecked = (-1, -1);
+
+    /// A turret copied with Alt (TurretCopy) or loaded from a design saved that way: a ring whose motor sits on another
+    /// turret while one of its own is there. The game links the copy to the original's motor and body, and Play crashes;
+    /// a design edit that changes nothing lets Guarded put the links right. Once per change to the design.
+    private void RepairTurretLinks()
+    {
+        if (core?.Editor == null || core.Editor.OperationInProgress) return;
+        var now = (vehicles.Now, core.Editor.ops?.UndoCount ?? -1);
+        if (now == turretLinksChecked) return;
+        turretLinksChecked = now;
+        Sprocket.Vehicles.VehicleObject? NearestRing(Sprocket.Vehicles.VehicleTransform? t)
+        {
+            for (t = t?.Parent; t != null; t = t.Parent) if (t.VehicleObject is { } o && o.GUID == Conversion.RingGuid) return o;
+            return null;
+        }
+        bool HasOwnMotor(Sprocket.Vehicles.VehicleObject ring) => AllParts().Any(p => p.GUID == Conversion.MotorGuid
+            && NearestRing(p.GetComponent<VehicleTransform>())?.Pointer == ring.Pointer);
+        foreach (var part in AllParts())
+        {
+            if (part.GUID != Conversion.RingGuid || part.GetComponent<Sprocket.Vehicles.Turrets.TurretRing>() is not { } ring || ring.motor is not { } motor || motor == null) continue;
+            if (NearestRing(motor.VehicleTransform) is not { } owner || owner.Pointer == part.Pointer || !HasOwnMotor(part)) continue;
+            // Only when the saved design really repairs: a link the repair can't place would otherwise reload again and again.
+            if (Conversion.RepairTurretLinks(Conversion.Parse(Snapshot())) == 0) return;
+            Plugin.ModLog.LogInfo($"Turret links: ring {(int)part.VUID} drives with ring {(int)owner.VUID}'s motor though it has its own; repairing");
+            RequestEdit("Repairing turret links", "The copied turret got its own motor and body (it shared the original's, which crashes Play). Restore undoes it.",
+                json => new EditResult(json, (int)part.VUID, "turret links checked")); // Guarded does the repair
+            return;
+        }
     }
 
     private void SetRecovery(string original, int focus)

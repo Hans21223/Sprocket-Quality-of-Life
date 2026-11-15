@@ -1,3 +1,9 @@
+# Quality of Life 1.10.8
+
+Bug fixes only; no new tools or settings.
+
+- **Copied turrets crashed Play:** a turret copied with Alt kept the original turret's body and motor links, so Play crashed in the game's turret audio setup ("turret" null). Right after the copy, QoL now links the copy to its own body and motor (one design reload; Restore undoes it). Designs saved with such a turret are repaired the same way when opened, and every QoL design edit checks the links too. Turret to Add-on also works on such designs now.
+
 # Quality of Life 1.10.7
 
 Bug fixes only; no new tools or settings.

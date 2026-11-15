@@ -1,5 +1,9 @@
-Quality of Life 1.10.7 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.10.8 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+FIXED IN 1.10.8
+- Play crash after copying a turret with Alt; designs saved that way are repaired when opened.
+- Bug fixes only; no new tools or settings.
 
 FIXED IN 1.10.7
 - Play crash from tiny faces: Horizontal corners on faces too small for a normal are set straight in.
