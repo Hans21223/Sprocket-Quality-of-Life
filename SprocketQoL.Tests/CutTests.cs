@@ -1104,6 +1104,28 @@ static class CutTests
         Check(fs.Count == 3 + 8 && Math.Abs(Area(ps, fs) - 3) < 1e-5, "inset a strip together: 3 inner faces and a ring of 8");
         Check(MeshPlans.Inset(sq, new List<int[]> { new[] { 0, 1, 2, 3 } }, new[] { 0 }, 0.6f).Why != null, "inset too wide: says why");
 
+        // Extrude along normal: the cube's top (face 1, y = 1) up 0.5 is a closed box 1.5 tall; pushed in 0.25, 0.75.
+        var up = MeshPlans.Extrude(cube, cubeFaces, new[] { 1 }, 0.5f);
+        var (pu, fu) = Applied(cube, cubeFaces, up);
+        Check(up.Why == null && Closed(fu) && fu.Count == 10 && Math.Abs(Volume(pu, fu) - 1.5) < 1e-5 && up.Points.All(p => Math.Abs(p.P.Y - 1.5f) < 1e-6),
+            $"extrude the cube's top up: closed, 10 faces, volume {Volume(pu, fu):0.00000} ({up.Why})");
+        var (pd, fd) = Applied(cube, cubeFaces, MeshPlans.Extrude(cube, cubeFaces, new[] { 1 }, -0.25f));
+        Check(Closed(fd) && Math.Abs(Volume(pd, fd) - 0.75) < 1e-5, $"extrude the top in: closed, volume {Volume(pd, fd):0.00000}");
+        // The top and the x = 1 side (face 3) are joined: they move together, along their summed normal.
+        var corner = MeshPlans.Extrude(cube, cubeFaces, new[] { 1, 3 }, 0.1f);
+        var (pc, fc) = Applied(cube, cubeFaces, corner);
+        var diagonal = Vector3.Normalize(new Vector3(1, 1, 0)) * 0.1f;
+        Check(corner.Why == null && Closed(fc) && corner.Points.All(p => Vector3.Distance(p.P, cube[p.Blend[0].V] + diagonal) < 1e-6),
+            "extrude two joined faces: one move along their summed normal, still closed");
+        // The middle face of an open strip: walls all round, the strip's open edges stay as they were.
+        var stripUp = MeshPlans.Extrude(grid, strip, new[] { 1 }, 0.2f);
+        var (pst, fst) = Applied(grid, strip, stripUp);
+        Check(stripUp.Why == null && fst.Count == 2 + 1 + 4 && MeshPlans.Check(grid, strip, stripUp) == null, $"extrude a face of an open strip: cap and four walls ({MeshPlans.Check(grid, strip, stripUp)})");
+        Check(MeshPlans.Check(cube, cubeFaces, up) == null && MeshPlans.Check(cube, cubeFaces, corner) == null, "extrude plans pass the checks");
+        Check(MeshPlans.Check(cube, cubeFaces, MeshPlans.Extrude(cube, cubeFaces, new[] { 1 }, 0.0005f)) == null, "a half-millimetre extrude of a 1 m face isn't called squashed");
+        Check(MeshPlans.Extrude(cube, cubeFaces, new[] { 1 }, 0).Why != null && MeshPlans.Extrude(cube, cubeFaces, Array.Empty<int>(), 0.1f).Why != null,
+            "extrude by nothing or with nothing selected: says why");
+
         // Flatten: bumpy points land on one plane; Level puts them at one height.
         var bumpy = new List<Vector3> { new(0, 0, 0.02f), new(1, 0, -0.01f), new(1, 1, 0.03f), new(0, 1, -0.02f), new(0.5f, 0.5f, 0.01f) };
         var flat = MeshPlans.Flatten(bumpy, new[] { 0, 1, 2, 3, 4 }, MeshPlans.FlattenMode.BestFit);
@@ -1162,7 +1184,7 @@ static class CutTests
         var line = new List<Vector3> { new(0, 0, 0), new(0.25f, 0, 0), new(0.5f, 0, 0), new(1.5f, 0, 0) };
         var fall = MeshPlans.Falloff(line, new HashSet<int> { 0 }, 1);
         Check(!fall.ContainsKey(3) && fall[1].Weights[0] > fall[2].Weights[0] && fall[1].Weights[0] < 1, "proportional: falls off with distance");
-        Console.WriteLine($"mesh tools: bevel, loop cut, inset, flatten, select linked flat, proportional checked");
+        Console.WriteLine($"mesh tools: bevel, loop cut, inset, extrude, flatten, select linked flat, proportional checked");
     }
 
     /// Separate (Blender's P): the selected faces leave the part for a new add-on that shows exactly where they were;

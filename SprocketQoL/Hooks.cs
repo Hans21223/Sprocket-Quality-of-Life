@@ -46,6 +46,7 @@ internal static class Hooks
             try
             {
                 var original = Original(info) ?? throw new MissingMethodException($"{info.declaringType?.FullName}.{info.methodName} isn't in the game");
+                CheckNativeArguments(original);
                 var patch = new HarmonyMethod(method);
                 var processor = harmony.CreateProcessor(original);
                 switch (kind)
@@ -70,12 +71,32 @@ internal static class Hooks
         try
         {
             var original = (type == null ? null : AccessTools.DeclaredMethod(type, methodName)) ?? throw new MissingMethodException($"{typeName}.{methodName} isn't in the game");
+            CheckNativeArguments(original);
             var processor = harmony.CreateProcessor(original);
             processor.AddPostfix(new HarmonyMethod(postfix));
             processor.Patch();
             Report.Add(new(feature, hook, null));
         }
         catch (Exception ex) { Failed(feature, hook, ex); }
+    }
+
+    static void CheckNativeArguments(MethodBase original)
+    {
+        if (!OperatingSystem.IsWindows() || IntPtr.Size != 8) return;
+        foreach (var parameter in original.GetParameters())
+        {
+            var type = parameter.ParameterType;
+            // Blittable C# structs have their real managed layout. Generated
+            // classes for IL2CPP value types require Harmony to box native data.
+            if (type.IsByRef || type.IsValueType || !type.IsSubclassOf(typeof(Il2CppSystem.ValueType))) continue;
+            var nativeClass = Il2CppInterop.Runtime.Il2CppClassPointerStore.GetNativeClassPointer(type);
+            if (nativeClass == IntPtr.Zero) throw new NotSupportedException($"Cannot verify native layout of {type.Name}.");
+            uint alignment = 0;
+            int bytes = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_value_size(nativeClass, ref alignment);
+            if (bytes <= 0) throw new NotSupportedException($"Cannot verify native size of {type.Name}.");
+            if (NativeHookAbi.UnsafeBoxedArgument(IntPtr.Size, false, bytes))
+                throw new NotSupportedException($"{type.Name} is passed inline by the native game; this Harmony hook needs a separately verified native boundary.");
+        }
     }
 
     static MethodBase? Original(HarmonyMethod info)

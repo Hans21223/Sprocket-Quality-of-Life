@@ -13,7 +13,8 @@ namespace SprocketQoL;
 /// "Mod Options": a tab of the game's own settings screen, after General ... Controls, drawn with the game's own
 /// fields. The game makes a tab for each of its settings pages, so this is one more page (a class of the game's page
 /// type, registered with the game's runtime): Quality of Life's keys (click one, press the new key) and its settings
-/// that have no panel of their own. Changes are saved at once, so the screen's Apply / Cancel don't touch them.
+/// that have no panel of their own. QoL settings are saved at once. The Game keys page uses native Apply / Accept /
+/// Cancel semantics for base-game controls.
 public sealed class ModOptionsMenu : SettingsSubMenu
 {
     public ModOptionsMenu(IntPtr pointer) : base(pointer) { }
@@ -27,8 +28,8 @@ public sealed class ModOptionsMenu : SettingsSubMenu
     public override void DisplayGUI(IGUILayout layout) => Ui.Guard("Mod Options", () => ModOptions.Draw(this, layout));
     public override void Update() => Ui.Guard("Mod Options", () => ModOptions.Tick(this));
     public override void ClearGUI() => ModOptions.Stop();
-    public override void Apply() { }
-    public override void Cancel() => ModOptions.Stop();
+    public override void Apply() => Ui.Guard("Game control bindings", ModOptions.ApplyGameBindings);
+    public override void Cancel() => Ui.Guard("Cancel game control bindings", ModOptions.CancelGameBindings);
 }
 
 [HarmonyPatch]
@@ -64,11 +65,23 @@ internal static class ModOptions
         __instance.subMenus = more;
     });
 
-    internal static void Stop() => capturing = null;
+    internal static void Stop() { capturing = null; GameControlBindings.Stop(); }
+
+    internal static void ApplyGameBindings()
+    {
+        if (UnityEngine.Object.FindObjectOfType<SettingsMenu>() is { } menu) GameControlBindings.Apply(menu);
+    }
+
+    internal static void CancelGameBindings()
+    {
+        Stop();
+        if (UnityEngine.Object.FindObjectOfType<SettingsMenu>() is { } menu) GameControlBindings.Cancel(menu);
+    }
 
     /// Every frame while the page shows: a waiting key takes the next one pressed.
     internal static void Tick(ModOptionsMenu page)
     {
+        if (part == 9 && UnityEngine.Object.FindObjectOfType<SettingsMenu>() is { } menu) GameControlBindings.Tick(menu);
         if (capturing == null || Keyboard.current is not { } keys) return;
         if (Keybinds.Capture(capturing, keys) != Keybinds.Captured.Nothing) { capturing = null; page.GUIRepaint = true; }
     }
@@ -80,9 +93,9 @@ internal static class ModOptions
         UnityAction Act(Action a) { var c = Ui.Callback(a); keep.Add(c); return c; }
         void Redraw() => page.GUIRepaint = true;
 
-        // Three short pages (the settings screen doesn't scroll, so a long page runs under its Accept / Apply buttons).
+        // Short pages: the settings screen doesn't scroll, so a long page runs under its Accept / Apply buttons.
         ui.Header("Quality of Life");
-        var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i => { part = i; capturing = null; Redraw(); }))!;
+        var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i => { part = i; Stop(); Redraw(); }))!;
         keepInts.Add(pick);
         ui.TabGroup(pick, part, Parts);
         if (part == 2) { Settings(ui); return; }
@@ -92,6 +105,12 @@ internal static class ModOptions
         if (part == 6) { Selection(ui); return; }
         if (part == 7) { Predictive(ui); return; }
         if (part == 8) { Workshop(ui); return; }
+        if (part == 9)
+        {
+            if (UnityEngine.Object.FindObjectOfType<SettingsMenu>() is { } menu) GameControlBindings.Draw(ui, menu, Redraw);
+            else ui.InfoField("Open the game's Settings screen to change base-game controls.", 2);
+            return;
+        }
 
         ui.InfoField(capturing != null
             ? $"Press the new key for {Keybinds.All.First(b => b.Id == capturing).Name} (with Ctrl, Shift or Alt if wanted). Esc cancels, Backspace leaves it without a key."
@@ -125,7 +144,7 @@ internal static class ModOptions
 
     static int part;
     static int keyPage;
-    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos", "Right-click menu", "Selection", "Build assist", "Workshop" };
+    static readonly string[] Parts = { "Tool keys", "Editing keys", "Settings", "Compatibility", "Photos", "Right-click menu", "Selection", "Build assist", "Workshop", "Game keys" };
     static readonly HashSet<string> EditingGroups = new() { "View", "Mesh", "Selection", "Add-ons" };
     static readonly List<Il2CppSystem.Action<int>> keepInts = new();
 
@@ -138,6 +157,10 @@ internal static class ModOptions
         var searchTip = new UITooltip("Search tools", "Search available editor tools, favourites and recent actions.");
         var search=Ui.Callback(CommandPalette.Open); keep.Add(search);
         ui.Button($"Search tools ({Keybinds.Shown("commandSearch")})", search, ref searchTip);
+        ui.Header("Builder");
+        Slider(ui, Plugin.DesignerCameraPercent, "Camera speed (%)", 1, 100, 1);
+        Slider(ui, Plugin.UiScalePercent, "UI scale (%)", 50, 200, 5);
+        ui.InfoField("Camera speed changes only the builder camera. UI scale changes the game's panels and QoL's windows.", 2);
         ui.InfoField("Tool values are remembered across restarts. Named presets in Workshop save combinations of these settings.", 2);
         ui.InfoField("In the vehicle editor, use a structure panel's Precision and measurements section for slide, exact distances, mesh health and proportional controls.", 3);
     }
@@ -147,10 +170,11 @@ internal static class ModOptions
         ui.Header("Point and edge selection");
         Toggle(ui, Plugin.BetterMeshPicking, "Better picking", "Choose the closest visible point or edge to the cursor. Off restores the game's picker.");
         Slider(ui, Plugin.MeshPickRadius, "Click radius (px)", 4, 30, 1);
+        Slider(ui, Plugin.MeshSurfaceAllowance, "Surface (mm)", 0, 5, 0.5f);
         Toggle(ui, MeshAssistSettings.HoverHighlight, "Hover highlight", "Shows which point or edge a click would choose.");
         Toggle(ui, MeshAssistSettings.CyclePicking, "Cycle overlaps", $"Press {Keybinds.Shown("cycleSelection")} to cycle nearby eligible targets. X-ray controls hidden geometry.");
         ui.InfoField("The click radius stays the same size on screen at any zoom. Smaller values help with dense meshes; larger values make small points and edges easier to click.", 3);
-        ui.InfoField("Points and edges behind a face are skipped unless X-ray is enabled. Your usual add, remove, loop, box and circle selection controls still apply.", 3);
+        ui.InfoField("Surface allowance helps grab points and edges tucked just behind a plate. Set it to 0 for strict visibility; deeper hidden geometry needs X-ray. Your usual selection controls still apply.", 3);
     }
 
     static void Predictive(IGUIElementDrawer ui)
@@ -199,6 +223,9 @@ internal static class ModOptions
         ui.Header("Opens with");
         ui.InfoField("Hold this and right-click without dragging (a drag turns the camera). Off: no menu. In the mesh editor the game's own selection also uses Ctrl, Alt and Shift with a right click.", 2);
         Choice(ui, redraw, Plugin.MenuOpens, RightClickMenu.Holds);
+        var controlsTip = new UITooltip("Base-game controls", "Change the game's own selection, modifier and mouse-button bindings. Changes use the Settings screen's Apply, Accept and Cancel buttons.");
+        var controls = Ui.Callback(() => { part = 9; Stop(); redraw(); }); keep.Add(controls);
+        ui.Button("Edit base-game keys and mouse buttons", controls, ref controlsTip);
         var sections = RightClickMenu.Sections.ToList();
         ui.Header("Items shown");
         var pick = Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>(new Action<int>(i => { menuSection = i; redraw(); }))!;
@@ -230,6 +257,12 @@ internal static class ModOptions
         ui.InfoField(failed.Count == 0
             ? $"All {Hooks.Attached} of Quality of Life's hooks into the game attached: everything works as made."
             : $"{Hooks.Attached} of {Hooks.Report.Count} hooks into the game attached. The tools below whose hook didn't attach are off until Quality of Life is updated for this version of the game.", 2);
+        ui.Header("Updates");
+        Toggle(ui, Plugin.AutoUpdate, "Auto update", "At each game start, Quality of Life looks for a newer release for this game version on GitHub, checks it against the release's SHA-256 and installs it, with the Mod Manager's copy. The new version is used from the next start.");
+        ui.InfoField($"Quality of Life {Plugin.Version}. {Updater.Status}", 1);
+        var checkTip = new UITooltip("Check now", "Look for a newer release now. A found update is installed and used from the next start.");
+        var check = Ui.Callback(() => { Updater.Check(); redraw(); }); keep.Add(check);
+        ui.Button("Check for updates now", check, ref checkTip);
         ui.Header("QoL part panel");
         ui.InfoField("Quality of Life's own panel, on the right, with every QoL section of the selected parts. Automatic shows it only when the game's part panel can't be drawn into (after a game update changes it).", 3);
         int mode = Array.IndexOf(QolPanel.Modes, QolPanel.Mode);

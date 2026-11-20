@@ -49,5 +49,11 @@
     <Compile Include="..\SprocketQoL\VehicleSession.cs" Link="VehicleSession.cs" />
     <Compile Include="..\SprocketQoL\ToolSettingRanges.cs" Link="ToolSettingRanges.cs" />
     <Compile Include="..\SprocketQoL\SmartCorners.cs" Link="SmartCorners.cs" />
+    <Compile Include="..\SprocketQoL\GameBindingRules.cs" Link="GameBindingRules.cs" />
+    <Compile Include="..\SprocketQoL\RuntimeSafety.cs" Link="RuntimeSafety.cs" />
+    <Compile Include="..\SprocketQoL\NativeHookAbi.cs" Link="NativeHookAbi.cs" />
+    <Compile Include="..\SprocketQoL\CameraPrecisionMath.cs" Link="CameraPrecisionMath.cs" />
+    <Compile Include="..\SprocketQoL\TurretPreviewMath.cs" Link="TurretPreviewMath.cs" />
+    <Compile Include="..\SprocketQoL\UpdateRules.cs" Link="UpdateRules.cs" />
   </ItemGroup>
 </Project>

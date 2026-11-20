@@ -453,6 +453,64 @@ public static class MeshPlans
         return new Rebuild(selected.ToList(), add, points, null);
     }
 
+    // ---------- Extrude along normal ----------
+
+    /// Blender's Extrude on faces, a set distance along their normal: each joined group of selected faces moves out by
+    /// `distance` along the group's own (area-weighted) normal, negative pushes it in, and a side face joins each outline
+    /// edge to where it was. The selected faces become the moved ones, so a closed shape stays closed.
+    public static Rebuild Extrude(IReadOnlyList<Vector3> pos, IReadOnlyList<int[]> faces, ICollection<int> selected, float distance)
+    {
+        if (selected.Count == 0) return Rebuild.Fail("select faces first");
+        if (!float.IsFinite(distance) || distance == 0) return Rebuild.Fail("the distance must not be zero");
+        if (selected.Any(f => f < 0 || f >= faces.Count)) return Rebuild.Fail("select faces on the current mesh");
+        var sides = new Dictionary<(int, int), List<int>>();
+        foreach (int f in selected)
+            for (int k = 0; k < faces[f].Length; k++)
+            {
+                var key = Key(faces[f][k], faces[f][(k + 1) % faces[f].Length]);
+                (sides.TryGetValue(key, out var l) ? l : sides[key] = new()).Add(f);
+            }
+        if (sides.Values.Any(l => l.Count > 2)) return Rebuild.Fail("an edge of the selection is shared by more than two faces");
+        // Groups: selected faces joined by a side move together.
+        var group = selected.ToDictionary(f => f, f => f);
+        int Root(int f) { while (group[f] != f) f = group[f] = group[group[f]]; return f; }
+        foreach (var l in sides.Values) if (l.Count == 2 && Root(l[0]) != Root(l[1])) group[Root(l[1])] = Root(l[0]);
+        var sum = new Dictionary<int, Vector3>();
+        foreach (int f in selected) sum[Root(f)] = sum.GetValueOrDefault(Root(f)) + Newell(pos, faces[f]);
+        var offset = new Dictionary<int, Vector3>();
+        foreach (var (root, n) in sum)
+        {
+            if (!Finite(n) || n.Length() < 1e-9f) return Rebuild.Fail("the selected faces point opposite ways, so they have no normal to extrude along");
+            offset[root] = Vector3.Normalize(n) * distance;
+        }
+        var moved = new Dictionary<int, int>();
+        var owner = new Dictionary<int, int>();
+        var points = new List<NewPoint>();
+        foreach (int f in selected)
+            foreach (int v in faces[f])
+            {
+                if (owner.TryGetValue(v, out int r)) { if (r != Root(f)) return Rebuild.Fail("two groups of selected faces touch at a point; extrude them one at a time"); continue; }
+                owner[v] = Root(f);
+                moved[v] = pos.Count + points.Count;
+                points.Add(new NewPoint(pos[v] + offset[Root(f)], new[] { (v, 1f) }));
+            }
+        var add = new List<NewFace>();
+        foreach (int f in selected) add.Add(new NewFace(faces[f].Select(v => moved[v]).ToArray(), f));
+        foreach (int f in selected)
+        {
+            float source = Newell(pos, faces[f]).Length();
+            for (int k = 0; k < faces[f].Length; k++)
+            {
+                int a = faces[f][k], b = faces[f][(k + 1) % faces[f].Length];
+                if (sides[Key(a, b)].Count != 1) continue;
+                // A side wall's own size: a short extrude on a big face isn't a squashed face (MeshPlans.Check).
+                float wall = 2 * Vector3.Distance(pos[a], pos[b]) * Math.Abs(distance);
+                add.Add(new NewFace(new[] { a, b, moved[b], moved[a] }, f) { ReferenceArea = wall > 0 && source > 0 ? Math.Min(wall, source) : null });
+            }
+        }
+        return new Rebuild(selected.ToList(), add, points, null);
+    }
+
     // ---------- Bevel ----------
 
     /// The selected edges become chamfer strips `width` wide on each side. Where bevelled edges meet, each fan of faces

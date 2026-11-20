@@ -180,25 +180,88 @@ public static class AddonEdits
         return Conversion.Id(block["blueprint"]!, "bodyMeshVuid");
     }
 
+    public enum OriginMode { WholeShapeBounds, SelectedPointsCenter, SelectedPointsBounds }
+
     /// Blender's Origin to Geometry: part `part` (and its mirror twin) gets its origin in the middle of its shape's box.
     /// The shape stays where it shows (its points move the other way), and so do the parts attached to it.
-    public static EditPlan PlanOrigin(string json, int part)
+    public static EditPlan PlanOrigin(string json, int part) => PlanOrigin(json, part, OriginMode.WholeShapeBounds);
+
+    /// Moves the origin to the whole shape's box, the mean of the unique selected points, or their box's centre.
+    /// Point IDs use the saved mesh's vertex order. A live caller can supply the complete captured vertex positions
+    /// to reject a selection whose vertex order or coordinates changed before the saved design was captured.
+    public static EditPlan PlanOrigin(string json, int part, OriginMode mode, IReadOnlyCollection<int>? selectedPoints = null,
+                                      IReadOnlyList<Vector3>? expectedPositions = null)
     {
+        if (mode is not (OriginMode.WholeShapeBounds or OriginMode.SelectedPointsCenter or OriginMode.SelectedPointsBounds))
+            throw new ArgumentOutOfRangeException(nameof(mode), "Unknown origin mode.");
         var b = Conversion.Parse(json);
         var objects = Conversion.Objects(b);
         if (!objects.TryGetValue(part, out var o) || o["structureBlueprintVuid"] == null || o.ContainsKey("mantlet"))
             throw new Exception("Only a hand-made shape (an add-on, hull or turret) has an origin to move.");
+        // Validate the selection before OwnMesh clones any shared structure blocks or meshes. Missing, malformed or
+        // stale selections must never quietly turn into a whole-shape origin edit.
+        var block = Block(b["blueprints"]!.AsArray(), Conversion.Id(o, "structureBlueprintVuid"));
+        int sourceMeshId = Conversion.Id(block["blueprint"]!, "bodyMeshVuid");
+        if (MeshOf(b["meshes"]!.AsArray(), sourceMeshId)?["mesh"]?["vertices"] is not JsonArray source || source.Count < 3 || source.Count % 3 != 0)
+            throw new Exception("The shape has no valid point coordinates.");
+        var p = new float[source.Count];
+        for (int i = 0; i < source.Count; i++)
+        {
+            if (source[i] is not JsonValue value || !value.TryGetValue<double>(out double coordinate))
+                throw new Exception("The shape has a missing or invalid point coordinate.");
+            p[i] = (float)coordinate;
+            if (!float.IsFinite(p[i])) throw new Exception("The shape has a non-finite point coordinate.");
+        }
+        int pointCount = p.Length / 3;
+        if (expectedPositions != null)
+        {
+            if (expectedPositions.Count != pointCount) throw new Exception("The shape changed after its points were selected; select them again.");
+            for (int i = 0; i < pointCount; i++)
+            {
+                var expected = expectedPositions[i];
+                if (!float.IsFinite(expected.X) || !float.IsFinite(expected.Y) || !float.IsFinite(expected.Z)
+                    || Math.Abs((double)p[3 * i] - expected.X) > 1e-6 || Math.Abs((double)p[3 * i + 1] - expected.Y) > 1e-6
+                    || Math.Abs((double)p[3 * i + 2] - expected.Z) > 1e-6)
+                    throw new Exception("The shape changed after its points were selected; select them again.");
+            }
+        }
+        int[] ids;
+        if (mode == OriginMode.WholeShapeBounds) ids = Enumerable.Range(0, pointCount).ToArray();
+        else
+        {
+            if (selectedPoints == null || selectedPoints.Count == 0) throw new Exception("Select at least one point before setting the origin.");
+            ids = selectedPoints.Distinct().OrderBy(i => i).ToArray();
+            if (ids.Length == 0 || ids.Any(i => i < 0 || i >= pointCount))
+                throw new Exception("A selected point no longer belongs to this shape; select the points again.");
+        }
+        double[] min = { double.MaxValue, double.MaxValue, double.MaxValue }, max = { double.MinValue, double.MinValue, double.MinValue }, sum = new double[3];
+        foreach (int id in ids)
+            for (int axis = 0; axis < 3; axis++)
+            {
+                double coordinate = p[3 * id + axis];
+                min[axis] = Math.Min(min[axis], coordinate); max[axis] = Math.Max(max[axis], coordinate); sum[axis] += coordinate;
+            }
+        float Centre(int axis) => (float)(mode == OriginMode.SelectedPointsCenter ? sum[axis] / ids.Length : (min[axis] + max[axis]) / 2);
+        var c = new Vector3(Centre(0), Centre(1), Centre(2));
+        double distance = Math.Sqrt((double)c.X * c.X + (double)c.Y * c.Y + (double)c.Z * c.Z);
+        string destination = mode switch
+        {
+            OriginMode.SelectedPointsCenter => "the centre of the selected points",
+            OriginMode.SelectedPointsBounds => "the middle of the selected points' bounds",
+            _ => "the middle of its shape",
+        };
+        if (distance < 1e-4) throw new Exception($"The origin is already at {destination}.");
+        var shifted = new float[p.Length];
+        for (int i = 0; i < p.Length; i++)
+        {
+            shifted[i] = p[i] - (i % 3 == 0 ? c.X : i % 3 == 1 ? c.Y : c.Z);
+            if (!float.IsFinite(shifted[i])) throw new Exception("Moving the origin would make the shape's point coordinates invalid.");
+        }
         var before = Conversion.WorldMatrices(objects);
         var group = Twin(objects, b["blueprints"]!.AsArray(), before, part) is int twin ? new[] { part, twin } : new[] { part };
         var (structures, meshData) = OwnMesh(b, objects, group, "given a new origin");
         var raw = meshData["mesh"]!["vertices"]!.AsArray();
-        var p = raw.Select(x => MeshCut.F(x)).ToArray();
-        if (p.Length < 3) throw new Exception("The shape has no points.");
-        Vector3 min = new(float.MaxValue), max = new(float.MinValue);
-        for (int i = 0; i + 2 < p.Length; i += 3) { min = Vector3.Min(min, new(p[i], p[i + 1], p[i + 2])); max = Vector3.Max(max, new(p[i], p[i + 1], p[i + 2])); }
-        var c = (min + max) / 2;
-        if (c.Length() < 1e-4f) throw new Exception("The origin is already in the middle of the shape.");
-        for (int i = 0; i + 2 < p.Length; i += 3) { raw[i] = p[i] - c.X; raw[i + 1] = p[i + 1] - c.Y; raw[i + 2] = p[i + 2] - c.Z; }
+        for (int i = 0; i < shifted.Length; i++) raw[i] = shifted[i];
         foreach (int v in group)
         {
             var shift = Vector3.Transform(c, Shape(objects[v], Matrix4x4.Identity)); // a flipped part shows its shape mirrored along x
@@ -218,7 +281,7 @@ public static class AddonEdits
         var meshId = Conversion.Id(structures[0], "bodyMeshVuid");
         int faces = meshData["mesh"]!["faces"]!.AsArray().Count;
         return new EditPlan(b.ToJsonString(Indented), group.ToDictionary(v => v, _ => meshId), group.ToDictionary(v => v, _ => faces), new(), new(), false, part,
-                            $"Origin of part {string.Join(" and its twin ", group)} moved {c.Length() * 1000:0} mm to the middle of its shape.");
+                            $"Origin of part {string.Join(" and its twin ", group)} moved {distance * 1000:0} mm to {destination}.");
     }
 
     /// The most points a cloth sheet has (PlanDrape).

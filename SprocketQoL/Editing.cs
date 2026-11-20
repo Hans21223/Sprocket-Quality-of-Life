@@ -117,6 +117,7 @@ public sealed class DesignEditor : MonoBehaviour
         SetRecovery(original, groups[0][0].Added);
         restoring = false;
         doneMessage += " Restore undoes it.";
+        IsolateView.Show();
         vehicles.Loading();
         pending = core!.Load(serializer!.DeserializeJSON(planned), Il2CppSystem.Threading.CancellationToken.None);
     }
@@ -529,6 +530,7 @@ public sealed class DesignEditor : MonoBehaviour
         Ui.Guard("Tool search", CommandPalette.Update);
         Ui.Guard("Part patterns", PartPatterns.Update);
         Ui.Guard("Black box fix", StopNaNs.Tick);
+        Ui.Guard("UI scale", UiScale.Tick);
         if (!EditorModal.BlocksInput || QolMenu.IsOpen) Ui.Guard("QoL settings", QolMenu.Update);
         Ui.Guard("Editor lookup", () =>
         {
@@ -549,17 +551,20 @@ public sealed class DesignEditor : MonoBehaviour
                 foreach (var (feature, leave) in new (string, Action)[] { ("Right-click menu", RightClickMenu.Close), ("Mesh tools", MeshTools.LeftEditor), ("Exploded view", ExplodedView.LeftEditor),
                              ("Gear speeds", GearSpeeds.LeftEditor), ("Predictive build assist", BuildAssist.LeftEditor), ("Mesh selection", MeshSelection.LeftEditor),
                              ("QoL Workshop", WorkshopLibrary.LeftEditor), ("Tool search", CommandPalette.LeftEditor), ("Part patterns", PartPatterns.LeftEditor),
-                             ("Own paint", PartPaint.LeftEditor), ("OBJ menu", ObjTransfer.LeftEditor), ("QoL panel", QolPanel.Close) })
+                             ("Own paint", PartPaint.LeftEditor), ("OBJ menu", ObjTransfer.LeftEditor), ("QoL panel", QolPanel.Close), ("Show only selected", IsolateView.Show) })
                     Ui.Guard(feature, leave);
         });
         if (!EditorModal.BlocksInput) Ui.Guard("OBJ menu", ObjTransfer.Update);
+        if (ready && !busy && Updater.Pending is { } updated) { Updater.Pending = null; Say(updated, 12); }
+        Ui.Guard("Isolate view lifecycle", IsolateView.Tick);
         if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput) Ui.Guard("Ctrl+J", JoinHotkey);
-        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); Ui.Guard("Play crash guard", () => ZeroNormalGuard.Tick(core!)); Ui.Guard("Turret links", RepairTurretLinks); }
+        if (ready && !busy && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput && Time.unscaledTime >= nextTurretCheck) { nextTurretCheck = Time.unscaledTime + 0.5f; Ui.Guard("Turret mirror", FillMirroredTurrets); Ui.Guard("Turret mirror keep", KeepTurretsMirrored); Ui.Guard("Play crash guard", () => ZeroNormalGuard.Tick(core!)); Ui.Guard("Turret links", RepairTurretLinks); if (!busy) Ui.Guard("Design check", CheckOpenedDesign); }
         if (ready && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput)
         {
             if (!busy && !PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Right-click menu", RightClickMenu.Update);
             Ui.Guard("Mesh tools keys", MeshTools.Keys);
             Ui.Guard("Exploded view", ExplodedView.Keys);
+            Ui.Guard("Show only selected", IsolateView.Keys);
             Ui.Guard("Own paint", PartPaint.Tick);
             Ui.Guard("Hotkeys", Hotkeys.Keys);
             Ui.Guard("Part clipboard", PartClipboard.Update);
@@ -671,6 +676,34 @@ public sealed class DesignEditor : MonoBehaviour
         return design.ToJsonString();
     }
 
+    private (int Session, IntPtr Target) designChecked = (-1, IntPtr.Zero);
+
+    /// Each design opened in the editor: a QOL_DESIGN log line on what it holds and what in it would crash Play, and the
+    /// problems Guarded can fix are fixed at once (a reload that changes nothing else; Restore undoes it). A design saved
+    /// before these fixes, or made with another mod or an older QoL, is repaired before Play can crash on it.
+    private void CheckOpenedDesign()
+    {
+        if (core?.Editor == null || core.Editor.OperationInProgress || !core.DesignIOPossible || core.Target == null) return;
+        var key = (vehicles.Now, core.Target.Pointer);
+        if (key == designChecked) return;
+        designChecked = key;
+        var health = Conversion.Health(Snapshot());
+        Plugin.ModLog.LogInfo($"QOL_DESIGN opened {health.Summary}");
+        if (health.Fixable == 0) return;
+        RequestEdit("Fixing crash risks", $"Fixed what would crash Play: {health.Fixes}. Restore undoes it.",
+            json => new EditResult(json, LastEditedPart, "design checked on opening")); // Guarded does the repair
+    }
+
+    /// Right before Play builds the vehicle (PlayReport): the design's state, flushed to the log file, so a crash in the
+    /// game's own code (PhysX, which writes nothing) still leaves the last thing that happened.
+    internal void ReportForPlay()
+    {
+        if (core?.Target == null) return;
+        var health = Conversion.Health(Snapshot());
+        string warn = health.Fixable > 0 || health.NonFinite > 0 ? " -- this is likely to crash" : "";
+        Plugin.ModLog.LogInfo($"QOL_PLAY building {health.Summary}{warn}");
+    }
+
     private (int Session, int Undo) turretLinksChecked = (-1, -1);
 
     /// A turret copied with Alt (TurretCopy) or loaded from a design saved that way: a ring whose motor sits on another
@@ -734,6 +767,7 @@ public sealed class DesignEditor : MonoBehaviour
         SetRecovery(original, result.FocusPart);
         restoring = false;
         Plugin.ModLog.LogInfo($"QOL_EDIT {editName}: {result.Log}; backup={recoveryDir}");
+        IsolateView.Show();
         vehicles.Loading();
         pending = core!.Load(nativeBlueprint, Il2CppSystem.Threading.CancellationToken.None);
     }
@@ -753,6 +787,7 @@ public sealed class DesignEditor : MonoBehaviour
         }
         SetRecovery(original, plan.Focus);
         restoring = false;
+        IsolateView.Show();
         vehicles.Loading();
         pending = core!.Load(serializer!.DeserializeJSON(plan.DesignJson), Il2CppSystem.Threading.CancellationToken.None);
     }
@@ -939,6 +974,7 @@ public sealed class DesignEditor : MonoBehaviour
         // Keep any work done after the edit before replacing it.
         File.WriteAllText(Path.Combine(recoveryDir!, "before-restore-" + DateTime.Now.ToString("HHmmssfff") + ".blueprint"), Snapshot());
         restoring = true;
+        IsolateView.Show();
         vehicles.Loading();
         pending = core.Load(serializer!.DeserializeJSON(recoveryJson), Il2CppSystem.Threading.CancellationToken.None);
     }
@@ -946,6 +982,8 @@ public sealed class DesignEditor : MonoBehaviour
     public void OnDestroy()
     {
         Ui.Guard("Close exploded view", ExplodedView.LeftEditor);
+        Ui.Guard("Show only selected", IsolateView.Show);
+        Ui.Guard("UI scale", UiScale.Restore);
         if (ReferenceEquals(Instance, this)) Instance = null;
     }
 
@@ -964,6 +1002,7 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Create Hole preview", HoleQuality.DrawHovered);
             Ui.Guard("Tool hover outline", MeshTools.DrawHoverTool);
             Ui.Guard("Rotation angle", RotationSnap.DrawAngle);
+            Ui.Guard("Turret preview", TurretPreview.Draw);
             Ui.Guard("Right-click menu", RightClickMenu.Draw);
         }
         if (Time.unscaledTime > statusUntil || string.IsNullOrEmpty(status)) return;

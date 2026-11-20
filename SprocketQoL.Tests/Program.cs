@@ -1,6 +1,9 @@
 using System.Text.Json.Nodes;
 using SprocketQoL;
 using System.Numerics;
+if (args.Contains("--game-bindings-only")) { GameBindingTests.Run(); return; }
+if (args.Contains("--origin-only")) { OriginTests.Run(); return; }
+if (args.Contains("--update-only")) { UpdateTests.Run(); return; }
 if (args.Contains("--photo-only")) { PhotoOutputTests.Run(); return; }
 if (args.Contains("--hole-only")) { CoreAuditTests.Run(); HoleRingAlignmentTests.Run(); HoleFillTests.Run(); return; }
 if (args.Contains("--obj-only")) { ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run(); GeometryPreviewMathTests.Run(); ObjStreamingImportTests.Run(); return; }
@@ -24,7 +27,11 @@ if (args.Contains("--patterns-only")) { PartPatternTests.Run(); return; }
 if (args.Contains("--drawing-only")) { DrawingTests.Run(); return; }
 if (args.Contains("--turret-only")) { TurretDriveTests.Run(); return; }
 if (args.Contains("--clipboard-only")) { SprocketQoL.Tests.ClipboardTests.Run(); return; }
+GameBindingTests.Run();
+OriginTests.Run();
 TurretDriveTests.Run();
+NativeHookAbiTests.Run();
+RuntimeSafetyTests.Run(); FactionRenameTests.Run(); CameraPrecisionTests.Run(); UpdateTests.Run();
 PhotoOutputTests.Run();
 ObjMeshFormatTests.Run(); ObjExportGeometryTests.Run(); ObjBlueprintImportTests.Run(); ObjPlateFilesTests.Run();
 PartPaintPersistenceTests.Run();

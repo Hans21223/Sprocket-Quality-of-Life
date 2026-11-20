@@ -187,6 +187,84 @@ public static class WorkshopStorage
         throw new IOException("There are too many recovery copies with this name.");
     }
 
+    /// A faction renamed: its folder and its definition file (Name.fdef: name, design prefix and count, all kept). Never
+    /// overwrites another faction; if the definition can't be written, the folder goes back. Returns the new folder.
+    public static string RenameFaction(string factionDirectory, string newName, Action<string>? activate = null, Action? restoreActivation = null)
+        => RenameFactionCore(factionDirectory, newName, activate, restoreActivation, Directory.Move);
+
+    // The move delegate allows a failed second leg of a case-only rename to be
+    // exercised against real temporary files without weakening the public API.
+    internal static string RenameFactionCore(string factionDirectory, string newName, Action<string>? activate,
+        Action? restoreActivation, Action<string, string> move)
+    {
+        newName = newName.Trim();
+        string stem = newName.Split('.')[0].ToUpperInvariant();
+        if (newName.Length == 0 || newName.Length > 60 || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || newName.EndsWith('.') || newName is "." or ".." || newName.Any(char.IsControl)
+            || stem is "CON" or "PRN" or "AUX" or "NUL" || Regex.IsMatch(stem, @"^(COM|LPT)[1-9]$"))
+            throw new ArgumentException("Use a name of 1 to 60 characters that can be a folder name.");
+        string from = Path.GetFullPath(factionDirectory).TrimEnd(Path.DirectorySeparatorChar), oldName = Path.GetFileName(from);
+        string to = Path.Combine(Path.GetDirectoryName(from)!, newName), oldDefinition = Path.Combine(from, oldName + ".fdef");
+        if ((File.GetAttributes(from) & FileAttributes.ReparsePoint) != 0) throw new IOException("Linked faction folders cannot be renamed here.");
+        if (oldName == newName) throw new ArgumentException("That is its name already.");
+        bool caseOnly = string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase);
+        if (!caseOnly && (Directory.Exists(to) || File.Exists(to))) throw new IOException("A faction with that name already exists.");
+        if (!File.Exists(oldDefinition)) throw new FileNotFoundException("This faction has no definition file.");
+        string possibleDefinition = Path.Combine(from, newName + ".fdef");
+        if ((!caseOnly || !OperatingSystem.IsWindows()) && File.Exists(possibleDefinition))
+            throw new IOException("This faction already contains a definition with the requested name.");
+        byte[] originalDefinition = File.ReadAllBytes(oldDefinition);
+        var definition = JsonNode.Parse(File.ReadAllText(oldDefinition))?.AsObject() ?? throw new FormatException("The faction's definition can't be read.");
+        // Windows folders differ in case only: through a spare name.
+        string through = caseOnly ? from + ".renaming-" + Guid.NewGuid().ToString("N")[..8] : from;
+        string at = from;
+        bool definitionWritten = false, activationAttempted = false;
+        try
+        {
+            if (caseOnly) { move(from, through); at = through; }
+            move(at, to); at = to;
+            definition["name"] = newName;
+            AtomicWrite(Path.Combine(to, newName + ".fdef"), definition.ToJsonString(Json));
+            definitionWritten = true;
+            if (!caseOnly || !OperatingSystem.IsWindows()) File.Delete(Path.Combine(to, oldName + ".fdef"));
+            if (activate != null) { activationAttempted = true; activate(to); }
+        }
+        catch (Exception failure)
+        {
+            var errors = new List<Exception> { failure };
+            // Restore file contents before moving the folder back. Its original byte
+            // representation (including unknown fields and formatting) is preserved.
+            try
+            {
+                if (definitionWritten)
+                {
+                    string created = Path.Combine(at, newName + ".fdef");
+                    if ((!caseOnly || !OperatingSystem.IsWindows()) && File.Exists(created)) File.Delete(created);
+                    string restore = Path.Combine(at, oldName + ".fdef");
+                    string temporary = restore + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    try { File.WriteAllBytes(temporary, originalDefinition); File.Move(temporary, restore, true); }
+                    finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                }
+            }
+            catch (Exception ex) { errors.Add(ex); }
+            try
+            {
+                if (!string.Equals(at, from, StringComparison.Ordinal))
+                {
+                    // A case-only final name needs a spare leg on Windows too.
+                    if (caseOnly && at == to) { Directory.Move(at, through); at = through; }
+                    Directory.Move(at, from); at = from;
+                }
+            }
+            catch (Exception ex) { errors.Add(ex); }
+            if (activationAttempted)
+                try { restoreActivation?.Invoke(); } catch (Exception ex) { errors.Add(ex); }
+            if (errors.Count > 1) throw new AggregateException($"Faction rename failed; recovery could not finish. Files remain at {at}.", errors);
+            throw;
+        }
+        return to;
+    }
+
     public static void Prune(int keep)
     {
         if (keep <= 0 || !Directory.Exists(BackupDirectory)) return;

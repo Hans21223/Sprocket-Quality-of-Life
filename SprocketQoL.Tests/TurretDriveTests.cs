@@ -200,13 +200,37 @@ static class TurretDriveTests
         if (Environment.GetEnvironmentVariable("SPROCKET_QOL_BACKUPS") is { Length: > 0 } backups
             && Path.Combine(backups, "..", "TurretLinks", "KHeavy.blueprint") is var kheavy && File.Exists(kheavy))
         {
+            var health = Conversion.Health(File.ReadAllText(kheavy));
+            Check(health.Turrets == 2 && health.TurretLinks == 2 && health.Fixable >= 2 && health.Summary.Contains("2 turret ring link(s)") && health.NonFinite == 0,
+                "KHeavy: the design check reports both broken links");
             var real = Conversion.Parse(File.ReadAllText(kheavy));
+            var fixedJson = real.ToJsonString();
             Check(Conversion.RepairTurretLinks(real) == 2, "KHeavy: the copied turret's two links repaired");
             var ros = Conversion.Objects(real);
             Check(Motor(real, 318) == 343 && ros[318]["structureID"]!.GetValue<int>() == 323 && Motor(real, 432) == 438 && ros[432]["structureID"]!.GetValue<int>() == 440,
                 "KHeavy: each ring on its own motor and body");
+            Check(Conversion.Health(real.ToJsonString()).Fixable == 0 && fixedJson.Length > 0, "KHeavy: nothing left to fix after the repair");
         }
         else Console.WriteLine("  (KHeavy turret links skipped: set SPROCKET_QOL_BACKUPS)");
+
+        // Turret preview maths, in the drawing sheet's sense: +90° turns a forward muzzle to the right (+X), +10° elevation
+        // raises it; a turn keeps its distance from the axis.
+        var muzzle = new System.Numerics.Vector3(0, 1, 3);
+        var turned = TurretPreviewMath.Turn(muzzle, System.Numerics.Vector3.Zero, System.Numerics.Vector3.UnitY, 90);
+        Check(System.Numerics.Vector3.Distance(turned, new(3, 1, 0)) < 1e-5f, $"preview: +90° turns the muzzle right ({turned})");
+        var raised = TurretPreviewMath.Turn(muzzle, new(0, 1, 0), -System.Numerics.Vector3.UnitX, 10);
+        Check(raised.Y > 1.5f && MathF.Abs(System.Numerics.Vector3.Distance(raised, new(0, 1, 0)) - 3) < 1e-5f, $"preview: +10° elevation raises the muzzle ({raised})");
+        var steps = TurretPreviewMath.Angles(-130, 30, 2);
+        Check(steps.Length == 81 && steps[0] == -130 && steps[^1] == 30, "preview: KHeavy's -130° to +30° in 2° steps, both ends");
+        Check(TurretPreviewMath.Angles(-180, 180, 2).Length == 181 && TurretPreviewMath.Angles(-400, 400, 2).Length == 181 && TurretPreviewMath.Angles(5, 1, 2).Length == 0,
+            "preview: a full turn is one turn; an empty range has no angles");
+        Check(TurretPreviewMath.Full(-180, 180) && !TurretPreviewMath.Full(-130, 30), "preview: full turns draw no limit lines");
+        // A barrel from 0.1 m off the axis out to 3 m leaves a 0.4 m ring a tenth of the way along; one starting outside, at once.
+        float leaves = TurretPreviewMath.Outside(new(0.1f, 1, 0), new(3.1f, 0.5f, 0), System.Numerics.Vector3.Zero, System.Numerics.Vector3.UnitY, 0.4f);
+        Check(MathF.Abs(leaves - 0.1f) < 1e-5f, $"preview: the hull check starts at the ring's edge ({leaves})");
+        Check(TurretPreviewMath.Outside(new(1, 1, 0), new(3, 0, 0), System.Numerics.Vector3.Zero, System.Numerics.Vector3.UnitY, 0.4f) == 0
+              && TurretPreviewMath.Outside(new(0, 1, 0), new(0, -1, 0), System.Numerics.Vector3.Zero, System.Numerics.Vector3.UnitY, 0.4f) == 1,
+            "preview: a barrel starting outside the ring is checked whole; one straight down the axis never leaves it");
         Console.WriteLine($"TURRET_DRIVE_TESTS_OK: {checks} checks");
     }
 }

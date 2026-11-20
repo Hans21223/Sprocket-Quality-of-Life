@@ -85,7 +85,7 @@ public static partial class MeshTools
 
     internal static void RegisterPrecisionSettings()
     {
-        ToolSettings.RegisterFields(typeof(MeshTools), "Mesh tools", "flattenMode", "insetMm", "bevelMm", "flatAngle", "radiusMm",
+        ToolSettings.RegisterFields(typeof(MeshTools), "Mesh tools", "flattenMode", "insetMm", "extrudeMm", "bevelMm", "flatAngle", "radiusMm",
             "smoothMm", "filletRadiusMm", "smoothSegments", "filletSegments", "splitSections", "filletAutoControls", "filletControlMm",
             "splitOtherDirection", "proportional", "halfGrid", "bridgeCuts", "bridgeSmooth", "mirrorMm", "mirrorKeep",
             "loopCuts", "loopOffset", "slideAmount", "exactLengthMm", "slideOpposite", "slideMillimetres", "selectionMeasures",

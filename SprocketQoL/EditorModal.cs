@@ -4,5 +4,5 @@ namespace SprocketQoL;
 internal static class EditorModal
 {
     internal static bool BlocksInput => QolMenu.IsOpen || WorkshopLibrary.BlocksInput || CommandPalette.BlocksInput
-        || PartPatterns.BlocksInput;
+        || PartPatterns.BlocksInput || GameControlBindings.Capturing;
 }

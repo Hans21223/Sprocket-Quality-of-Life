@@ -120,6 +120,23 @@ static class WorkshopStorageTests
             string report = WorkshopStorage.SaveSupportReport("Versions and hooks only");
             Check(File.ReadAllText(report) == "Versions and hooks only" && report.StartsWith(Path.Combine(sandbox, "SprocketQoL", "Reports")), "support reports isolated from designs");
             Check(!Directory.EnumerateFiles(sandbox, "*.tmp", SearchOption.AllDirectories).Any(), "atomic writes leave no temporary files");
+            string factions = Path.Combine(sandbox, "Factions"), pmc = Path.Combine(factions, "PMC");
+            Directory.CreateDirectory(Path.Combine(pmc, "Blueprints", "Vehicles"));
+            File.WriteAllText(Path.Combine(pmc, "PMC.fdef"), "{\"name\":\"PMC\",\"designPrefix\":\"RGM-\",\"designCounter\":77}");
+            File.WriteAllText(Path.Combine(pmc, "Blueprints", "Vehicles", "Tank.blueprint"), design);
+            Directory.CreateDirectory(Path.Combine(factions, "Taken"));
+            string renamed = WorkshopStorage.RenameFaction(pmc, " Iron Guard ");
+            var fdef = JsonNode.Parse(File.ReadAllText(Path.Combine(renamed, "Iron Guard.fdef")))!;
+            Check(!Directory.Exists(pmc) && File.Exists(Path.Combine(renamed, "Blueprints", "Vehicles", "Tank.blueprint")) && !File.Exists(Path.Combine(renamed, "PMC.fdef")),
+                "a renamed faction keeps its designs and loses the old definition");
+            Check((string?)fdef["name"] == "Iron Guard" && (string?)fdef["designPrefix"] == "RGM-" && (int?)fdef["designCounter"] == 77, "the definition keeps its prefix and count");
+            renamed = WorkshopStorage.RenameFaction(renamed, "IRON GUARD");
+            Check(Path.GetFileName(renamed) == "IRON GUARD" && File.Exists(Path.Combine(renamed, "IRON GUARD.fdef")) && Directory.GetFiles(renamed, "*.fdef").Length == 1,
+                "a rename in case only works and leaves one definition");
+            Throws(() => WorkshopStorage.RenameFaction(renamed, "Taken"), "a rename onto another faction is refused");
+            Throws(() => WorkshopStorage.RenameFaction(renamed, "a/b"), "a name that can't be a folder is refused");
+            Throws(() => WorkshopStorage.RenameFaction(renamed, "IRON GUARD"), "the same name is refused");
+            Check(Directory.Exists(renamed) && Directory.Exists(Path.Combine(factions, "Taken")), "refused renames change nothing");
         }
         finally
         {

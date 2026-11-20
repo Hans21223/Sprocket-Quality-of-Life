@@ -4,6 +4,7 @@ using Sprocket.UI;
 using Sprocket.VehicleDesigner.Access;
 using Sprocket.Vehicles.Cannons.Editor;
 using Sprocket.Vehicles.PlateStructures.Design;
+using Sprocket.Vehicles.Tracks.Editor;
 using Sprocket.Vehicles.Transmissions.Editor;
 using Sprocket.Vehicles.Turrets.Editor;
 using UnityEngine;
@@ -44,6 +45,10 @@ internal static class PanelSections
         Try("Merge faces", () => Add<PlateStructureEditor>("Merge faces", MergeFaces.Draw));
         Try("Hotkeys", () => Add<PlateStructureEditor>("Hotkeys", (e, _) => Hotkeys.Seen(e)));
         Try("Gun length", () => Add<CannonEditor>("Gun length", GunLength.Draw));
+        Try("Reload", () => Add<CannonEditor>("Reload", GunLength.DrawReload));
+        Try("Turret preview (gun)", () => Add<CannonEditor>("Turret preview", TurretPreview.GunPanel));
+        Try("Turret preview (ring)", () => Add<TurretRingEditor>("Turret preview", TurretPreview.RingPanel));
+        Try("Track length", () => Add<TrackEditor>("Track length", TrackLength.Draw));
         Try("Speed (transmission)", () => Add<TransmissionEditor>("Speed & acceleration", GearSpeeds.InTransmission));
         Try("Speed (engine)", () => sections.Add(new("Speed & acceleration", EngineEditor.Type == null ? throw new TypeLoadException($"{EngineEditor.Name} isn't in the game")
             : EngineEditor.Is, (e, p) => { if (EngineEditor.Is(e)) GearSpeeds.InEngine(new EngineEditorBase(e.Pointer), p); })));
@@ -109,6 +114,9 @@ internal static class NativePanels
 
     [HarmonyPostfix, HarmonyPatch(typeof(CannonEditor), nameof(CannonEditor.OnGUI))]
     static void Cannon(CannonEditor __instance, IGUILayout layout) => Draw(__instance, layout, __instance.RequestRedraw);
+
+    [HarmonyPostfix, HarmonyPatch(typeof(TrackEditor), nameof(TrackEditor.OnGUI))]
+    static void Track(TrackEditor __instance, IGUILayout layout) => Draw(__instance, layout, __instance.RequestRedraw);
 
     [HarmonyPostfix, HarmonyPatch(typeof(TransmissionEditor), nameof(TransmissionEditor.OnGUI))]
     static void Transmission(TransmissionEditor __instance, IGUILayout layout) => Draw(__instance, layout, __instance.RequestRedraw);

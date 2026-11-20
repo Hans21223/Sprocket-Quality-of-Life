@@ -30,11 +30,13 @@ internal static class Keybinds
         new("top", "View", "Top view (Ctrl: from below)", "Numpad7"),
         new("opposite", "View", "The opposite view", "Numpad9"),
         new("ortho", "View", "Orthographic view", "Numpad5"),
+        new("isolate", "View", "Show only the selected parts", "NumpadDivide"),
         new("zoomIn", "View", "Orthographic zoom in", "NumpadPlus"),
         new("zoomOut", "View", "Orthographic zoom out", "NumpadMinus"),
         new("flatten", "Mesh", "Flatten", "P"),
         new("loopCut", "Mesh", "Loop cut", "T"),
         new("inset", "Mesh", "Inset", "I"),
+        new("extrudeNormal", "Mesh", "Extrude along normal", ""), // no default: the game's own extrude is E, with any modifier
         new("bevel", "Mesh", "Bevel", "V"),
         new("selectFlat", "Selection", "Select linked flat faces", "U"),
         new("proportional", "Selection", "Proportional editing", "O"),

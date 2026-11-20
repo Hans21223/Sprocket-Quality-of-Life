@@ -72,6 +72,7 @@ internal static class CommandPalette
     static IEnumerable<RightClickMenu.Command> BuiltIns()
     {
         yield return new("Workshop/Open", "Workshop", "Open presets, saved parts and recovery", Keybinds.Shown("workshop"), true, "", WorkshopLibrary.Open);
+        yield return new("View/ShowOnlySelected", "View", IsolateView.Active ? "Show every part again" : "Show only the selected parts", Keybinds.Shown("isolate"), true, "", IsolateView.Toggle);
         bool parts = DesignEditor.Instance?.SelectedParts().Count > 0;
         yield return new("Patterns/Open", "Parts", "Repeat selected parts: line or circle", "", parts, "Select attached parts to repeat.", PartPatterns.Open);
     }

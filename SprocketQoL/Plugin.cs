@@ -10,14 +10,17 @@ using UnityEngine.Events;
 namespace SprocketQoL;
 
 /// Quality of Life: small editor improvements, each one a section in the game's own inspector panels.
-[BepInPlugin("local.sprocket.qol", "Quality of Life", "1.10.8")]
+[BepInPlugin("local.sprocket.qol", "Quality of Life", Version)]
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
+    internal const string Version = "1.11.0";
     internal static ManualLogSource ModLog = null!;
+    internal static ConfigEntry<bool>? AutoUpdate;
     internal static ConfigEntry<string>? Folded;
     internal static ConfigEntry<bool>? ShowHotkeys;
     internal static ConfigEntry<bool>? RotationAngle;
+    internal static ConfigEntry<bool>? TurretPreview, TurretPreviewAlways;
     internal static ConfigEntry<bool>? PartMassMarkers;
     internal static ConfigEntry<bool>? DrawingNoWireframe;
     internal static ConfigEntry<bool>? DrawingSeeThroughOutline;
@@ -27,12 +30,14 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<bool>? DrawingGrid;
     internal static ConfigEntry<float>? DrawingGridIntensity;
     internal static ConfigEntry<string>? DrawingHiddenGunLimits;
-    internal static ConfigEntry<float>? ExplodeSpread, FlashlightPercent, FullbrightPercent;
+    internal static ConfigEntry<float>? ExplodeSpread, FlashlightPercent, FullbrightPercent, UiScalePercent;
     internal static ConfigEntry<int>? BackupsKept;
     internal static ConfigEntry<float>? RotationSnap;
     internal static ConfigEntry<bool>? MirrorMerge, RelativeSnap;
     internal static ConfigEntry<bool>? BetterMeshPicking;
     internal static ConfigEntry<float>? MeshPickRadius;
+    internal static ConfigEntry<float>? MeshSurfaceAllowance;
+    internal static ConfigEntry<float>? DesignerCameraPercent;
     internal static ConfigEntry<bool>? PredictiveBuild, PredictEdgeMidpoints, PredictFaceCentres;
     internal static ConfigEntry<float>? PredictionRadius;
     internal static ConfigEntry<bool>? RecordDrives, StopNaNs;
@@ -61,6 +66,9 @@ public sealed class Plugin : BasePlugin
         DrawingHiddenGunLimits = Config.Bind("Drawing sheet", "Hidden gun limits", "[]", "Guns excluded from movement-limit annotations only. Managed by This gun's limits in the cannon panel. Stored per design name and gun ID; renaming a design starts a separate selection.");
         Folded = Config.Bind("Panels", "Folded sections", "", "Quality of Life sections folded away in the editor panels, separated by |");
         ShowHotkeys = Config.Bind("Panels", "Show hotkeys box", true, "The Hotkeys box beside a hand-made structure's panel (F1 in the editor shows or hides it)");
+        AutoUpdate = Config.Bind("Updates", "Automatic updates", true, "At each game start, look for a newer Quality of Life release on GitHub for this game version and install it (checked against the release's SHA-256); it's used from the next start.");
+        TurretPreview = Config.Bind("Editor", "Turret preview", true, "While a turret or gun part is selected: its turning range, the gun's elevation fan, and where the barrel at full depression clears the hull (green) or goes into it (red)");
+        TurretPreviewAlways = Config.Bind("Editor", "Turret preview always on", false, "Show the turret preview for every turret all the time, not only the selected one");
         RotationAngle = Config.Bind("Editor", "Rotation angle", true, "While turning a part or points with the game's rotation tool, the angle turned so far shows beside the mouse");
         PartMassMarkers = Config.Bind("Panels", "Show part mass markers", true, "Show the blue mass marker for each part when COM is enabled in the editor view filters. Disabling COM hides both vehicle and part mass markers.");
         ExplodeSpread = Config.Bind("Panels", "Exploded view spread", 0.5f, "How far apart the exploded view (F2) moves parts, in metres (F3 / F4 change it)");
@@ -74,6 +82,9 @@ public sealed class Plugin : BasePlugin
         MeshPickRadius = Config.Bind("Selection", "Click radius (pixels)", 12f, new ConfigDescription(
             "Maximum distance from the cursor to a vertex or edge, in screen pixels. Stays consistent when zooming. Smaller is more precise; larger is easier to click.",
             new AcceptableValueRange<float>(4, 30)));
+        MeshSurfaceAllowance = Config.Bind("Selection", "Surface allowance (mm)", MeshPicking.DefaultSurfaceAllowanceMm, new ConfigDescription(
+            "Allow points and edges this far behind a nearby plate along the viewing ray, in world millimetres. Helps with overlapping seams. Deeper hidden geometry still needs X-ray. 0 uses strict visibility.",
+            new AcceptableValueRange<float>(0, MeshPicking.MaxSurfaceAllowanceMm)));
         PredictiveBuild = Config.Bind("Build assist", "Advanced predictive mode", false,
             "Suggest nearby movement targets while moving points, edges or faces of a hand-made structure. Shows a guide; hold the Apply prediction key (N by default) to use the target during the current move. No movement is applied automatically.");
         PredictionRadius = Config.Bind("Build assist", "Suggestion radius (pixels)", 14f, new ConfigDescription(
@@ -81,6 +92,9 @@ public sealed class Plugin : BasePlugin
         PredictEdgeMidpoints = Config.Bind("Build assist", "Suggest edge midpoints", true, "Include the middle of stationary edges as possible movement targets.");
         PredictFaceCentres = Config.Bind("Build assist", "Suggest face centres", true, "Include the centre of stationary faces as possible movement targets.");
         BackupsKept = Config.Bind("Backups", "Backups kept", 50, "How many design backups (BepInEx\\SprocketQoLBackups, one per edit) to keep; the oldest go first. 0 keeps them all.");
+        UiScalePercent = Config.Bind("Graphics", "UI scale (percent)", 100f, "The game's panels, menus and labels (and QoL's windows) drawn bigger or smaller, in percent of the game's own size.");
+        DesignerCameraPercent = Config.Bind("Editor", "Camera speed (percent)", 100f, new ConfigDescription(
+            "Scale the builder camera's look, pan and zoom sensitivity from 1 to 100 percent. Lower values allow precise slow movement below the game's minimum. Gameplay camera settings stay independent.", new AcceptableValueRange<float>(1, 100)));
         StopNaNs = Config.Bind("Graphics", "Black box fix", true, "Turns on the cameras' Stop NaNs: on some graphics cards (older ones and old drivers most), smoke and fire leave bad pixels that bloom and anti-aliasing smear into black boxes. Costs a little GPU time.");
         RecordDrives = Config.Bind("Diagnostics", "Record drives", false, "Write every physics step of your own vehicle's drivetrain to BepInEx\\SprocketQoL-drives while you drive (a few MB a minute), to check the Speed & acceleration figures against the game.");
         PanelMode = Config.Bind("Panels", "QoL panel", "Automatic", "Quality of Life's own part panel: Automatic (only when the game's part panels can't be drawn into, after a game update), Always, or Off.");
@@ -103,14 +117,16 @@ public sealed class Plugin : BasePlugin
         AddComponent<DesignEditor>();
         AddComponent<DriveRecorder>();
         var harmony = new Harmony("local.sprocket.qol");
-        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(UndoStepLifetime), typeof(HoleQuality), typeof(MeshTools), typeof(MeshSelection), typeof(BuildAssist), typeof(WorkshopLibrary), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(MirrorSplit), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels), typeof(RightClickMenu) };
-        features = features.Concat(new[] { typeof(CommandPalette), typeof(PartPatterns) }).ToArray();
+        var features = new[] { typeof(InspectorSection), typeof(MassMarkers), typeof(TurretDriveRepair), typeof(TurretMotorLifecycle), typeof(ShapeTools), typeof(RestoreSection), typeof(UndoStepLifetime), typeof(HoleQuality), typeof(MeshTools), typeof(MeshSelection), typeof(BuildAssist), typeof(WorkshopLibrary), typeof(MergeFaces), typeof(Hotkeys), typeof(TurretCopy), typeof(ExplodedView), typeof(GunLength), typeof(GearSpeeds), typeof(PartPaint), typeof(PartPaint.SavedPaintLoad), typeof(ImageAddresses), typeof(DrawingSheet.NoHover), typeof(DrawingSettings), typeof(RotationSnap), typeof(MirrorMerge), typeof(MirrorSplit), typeof(ObjTransfer), typeof(ModOptions), typeof(NativePanels), typeof(RightClickMenu), typeof(PlayReport) };
+        features = features.Concat(new[] { typeof(CommandPalette), typeof(PartPatterns), typeof(CameraPrecision) }).ToArray();
         // One hook at a time: a game method a game update removed turns off that hook only (Mod Options > Compatibility).
         foreach (var feature in features) Hooks.Attach(harmony, feature);
         // The engine panel's class moved assembly in Sprocket 0.2.56: found while the game runs (EngineEditor), not named.
         Hooks.AttachPostfix(harmony, nameof(GearSpeeds), EngineEditor.Type, "CombustionEngineComponentEditor", "OnComponentRebuilt", AccessTools.Method(typeof(GearSpeeds), nameof(GearSpeeds.EngineChanged)));
         Hooks.AttachPostfix(harmony, nameof(NativePanels), EngineEditor.Type, "CombustionEngineComponentEditor", "OnGUI", AccessTools.Method(typeof(NativePanels), nameof(NativePanels.Engine)));
         PanelSections.Register();
+        try { Updater.Start(typeof(Plugin).Assembly.Location, Paths.GameRootPath, Version, UnityEngine.Application.version); }
+        catch (Exception ex) { Log.LogWarning($"QOL_UPDATE couldn't start: {ex.Message}"); }
         if (Hooks.Failures.Any()) Log.LogWarning("Quality of Life: " + Hooks.Summary());
         else Log.LogInfo("Quality of Life: " + Hooks.Summary());
         Log.LogInfo("Quality of Life loaded: Turret to Add-on, Merge add-ons, Cut with add-on, Hole quality, Merge faces, Mesh tools, Hotkeys, Turret copy, Exploded view, Gun length, Speed & acceleration, Max-quality photo, Own paint, Bridge, Circle, Fix mirror, Mirror merge, Mirror split, Rotation snap, OBJ export / import (F10).");
@@ -130,9 +146,12 @@ public sealed class Plugin : BasePlugin
                 "Panels/Flashlight brightness" => (0, 200, 5),
                 "Panels/Fullbright brightness" => (0, 100, 5),
                 "Editor/Rotation snap (degrees)" => (0, 45, 0.5),
+                "Editor/Camera speed (percent)" => (1, 100, 1),
                 "Selection/Click radius (pixels)" => (4, 30, 1),
+                "Selection/Surface allowance (mm)" => (0, 5, 0.5),
                 "Build assist/Suggestion radius (pixels)" => (4, 40, 1),
                 "Backups/Backups kept" => (0, 500, 10),
+                "Graphics/UI scale (percent)" => (50, 200, 5),
                 _ => null,
             },
             choices: d => d.Section == "Panels" && d.Key == "QoL panel" ? new[] { ("Automatic", "Automatic"), ("Always", "Always"), ("Off", "Off") } : null);

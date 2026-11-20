@@ -174,7 +174,7 @@ internal static class QolPanel
         bool folded;
         internal Backend(RectTransform list) { this.list = list; }
 
-        public float FieldWidth => 380;
+        public float FieldWidth => list.rect.width > 0 ? Math.Max(80, list.rect.width) : 380;
 
         public UiPresentation.ScreenBox? ScreenBounds
         {

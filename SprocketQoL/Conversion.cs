@@ -119,6 +119,46 @@ public static class Conversion
         ring["ringBlueprintVuid"] = nextBlock++;
     }
 
+    /// What a design holds and what in it would crash Play, for the log; nothing is changed. Fixable counts the problems
+    /// DesignEditor.Guarded repairs: Horizontal corners on zero-normal faces, rings linked to another turret's parts,
+    /// (mirror twins on each other's motor included). Non-finite numbers (NaN, infinity) can't be fixed safely, only reported.
+    public record DesignHealth(string Name, int Parts, int Turrets, int Shapes, int Faces, int ZeroNormalFaces,
+        int HorizontalOnZeroNormal, int TurretLinks, int NonFinite)
+    {
+        public int Fixable => HorizontalOnZeroNormal + TurretLinks;
+        public string Fixes => string.Join(", ", new[] {
+            (HorizontalOnZeroNormal, "Horizontal corner(s) on faces too small for a normal"),
+            (TurretLinks, "turret ring link(s) to another turret's parts") }.Where(x => x.Item1 > 0).Select(x => $"{x.Item1} {x.Item2}"));
+        public string Summary => $"\"{Name}\": {Parts} parts, {Turrets} turrets, {Shapes} shapes, {Faces} faces ({ZeroNormalFaces} too small for a normal); " +
+            $"crash risks: {(Fixable == 0 ? "none QoL fixes" : Fixes)}" + (NonFinite > 0 ? $"; {NonFinite} NaN/infinite numbers (not fixable, likely to crash)" : "");
+    }
+
+    public static DesignHealth Health(string json)
+    {
+        var b = Parse(json);
+        int parts = b["objects"] is JsonArray os ? os.Count : 0;
+        int turrets = b["objects"] is JsonArray all ? all.Count(o => o is JsonObject x && GuidOf(x) == RingGuid) : 0;
+        int shapes = 0, faces = 0, tiny = 0, nonFinite = 0;
+        foreach (var m in b["meshes"] as JsonArray ?? new JsonArray())
+        {
+            if (m?["meshData"]?["mesh"] is not JsonObject mesh || mesh["vertices"] is not JsonArray raw || mesh["faces"] is not JsonArray fs) continue;
+            shapes++; faces += fs.Count;
+            var v = raw.Select(x => x is JsonValue n && n.TryGetValue<double>(out var d) ? d : double.NaN).ToArray();
+            nonFinite += v.Count(d => !double.IsFinite(d));
+            foreach (var f in fs)
+                if (f?["v"] is JsonArray c && c.Count >= 3 && c.Take(3).Select(x => x!.GetValue<int>()).ToArray() is var k && k.All(i => i >= 0 && 3 * i + 2 < v.Length)
+                    && MeshPlans.ZeroNormal(new((float)v[3 * k[0]], (float)v[3 * k[0] + 1], (float)v[3 * k[0] + 2]),
+                        new((float)v[3 * k[1]], (float)v[3 * k[1] + 1], (float)v[3 * k[1] + 2]), new((float)v[3 * k[2]], (float)v[3 * k[2] + 1], (float)v[3 * k[2] + 2])))
+                    tiny++;
+        }
+        foreach (var o in b["objects"] as JsonArray ?? new JsonArray())
+            foreach (var key in new[] { "pos", "rot", "scale" })
+                if (o?["transform"]?[key] is JsonArray t)
+                    nonFinite += t.Count(x => !(x is JsonValue n && n.TryGetValue<double>(out var d) && double.IsFinite(d)));
+        return new DesignHealth(b["header"]?["name"]?.GetValue<string>() ?? "(no name)", parts, turrets, shapes, faces, tiny,
+            MeshPlans.HorizontalOnZeroNormal(b, fix: false), RepairTurretLinks(Parse(json)), nonFinite);
+    }
+
     /// Rings linked to another turret's body or motor, put back on their own (in `b`); how many links changed. A copied
     /// ring (Alt-copy) kept the original's links: Play then crashes in the game's turret audio stage ("turret" null). A
     /// ring's own motor is the only one whose nearest ring is this one; its own body is the part under the ring that motor

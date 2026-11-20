@@ -50,7 +50,7 @@ internal static class MeshSelection
     // of allocating a native list, or reading every element through interop, each frame.
     static readonly Il2CppSystem.Collections.Generic.List<int> candidates = new();
     readonly record struct SampleKey(int Frame, IntPtr Mesh, IntPtr Context, ElementType Type, bool XRay,
-        Vector2 Pointer, Vector2 Size, float Radius, float Near, float Far,
+        Vector2 Pointer, Vector2 Size, float Radius, float SurfaceAllowance, float Near, float Far,
         Matrix4x4 Projection, Matrix4x4 View, Matrix4x4 WorldToMesh, Matrix4x4 CameraToWorld, Matrix4x4 CameraProjection,
         int Vertices, int Edges, int Faces, int Loops);
     static (SampleKey Key, SampleResult Result)? lastSample;
@@ -84,8 +84,9 @@ internal static class MeshSelection
             context.GetPerspectiveMatrix(ref projection); // P * V, without the mesh transform
             projection *= context.MeshToWorld;
             var view = context.ViewMatrix * context.MeshToWorld;
+            float surfaceMm = Plugin.MeshSurfaceAllowance?.Value ?? MeshPicking.DefaultSurfaceAllowanceMm;
             var sampleKey = new SampleKey(Time.frameCount, mesh.Pointer, context.Pointer, type, xRayMode,
-                pointer, size, radius, near, far, projection, view, context.WorldToMesh,
+                pointer, size, radius, surfaceMm, near, far, projection, view, context.WorldToMesh,
                 camera.cameraToWorldMatrix, camera.projectionMatrix, mesh.vertices.Count, mesh.edges.Count, mesh.faces.Count, mesh.loops.Count);
             // Hover and native sampling may share work only for the same view and mesh
             // context. A click always samples afresh, including after a same-frame edit.
@@ -115,7 +116,7 @@ internal static class MeshSelection
                 if (!Finite(distance)) return false;
                 float tolerance = Math.Max(1e-5f * unitsPerMetre, Math.Abs(distance) * 1e-6f);
                 if (distance < -tolerance) return false;
-                float allowance = MeshPicking.SurfaceAllowance(unitsPerMetre);
+                float allowance = MeshPicking.SurfaceAllowance(surfaceMm, unitsPerMetre);
                 return MeshPicking.InView(distance, tolerance, own, (from, length) =>
                     MeshSampling.RaycastFaces(mesh, origin + direction * from, direction, length, out MeshSampling.ElementHit face, FaceMode.Both)
                         ? (face.index, face.distance) : null, allowance);

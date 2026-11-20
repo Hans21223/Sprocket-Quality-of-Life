@@ -1,9 +1,11 @@
 using HarmonyLib;
 using Sprocket.Gameplay;
+using Sprocket.PlateMesh;
 using Sprocket.Vehicles.PlateStructures.Design;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using GameInputState = Sprocket.Controls.InputState;
+using Num = System.Numerics.Vector3;
 
 namespace SprocketQoL;
 
@@ -16,7 +18,7 @@ namespace SprocketQoL;
 [HarmonyPatch]
 public static class RightClickMenu
 {
-    sealed record Item(string Label, string Key, Action Run);
+    sealed record Item(string Label, string Key, Action Run, bool Enabled = true, string Reason = "");
     sealed record Placed(Rect Rect, Item? Item, string? Title);
 
     static List<Placed>? placed; // the open menu: section titles and items where they're drawn; null when closed
@@ -42,6 +44,7 @@ public static class RightClickMenu
             if (Keyboard.current?.escapeKey.wasPressedThisFrame == true || mouse.rightButton.wasPressedThisFrame) { Close(); return; }
             if (!mouse.leftButton.wasPressedThisFrame) return;
             var item = placed.FirstOrDefault(x => x.Item != null && x.Rect.Contains(at))?.Item;
+            if (item is { Enabled: false }) { DesignEditor.Instance?.Say(item.Reason); return; }
             Close();
             if (item == null) return;
             Plugin.ModLog.LogInfo($"Right-click menu: {item.Label}");
@@ -91,7 +94,7 @@ public static class RightClickMenu
     /// mesh can be edited).
     sealed record Selection(DesignEditor Editor, List<int> Picked, int Active, List<int> Addons, List<int> Others, PlateStructureEditor? Shape);
     /// An item: its section, name, key, when it fits the selection and what it does.
-    sealed record Entry(string Section, string Label, Func<string> Key, Func<Selection, bool> When, Action<Selection> Run);
+    sealed record Entry(string Section, string Label, Func<string> Key, Func<Selection, bool> When, Action<Selection> Run, string? Submenu = null);
 
     static string G(string action) => Hotkeys.GameKey(action);
     static string K(string id) => Keybinds.Shown(id) is var key && key != "(none)" ? key : "";
@@ -100,6 +103,81 @@ public static class RightClickMenu
     static bool Addon(Selection s) => s.Picked.Count > 0 && s.Addons.Contains(s.Active);
     static bool Shape(Selection s) => s.Shape != null;
     static bool Always(Selection s) => true;
+    static bool OriginShape(Selection s) => s.Picked.Count == 1 && s.Shape?.Component?.VehicleObject is { } part
+        && (int)part.VUID == s.Active && s.Shape.meshEditor?.Mesh?.EditMesh != null;
+    static bool OriginPoints(Selection s)
+    {
+        if (!OriginShape(s)) return false;
+        var mesh = s.Shape!.meshEditor.Mesh.EditMesh;
+        var vertices = mesh.vertices;
+        for (int i = 0; i < vertices.Count; i++) if (vertices[i].HasFlag(ElementFlags.Selected)) return true;
+        var edges = mesh.edges;
+        for (int i = 0; i < edges.Count; i++) if (edges[i].HasFlag(ElementFlags.Selected)) return true;
+        var faces = mesh.faces;
+        for (int i = 0; i < faces.Count; i++) if (faces[i].HasFlag(ElementFlags.Selected)) return true;
+        return false;
+    }
+
+    static string Unavailable(Entry entry) => entry.Submenu == "Set origin"
+        ? entry.Label == "Set origin to the shape's middle" ? "Select one editable shape first." : "Select one editable shape and its points, edges or faces first."
+        : entry.Section.StartsWith("Mesh", StringComparison.Ordinal) ? "Select an editable plate structure first. The tool may also require selected points, edges or faces."
+        : entry.Section == "Add-on" ? "Select a compatible add-on and any target parts first." : "Select compatible parts before running this action.";
+
+    static Selection? CurrentSelection()
+    {
+        if (DesignEditor.Instance is not { IsReady: true } editor) return null;
+        var picked = editor.SelectedParts();
+        return new(editor, picked, picked.Count > 0 ? picked[^1] : -1, editor.SelectedParts(Conversion.AddonGuid),
+            picked.Count > 0 ? picked.Where(v => v != picked[^1]).ToList() : new(), Hotkeys.Current);
+    }
+
+    static void Run(Entry entry, Selection opened, int session)
+    {
+        var now = CurrentSelection();
+        if (now == null || now.Editor.IsBusy) return;
+        if (now.Editor.Pointer != opened.Editor.Pointer || now.Editor.Session != session || !now.Picked.SequenceEqual(opened.Picked))
+        { now.Editor.Say("The selection changed. Open the menu again."); return; }
+        if (entry.When(now)) entry.Run(now); else now.Editor.Say(Unavailable(entry));
+    }
+
+    static void SetOrigin(Selection s, AddonEdits.OriginMode mode)
+    {
+        if (!OriginShape(s)) return;
+        if (mode == AddonEdits.OriginMode.WholeShapeBounds)
+        {
+            s.Editor.RequestLiveEdit("Setting the origin", "Origin moved to the middle of the shape. Restore undoes it.",
+                json => AddonEdits.PlanOrigin(json, s.Active));
+            return;
+        }
+        var mesh = s.Shape!.meshEditor.Mesh.EditMesh;
+        var vertices = mesh.vertices;
+        var selected = new HashSet<IntPtr>();
+        for (int i = 0; i < vertices.Count; i++) if (vertices[i].HasFlag(ElementFlags.Selected)) selected.Add(vertices[i].Pointer);
+        var edges = mesh.edges;
+        for (int i = 0; i < edges.Count; i++) if (edges[i].HasFlag(ElementFlags.Selected))
+        { selected.Add(edges[i].v0.Pointer); selected.Add(edges[i].v1.Pointer); }
+        var faces = mesh.faces;
+        for (int i = 0; i < faces.Count; i++) if (faces[i].HasFlag(ElementFlags.Selected))
+            foreach (var vertex in HoleQuality.Corners(faces[i], p => p)) selected.Add(vertex.Pointer);
+        var positions = new Num[vertices.Count];
+        var indices = new List<int>();
+        for (int i = 0; i < vertices.Count; i++)
+        {
+            positions[i] = HoleQuality.ToNum(vertices[i].position);
+            if (selected.Contains(vertices[i].Pointer)) indices.Add(i);
+        }
+        if (indices.Count == 0) { s.Editor.Say("Select points, edges or faces before setting the origin."); return; }
+        var shapePointer = s.Shape.Pointer; var meshPointer = mesh.Pointer;
+        s.Editor.RequestLiveEdit("Setting the origin", "Origin moved to the selected geometry. Restore undoes it.", json =>
+        {
+            var now = CurrentSelection();
+            if (now == null || !OriginShape(now) || now.Active != s.Active || now.Shape!.Pointer != shapePointer
+                || now.Shape.meshEditor.Mesh.EditMesh.Pointer != meshPointer)
+                throw new Exception("The selected shape changed before its origin could be moved. Try again.");
+            // The serializer's vertex order must match the captured native list. Never use View's face-traversal IDs.
+            return AddonEdits.PlanOrigin(json, s.Active, mode, indices, positions);
+        });
+    }
 
     static readonly Entry[] Entries =
     {
@@ -110,8 +188,12 @@ public static class RightClickMenu
         new("Object", "Parent to active (last selected)", None, s => s.Picked.Count > 1, s => s.Editor.ParentTo(s.Active, s.Others)),
         new("Object", "Scatter other add-ons over this", None, s => Part(s) && s.Addons.Any(v => v != s.Active),
             s => ShapeTools.Scatter(s.Active, s.Addons.Where(v => v != s.Active).ToList())),
-        new("Object", "Set origin to the shape's middle", None, s => s.Picked.Count == 1 && Shape(s), s =>
-            s.Editor.RequestLiveEdit("Setting the origin", "Origin moved to the middle of the shape.", json => AddonEdits.PlanOrigin(json, s.Active))),
+        new("Object", "Set origin to the shape's middle", None, OriginShape,
+            s => SetOrigin(s, AddonEdits.OriginMode.WholeShapeBounds), "Set origin"),
+        new("Object", "Set origin to selected points center", None, OriginPoints,
+            s => SetOrigin(s, AddonEdits.OriginMode.SelectedPointsCenter), "Set origin"),
+        new("Object", "Set origin to selected bounds center", None, OriginPoints,
+            s => SetOrigin(s, AddonEdits.OriginMode.SelectedPointsBounds), "Set origin"),
         new("Add-on", "Merge selected add-ons into this", () => K("join"), s => Addon(s) && s.Addons.Count > 1, _ => Keybinds.Press("join")),
         new("Add-on", "Cut through-hole", None, Addon, s => ShapeTools.Cut(s.Active, s.Others, pocket: false)),
         new("Add-on", "Cut recess (walls and floor)", None, Addon, s => ShapeTools.Cut(s.Active, s.Others, pocket: true)),
@@ -136,6 +218,7 @@ public static class RightClickMenu
         new("Mesh tools (QoL)", "Flatten", () => K("flatten"), Shape, _ => Keybinds.Press("flatten")),
         new("Mesh tools (QoL)", "Loop cut", () => K("loopCut"), Shape, _ => Keybinds.Press("loopCut")),
         new("Mesh tools (QoL)", "Inset", () => K("inset"), Shape, _ => Keybinds.Press("inset")),
+        new("Mesh tools (QoL)", "Extrude along normal", () => K("extrudeNormal"), Shape, s => MeshTools.Extrude(s.Shape!)),
         new("Mesh tools (QoL)", "Bevel", () => K("bevel"), Shape, _ => Keybinds.Press("bevel")),
         new("Mesh tools (QoL)", "Smooth edge", None, Shape, s => MeshTools.SmoothEdge(s.Shape!)),
         new("Mesh tools (QoL)", "Fillet", None, Shape, s => MeshTools.Fillet(s.Shape!)),
@@ -160,35 +243,49 @@ public static class RightClickMenu
     /// A single source of context actions for the pointer menu and searchable command palette.
     internal static IReadOnlyList<Command> Commands()
     {
-        var editor = DesignEditor.Instance;
-        if (editor?.IsReady != true) return Array.Empty<Command>();
-        var picked = editor.SelectedParts(); int active = picked.Count > 0 ? picked[^1] : -1;
-        var selection = new Selection(editor, picked, active, editor.SelectedParts(Conversion.AddonGuid), picked.Where(v => v != active).ToList(), Hotkeys.Current);
+        var selection = CurrentSelection();
+        if (selection == null) return Array.Empty<Command>();
         return Entries.Select(entry =>
         {
             bool enabled = entry.When(selection);
-            string reason = enabled ? "" : entry.Section.StartsWith("Mesh", StringComparison.Ordinal) ? "Select an editable plate structure first. The tool may also require selected points, edges or faces."
-                : entry.Section == "Add-on" ? "Select a compatible add-on and any target parts first." : "Select compatible parts before running this action.";
+            string reason = enabled ? "" : Unavailable(entry);
             return new Command(entry.Section + "/" + entry.Label, entry.Section, entry.Label, entry.Key(), enabled, reason, () =>
             {
-                var current = DesignEditor.Instance;
-                if (current?.IsReady != true || current.IsBusy) return;
-                var now = current.SelectedParts(); int last = now.Count > 0 ? now[^1] : -1;
-                var state = new Selection(current, now, last, current.SelectedParts(Conversion.AddonGuid), now.Where(v => v != last).ToList(), Hotkeys.Current);
-                if (entry.When(state)) entry.Run(state); else current.Say(reason);
+                var state = CurrentSelection();
+                if (state == null || state.Editor.IsBusy) return;
+                if (entry.When(state)) entry.Run(state); else state.Editor.Say(reason);
             });
         }).ToArray();
     }
 
     static List<(string Title, List<Item> Items)> Build()
     {
-        if (DesignEditor.Instance is not { } editor) return new();
-        var picked = editor.SelectedParts();
-        int active = picked.Count > 0 ? picked[^1] : -1;
-        var s = new Selection(editor, picked, active, editor.SelectedParts(Conversion.AddonGuid), picked.Where(v => v != active).ToList(), Hotkeys.Current);
+        var s = CurrentSelection();
+        if (s == null) return new();
+        int session = s.Editor.Session;
         var hidden = Hidden();
         return Entries.Where(e => !hidden.Contains(e.Section + "/" + e.Label) && e.When(s)).GroupBy(e => e.Section)
-            .Select(g => (g.Key, g.Select(e => new Item(e.Label, e.Key(), () => e.Run(s))).ToList())).ToList();
+            .Select(g =>
+            {
+                var items = new List<Item>(); var submenus = new HashSet<string>();
+                foreach (var e in g)
+                {
+                    if (e.Submenu is not { } submenu) items.Add(new(e.Label, e.Key(), () => Run(e, s, session)));
+                    else if (submenus.Add(submenu)) items.Add(new(submenu + " >", "", () => OpenSubmenu(submenu, s, session)));
+                }
+                return (g.Key, items);
+            }).ToList();
+    }
+
+    static void OpenSubmenu(string title, Selection s, int session)
+    {
+        var p = Mouse.current?.position.ReadValue() ?? Vector2.zero;
+        var at = new Vector2(p.x, Screen.height - p.y);
+        var items = Entries.Where(e => e.Submenu == title && Shows(e.Section, e.Label))
+            .Select(e => new Item(e.Label.StartsWith("Set origin to ", StringComparison.Ordinal) ? e.Label[14..] : e.Label,
+                e.Key(), () => Run(e, s, session), e.When(s), Unavailable(e))).ToList();
+        items.Add(new("< Back", "", () => Place(Build(), at)));
+        Place(new() { (title, items) }, at);
     }
 
     /// Lays the sections out down from the mouse, a new column when the next section wouldn't fit, all kept on screen.
@@ -223,8 +320,12 @@ public static class RightClickMenu
             var r = row.Rect;
             if (row.Title != null) { GUI.Label(new Rect(r.x + 8, r.y, r.width - 16, r.height), row.Title, titleStyle); continue; }
             if (r.Contains(mouse)) GUI.Box(r, "");
-            GUI.Label(new Rect(r.x + 18, r.y, r.width - 28, r.height), row.Item!.Label, labelStyle);
-            if (row.Item.Key.Length > 0) GUI.Label(new Rect(r.x + 18, r.y, r.width - 28, r.height), row.Item.Key, keyStyle);
+            var item = row.Item!;
+            var color = GUI.color;
+            if (!item.Enabled) GUI.color = new Color(color.r, color.g, color.b, color.a * 0.45f);
+            GUI.Label(new Rect(r.x + 18, r.y, r.width - 28, r.height), item.Label, labelStyle);
+            if (item.Key.Length > 0) GUI.Label(new Rect(r.x + 18, r.y, r.width - 28, r.height), item.Key, keyStyle);
+            GUI.color = color;
         }
     }
 

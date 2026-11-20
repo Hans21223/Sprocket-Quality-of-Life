@@ -575,6 +575,44 @@ public static partial class MeshTools
         });
     }
 
+    static float extrudeMm = 100;
+
+    /// Extrude along normal (a Discord request: Blender's E on faces): the selected faces move out by a set distance
+    /// along their own normal, with side faces to where they were. The moved faces stay selected, ready to move on.
+    internal static void Extrude(PlateStructureEditor e)
+    {
+        if (e.meshEditor.SelectType != MeshEditType.Face) { e.operations.NotifyError("Extrude along normal: switch to Faces and select faces"); return; }
+        bool mirror = e.meshEditor.Symmetry;
+        float distance = extrudeMm / 1000;
+        Run(e, "Extrude along normal", mesh =>
+        {
+            var v = new View(mesh);
+            var scope = WithTwins(v, new HashSet<int>(v.SelectedFaces), mirror);
+            var normals = scope.ToDictionary(f => f, f => Unit(HoleRing.Normal(v.Corners[f].Select(p => v.Pos[p]).ToList())));
+            return Apply(mesh, v, MeshPlans.Extrude(v.Pos, v.Corners, scope, distance), "extrude",
+                afterApply: made =>
+                {
+                    // Only the moved faces stay selected (not the side walls or the points they left).
+                    foreach (var (face, _) in made) Select(face, false);
+                    foreach (var (face, source) in made)
+                        if (Num.Dot(Unit(HoleRing.Normal(HoleQuality.Corners(face).ToList())), normals[source]) > 0.5f) Select(face, true);
+                });
+        });
+    }
+
+    static Num Unit(Num n) => n.LengthSquared() > 0 ? Num.Normalize(n) : Num.Zero;
+
+    static void Select(Face face, bool on)
+    {
+        if (on) face.EnableFlag(ElementFlags.Selected); else face.DisableFlag(ElementFlags.Selected);
+        var l = face.firstLoop;
+        for (int k = 0; k < face.vertexCount; k++, l = l.next)
+        {
+            if (on) { l.vertex.EnableFlag(ElementFlags.Selected); l.edge.EnableFlag(ElementFlags.Selected); }
+            else { l.vertex.DisableFlag(ElementFlags.Selected); l.edge.DisableFlag(ElementFlags.Selected); }
+        }
+    }
+
     static void Bevel(PlateStructureEditor e)
     {
         if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Bevel: switch to Edges and select edges"); return; }
@@ -897,6 +935,7 @@ public static partial class MeshTools
         if (Plain("flatten")) Flatten(e);
         else if (Plain("loopCut")) LoopCut(e);
         else if (Plain("inset")) Inset(e);
+        else if (Plain("extrudeNormal")) Extrude(e);
         else if (Plain("bevel")) Bevel(e);
         else if (Plain("selectFlat")) SelectFlat(e);
         else if (Plain("proportional")) { proportional = !proportional; e.RequestRedraw(); Plugin.ModLog.LogInfo($"Proportional editing {(proportional ? "on" : "off")}"); }
@@ -2023,6 +2062,10 @@ public static partial class MeshTools
         var insetTip = new Tip("Inset", "In Faces mode, select faces and choose a width in millimetres. Inset adds a smaller inner face with a border around it. Adjacent selected faces inset together. Mirror applies; Ctrl+Z undoes the edit.");
         ui.Slider("Inset width (mm)", insetMm, 1, 500, Ui.FloatCallback(v => insetMm = MathF.Round(v)));
         ui.Button("Inset (I)", Ui.Callback(() => Inset(__instance)), insetTip);
+        var extrudeTip = new Tip("Extrude along normal", "In Faces mode, select faces and choose a distance in millimetres. The faces move out along their own normal (a negative distance pushes them in), with side faces back to where they were; joined faces move together. The moved faces stay selected. Mirror applies; Ctrl+Z undoes the edit.");
+        ui.Slider("Extrude (mm)", extrudeMm, -1000, 1000, Ui.FloatCallback(v => extrudeMm = MathF.Round(v)));
+        string extrudeKey = Keybinds.Shown("extrudeNormal");
+        ui.Button(extrudeKey == "(none)" ? "Extrude along normal" : $"Extrude along normal ({extrudeKey})", Ui.Callback(() => Extrude(__instance)), extrudeTip);
 
         Ui.Section(layout, "Edge rounding");
         ui.InfoField("Edges mode: select edges to round.\nMirror applies; Ctrl+Z undoes the whole edit.", 2);

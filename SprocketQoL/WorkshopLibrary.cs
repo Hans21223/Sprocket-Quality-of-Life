@@ -112,9 +112,10 @@ internal static class WorkshopLibrary
         rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f); panel = rect.gameObject;
         panel.AddComponent<Image>().color = new Color(0.08f, 0.09f, 0.105f, 1);
         Label("Workshop", 22, 14, 700, 34, 25); Click("Close / Esc", 880, 14, 155, 34, Close);
-        string[] tabs = { "Tool presets", "Saved parts", "Clipboard history", "Recovery", "Selection sets", "Support" };
-        for (int i = 0; i < tabs.Length; i++) { int pick = i; Click((tab == i ? "● " : "") + tabs[i], 22 + i * 170, 58, 163, 34, () => { tab = pick; page = 0; selected = confirmDelete = search = ""; Reload(); redraw = true; }); }
+        string[] tabs = { "Tool presets", "Saved parts", "Clipboard", "Recovery", "Selection sets", "Support", "Factions" };
+        for (int i = 0; i < tabs.Length; i++) { int pick = i; Click((tab == i ? "● " : "") + tabs[i], 22 + i * 146, 58, 140, 34, () => { tab = pick; page = 0; selected = confirmDelete = search = ""; Reload(); redraw = true; }); }
         if (tab == 5) { Support(); return; }
+        if (tab == 6) { Factions(); return; }
         Input(search, "Search names, tags and operations…", 22, 106, 690, 34, value => { search = value; page = 0; redrawRows = true; });
         Click("Refresh", 725, 106, 145, 34, () => { Reload(); redrawRows = true; });
         if (tab != 4) Click("Open folder", 882, 106, 153, 34, () => OpenFolder(tab == 0 ? ToolPresetStore.DirectoryPath : tab == 3 ? WorkshopStorage.BackupDirectory : WorkshopStorage.LibraryDirectory));
@@ -280,6 +281,35 @@ internal static class WorkshopLibrary
         }
         return WorkshopStorage.Scrub(report.ToString(), (WorkshopStorage.Root, "[BepInEx]"),
             (Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "[User]"), (Path.GetDirectoryName(WorkshopStorage.Root) ?? "", "[Game]"));
+    }
+
+    /// Renaming a faction: its folder and file. The faction in use stays the one in use, under its new name.
+    static void Factions()
+    {
+        if (factions.Count == 0) { Label("No factions found.", 22, 106, 700, 34); return; }
+        Click("Faction: " + factions[faction].Name + " ›", 22, 106, 690, 34, () => { faction = (faction + 1) % factions.Count; message = ""; redraw = true; });
+        Input(name, "New name", 22, 157, 420, 34, value => name = value);
+        Click("Rename faction", 455, 157, 250, 34, () => Run(() =>
+        {
+            var (oldName, directory) = factions[faction];
+            bool current = FactionManager.CurrentFaction?.Directory is { } now && string.Equals(Path.GetFullPath(now).TrimEnd('\\'), Path.GetFullPath(directory).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+            var previous = FactionManager.CurrentFaction;
+            string moved = WorkshopStorage.RenameFaction(directory, name, current ? path =>
+            {
+                string renamedName = Path.GetFileName(path);
+                if (!FactionIO.TryGetFaction(renamedName, out var renamed) || renamed == null)
+                    throw new IOException("The game could not reopen the renamed faction. Its original name has been restored.");
+                FactionManager.CurrentFaction = renamed;
+                FactionIO.SaveCurrentFaction(renamedName);
+            } : null, current ? () =>
+            {
+                FactionManager.CurrentFaction = previous;
+                FactionIO.SaveCurrentFaction(oldName);
+            } : null), newName = Path.GetFileName(moved);
+            factions[faction] = (newName, moved); name = "";
+            message = $"Renamed {oldName} to {newName}. Its designs, sights and design numbering moved with it.";
+        }));
+        Label(message.Length > 0 ? message : "Renames the faction's folder and file in Documents\\My Games\\Sprocket\\Factions; its designs move with it.", 22, 214, 1010, 60, 16);
     }
 
     static void OpenFolder(string path)

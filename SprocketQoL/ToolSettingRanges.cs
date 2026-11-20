@@ -9,6 +9,7 @@ internal static class ToolSettingRanges
         {
             "segments" => (4, 96), "sizePercent" => (10, 300),
             "insetMm" or "bevelMm" or "smoothMm" or "filletRadiusMm" => (1, 500),
+            "extrudeMm" => (-1000, 1000),
             "smoothSegments" or "filletSegments" or "splitSections" => (2, 16),
             "loopCuts" => (1, 16), "loopOffset" => (1, 99), "filletControlMm" => (.1, 20),
             "flatAngle" => (.5, 30), "radiusMm" => (10, 5000), "bridgeCuts" => (0, 32),

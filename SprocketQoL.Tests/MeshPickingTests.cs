@@ -143,8 +143,8 @@ static class MeshPickingTests
         Check(!Seen(10, new[] { 1 }, (1, 9f), (1, 9.2f), (1, 9.4f), (1, 9.6f), (5, 9.8f)),
             "another plate after the fourth own crossing still hides the point");
         const float numerical = .00001f;
-        float allowance = SurfaceAllowance(1);
-        Near(allowance, .002f, 1e-8f, "near-surface repair is bounded to two world millimetres");
+        float allowance = SurfaceAllowance(DefaultSurfaceAllowanceMm, 1);
+        Near(allowance, .002f, 1e-8f, "surface allowance is two world millimetres by default");
         bool SurfaceSeen(float distance, float slack, int[] own, params (int Face, float At)[] faces)
             => InView(distance, numerical, own, (from, length) => Cast(faces, from, length), slack);
         Check(SurfaceSeen(10, allowance, Array.Empty<int>(), (5, 9.999f)),
@@ -153,6 +153,8 @@ static class MeshPickingTests
             "zero surface allowance preserves strict visibility");
         Check(!SurfaceSeen(10, allowance, Array.Empty<int>(), (5, 9.995f)),
             "a point five millimetres behind another plate stays hidden");
+        Check(SurfaceSeen(10, SurfaceAllowance(5, 1), Array.Empty<int>(), (5, 9.996f)),
+            "the optional five millimetre allowance accepts a four millimetre seam");
         Check(!SurfaceSeen(10, allowance, new[] { 1 }, (1, 9f), (5, 9.0005f)),
             "surface slack is never used to advance past own faces and hop a real blocker");
         Check(SurfaceSeen(10, allowance, new[] { 1 }, (1, 9f), (1, 9.2f), (1, 9.4f), (1, 9.6f), (5, 9.999f)),
@@ -166,14 +168,18 @@ static class MeshPickingTests
         foreach (var worldDirection in new[] { Vector3.UnitZ, Vector3.Normalize(new Vector3(1, 2, 3)) })
         {
             float factor = Vector3.TransformNormal(worldDirection, Matrix4x4.CreateScale(scale3)).Length();
-            float localAllowance = SurfaceAllowance(factor);
+            float localAllowance = SurfaceAllowance(2, factor);
             bool AtWorldDistance(float blocker) => InView(10 * factor, numerical * factor, Array.Empty<int>(),
                 (from, length) => Cast(new[] { (Face: 5, At: blocker * factor) }, from, length), localAllowance);
             Check(AtWorldDistance(9.999f), "scaled or mirrored ray accepts the same one millimetre world seam");
             Check(!AtWorldDistance(9.99f), "scaled or mirrored ray still rejects a ten millimetre world blocker");
         }
+        Check(SurfaceAllowance(-1, 1) == 0 && SurfaceAllowance(99, 1) == SurfaceAllowance(5, 1),
+            "surface allowance is bounded even for a manually edited config");
+        foreach (float invalid in new[] { float.NaN, float.NegativeInfinity, float.PositiveInfinity })
+            Check(SurfaceAllowance(invalid, 1) == allowance, "invalid configured surface allowance falls back to the default");
         foreach (float invalid in new[] { 0f, -1f, float.NaN, float.NegativeInfinity, float.PositiveInfinity })
-            Check(SurfaceAllowance(invalid) == 0, "invalid transform scale cannot create an unbounded allowance");
+            Check(SurfaceAllowance(2, invalid) == 0, "invalid transform scale cannot create an unbounded allowance");
         foreach (float invalid in new[] { -1f, float.NaN, float.PositiveInfinity })
         {
             Check(!InView(invalid, numerical, new[] { 1 }, (_, _) => null), "invalid target distance is not visible");

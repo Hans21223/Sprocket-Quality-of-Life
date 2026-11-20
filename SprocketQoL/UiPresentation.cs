@@ -23,6 +23,8 @@ internal static class UiPresentation
         new("turret.convert", "Convert turret to add-on", "Turret to Add-on"),
         new("turret.drives", "Repair turret drives", "Mirrored turret drives"),
         new("gun.measure", "Gun dimensions", "Gun length", "Barrel measurements"),
+        new("gun.reload", "Reload estimates", "Reload"),
+        new("tracks.length", "Track length", "Track length"),
         new("vehicle.speed", "Speed estimates", "Speed & acceleration"),
         new("parts.paint", "Part paint", "Own paint"),
         new("edit.restore", "Restore previous design", "Undo last Quality of Life edit"),
