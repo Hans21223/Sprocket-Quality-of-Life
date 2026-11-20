@@ -19,7 +19,7 @@ internal static class Updater
     internal static void Start(string dllPath, string root, string version, string gameVersion)
     {
         pluginDir = Path.GetDirectoryName(dllPath) ?? ""; gameRoot = root; current = version; game = gameVersion;
-        try { foreach (var old in Directory.EnumerateFiles(pluginDir, "SprocketQoL*.old*")) try { File.Delete(old); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+        try { foreach (var old in UpdateRules.OldUpdateFiles(pluginDir)) try { File.Delete(old); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
         catch (Exception ex) { Plugin.ModLog.LogWarning($"QOL_UPDATE couldn't tidy the last update's old files: {ex.Message}"); }
         if (Plugin.AutoUpdate?.Value == true) Check(); else Status = "Automatic updates are off.";
     }

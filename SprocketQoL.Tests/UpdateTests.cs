@@ -45,6 +45,8 @@ static class UpdateTests
             string other = Path.Combine(sandbox, "ModManager", "mods", "Other game", "Quality of Life", "BepInEx", "plugins");
             foreach (var d in new[] { plugins, manager, other }) Directory.CreateDirectory(d);
             File.WriteAllText(Path.Combine(plugins, "SprocketQoL.dll"), "old dll");
+            File.WriteAllText(Path.Combine(plugins, "SprocketQoL.dll.old"), "user backup");
+            File.WriteAllText(Path.Combine(plugins, "SprocketQoL-other.dll.old"), "other user backup");
             File.WriteAllText(Path.Combine(plugins, "SprocketQoL-README.txt"), "old readme");
             File.WriteAllText(Path.Combine(manager, "SprocketQoL.dll"), "old dll");
             File.WriteAllText(Path.Combine(manager, "SprocketQoL-LICENSE.txt"), "old licence");
@@ -69,15 +71,62 @@ static class UpdateTests
             // The running DLL is open the way a loaded assembly is: it can be renamed, not replaced.
             using (new FileStream(Path.Combine(plugins, "SprocketQoL.dll"), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
                 UpdateRules.Install(bytes, sha, plugins, copies);
-            Check(File.ReadAllText(Path.Combine(plugins, "SprocketQoL.dll")) == "new dll" && File.ReadAllText(Path.Combine(plugins, "SprocketQoL.dll.old")) == "old dll",
+            Check(File.ReadAllText(Path.Combine(plugins, "SprocketQoL.dll")) == "new dll" && File.ReadAllText(Path.Combine(plugins, "SprocketQoL.dll.qol-update-old")) == "old dll",
                 "the running DLL is moved aside and the new one put in its place");
             Check(File.ReadAllText(Path.Combine(plugins, "SprocketQoL-README.txt")) == "new readme" && !File.Exists(Path.Combine(plugins, "SprocketQoL.pdb")),
                 "files already there are replaced; none are added");
             Check(File.ReadAllText(Path.Combine(manager, "SprocketQoL.dll")) == "new dll" && File.ReadAllText(Path.Combine(manager, "SprocketQoL-LICENSE.txt")) == "new licence"
                   && !File.Exists(Path.Combine(manager, "SprocketQoL-README.txt")), "the Mod Manager's copy is updated the same way");
+            Check(File.ReadAllText(Path.Combine(plugins, "SprocketQoL.dll.old")) == "user backup"
+                  && File.ReadAllText(Path.Combine(plugins, "SprocketQoL-other.dll.old")) == "other user backup"
+                  && UpdateRules.OldUpdateFiles(plugins).Single() == Path.Combine(plugins, "SprocketQoL.dll.qol-update-old"),
+                "only explicitly marked QoL update backups are eligible for cleanup");
+            File.Move(Path.Combine(plugins, "SprocketQoL.dll"), Path.Combine(plugins, "SprocketQoL.dll.qol-update-old2"));
+            Check(!UpdateRules.OldUpdateFiles(plugins).Any(path => path.EndsWith("SprocketQoL.dll.qol-update-old2", StringComparison.Ordinal)),
+                "an updater backup is retained when its destination is missing");
+            File.Move(Path.Combine(plugins, "SprocketQoL.dll.qol-update-old2"), Path.Combine(plugins, "SprocketQoL.dll"));
             Check(File.ReadAllText(Path.Combine(other, "SprocketQoL.dll")) == "other game's dll", "another game's copy is left alone");
             Check(!Directory.EnumerateFiles(sandbox, "evil.txt", SearchOption.AllDirectories).Any() && !File.Exists(Path.Combine(sandbox, "..", "evil.txt"))
                   && !Directory.EnumerateFiles(sandbox, "*.new", SearchOption.AllDirectories).Any(), "nothing but the release's own files is written, and no temporary files stay");
+
+            string transactionPlugin = Path.Combine(sandbox, "transaction", "plugins");
+            string transactionManager = Path.Combine(sandbox, "transaction", "manager", "plugins");
+            Directory.CreateDirectory(transactionPlugin); Directory.CreateDirectory(transactionManager);
+            File.WriteAllText(Path.Combine(transactionPlugin, UpdateRules.Dll), "plugin before");
+            File.WriteAllText(Path.Combine(transactionPlugin, "SprocketQoL-README.txt"), "plugin guide before");
+            File.WriteAllText(Path.Combine(transactionManager, UpdateRules.Dll), "manager before");
+            File.WriteAllText(Path.Combine(transactionManager, "SprocketQoL-LICENSE.txt"), "manager licence before");
+            string managerDll = Path.Combine(transactionManager, UpdateRules.Dll);
+            void FailManagerInstall(string source, string destination, bool overwrite)
+            {
+                if (destination == managerDll && source.EndsWith(".new", StringComparison.Ordinal))
+                    throw new IOException("simulated manager copy failure");
+                File.Move(source, destination, overwrite);
+            }
+            Throws(() => UpdateRules.Install(bytes, sha, transactionPlugin, new[] { managerDll }, FailManagerInstall),
+                "a failed Mod Manager copy reports the transaction failure");
+            Check(File.ReadAllText(Path.Combine(transactionPlugin, UpdateRules.Dll)) == "plugin before"
+                  && File.ReadAllText(Path.Combine(transactionPlugin, "SprocketQoL-README.txt")) == "plugin guide before"
+                  && File.ReadAllText(managerDll) == "manager before"
+                  && File.ReadAllText(Path.Combine(transactionManager, "SprocketQoL-LICENSE.txt")) == "manager licence before"
+                  && !Directory.EnumerateFiles(Path.Combine(sandbox, "transaction"), "*.new", SearchOption.AllDirectories).Any(),
+                "a later destination failure restores all earlier plugin files and the locked manager DLL");
+
+            string rollback = Path.Combine(sandbox, "rollback.dll");
+            File.WriteAllText(rollback, "previous");
+            bool failSecondMove = true;
+            void FailInstallAfterAside(string source, string destination, bool overwrite)
+            {
+                if (failSecondMove && destination == rollback && source.EndsWith(".new", StringComparison.Ordinal) && !File.Exists(rollback))
+                { failSecondMove = false; throw new IOException("simulated install failure after aside"); }
+                if (destination == rollback && source.EndsWith(".new", StringComparison.Ordinal) && File.Exists(rollback))
+                { throw new IOException("simulated locked replacement"); }
+                File.Move(source, destination, overwrite);
+            }
+            Throws(() => UpdateRules.Put(rollback, "replacement"u8.ToArray(), FailInstallAfterAside), "failed replacement propagates");
+            Check(File.ReadAllText(rollback) == "previous"
+                  && !Directory.EnumerateFiles(sandbox, "rollback.dll.qol-update-old*", SearchOption.AllDirectories).Any()
+                  && !File.Exists(rollback + ".new"), "failed install after moving the old DLL restores it and cleans its temp file");
         }
         finally { Directory.Delete(sandbox, true); }
         Console.WriteLine($"UPDATE_TESTS_OK: {checks} checks");

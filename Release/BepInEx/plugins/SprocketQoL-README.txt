@@ -1,5 +1,18 @@
-Quality of Life 1.10.8 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.11.0 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.11.0
+- Set origin from Ctrl+right-click: whole-shape centre, selected point average, or selected bounds centre. Parts stay in place.
+- Mod Options > Game keys: rebind digital keyboard and mouse controls for builder, driving, cameras and general controls. Uses the game's Apply / Accept / Cancel flow.
+- Mod Options > Settings: builder camera speed (1-100%) and UI scale (50-200%). Driving camera is unchanged.
+- Show only selected parts (Numpad / by default); toggling again or leaving the editor restores the rest.
+- Turret preview: blue traverse, yellow gun elevation, green clear muzzle path and red path into the hull. Enable or disable it in the ring and cannon panels.
+- Extrude along normal: move selected faces outward or inward with side faces to their outline. Mirror and Ctrl+Z work.
+- Cannon reload timing and shots per minute; track length in the Tracks panel.
+- Rename factions in Workshop > Factions.
+- Optional startup updater checks the release SHA-256 and updates this game's Mod Manager copy too. Turn it off in Mod Options > Compatibility.
+- Known Play crash risks are checked when a design opens; known-fixable cases are repaired. A design summary is flushed to the log before Play.
+- Safer native hook attachment: unverified small inline IL2CPP values on Windows x64 are skipped and reported.
 
 FIXED IN 1.10.8
 - Play crash after copying a turret with Alt; designs saved that way are repaired when opened.

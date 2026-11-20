@@ -3,6 +3,12 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.11.0** adds point-based origin placement, editable game keyboard and mouse controls, builder camera
+speed and UI scale, show-only-selected view, turret traverse and gun-clearance previews, and face extrusion along the
+normal. It also adds reload and track-length readouts, faction renaming, startup updates, and design crash-risk reports
+with known fixes. See [CHANGELOG.md](CHANGELOG.md) for details. This build was compiled against the Sprocket 0.2.55.5
+game clone; the engine editor is located dynamically for builds where it resides in a different assembly.
+
 **Quality of Life 1.10.8** fixes a Play crash after copying a turret with Alt, and repairs designs saved that way.
 
 **Quality of Life 1.10.7** fixes two Play crashes: Horizontal corners on faces too small for a normal, and

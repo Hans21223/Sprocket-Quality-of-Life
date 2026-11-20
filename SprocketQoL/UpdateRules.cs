@@ -106,7 +106,7 @@ public static class UpdateRules
     /// A release zip's files put into `pluginDir` and each Mod Manager copy's folder, after checking the zip against
     /// `sha`. Only the release's own files are taken (BepInEx/plugins/..., by exact name), and only files already in a
     /// folder are replaced, besides the DLL itself, so a folder never gets files its owner doesn't know about.
-    internal static void Install(byte[] zip, string sha, string pluginDir, IEnumerable<string> managerCopies)
+    internal static void Install(byte[] zip, string sha, string pluginDir, IEnumerable<string> managerCopies, Action<string, string, bool>? moveFile = null)
     {
         if (!Convert.ToHexString(SHA256.HashData(zip)).Equals(sha, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("the download doesn't match the release's SHA-256");
@@ -121,22 +121,64 @@ public static class UpdateRules
                     files[name] = to.ToArray();
                 }
         if (!files.ContainsKey(UpdateRules.Dll)) throw new InvalidDataException($"the release has no {UpdateRules.Dll}");
+        // Stage every old value before the first write. If one manager copy is locked or unwritable,
+        // the game's plugin and earlier manager copies are restored instead of diverging.
+        var writes = new List<(string Path, byte[] New, byte[]? Old)>();
         foreach (var dir in managerCopies.Select(Path.GetDirectoryName).OfType<string>().Prepend(pluginDir).Distinct(StringComparer.OrdinalIgnoreCase))
             foreach (var (name, bytes) in files)
-                if (name == UpdateRules.Dll || File.Exists(Path.Combine(dir, name))) Put(Path.Combine(dir, name), bytes);
+            {
+                string path = Path.Combine(dir, name);
+                if (name != UpdateRules.Dll && !File.Exists(path)) continue;
+                writes.Add((path, bytes, File.Exists(path) ? File.ReadAllBytes(path) : null));
+            }
+
+        var installed = new List<(string Path, byte[]? Old)>();
+        try
+        {
+            foreach (var write in writes)
+            {
+                Put(write.Path, write.New, moveFile);
+                installed.Add((write.Path, write.Old));
+            }
+        }
+        catch (Exception installError)
+        {
+            var errors = new List<Exception> { installError };
+            foreach (var write in installed.AsEnumerable().Reverse())
+                try
+                {
+                    if (write.Old == null) File.Delete(write.Path);
+                    else Put(write.Path, write.Old, moveFile);
+                }
+                catch (Exception rollbackError)
+                { errors.Add(new IOException($"Could not restore '{write.Path}' after the update failed.", rollbackError)); }
+            if (errors.Count > 1) throw new AggregateException("The update failed, and one or more files could not be restored.", errors);
+            throw new IOException("The update failed; files written earlier in the update were restored.", installError);
+        }
     }
 
-    static void Put(string path, byte[] bytes)
+    internal static void Put(string path, byte[] bytes, Action<string, string, bool>? moveFile = null)
     {
+        moveFile ??= static (source, destination, overwrite) => File.Move(source, destination, overwrite);
         string temp = path + ".new";
         try
         {
             File.WriteAllBytes(temp, bytes);
-            try { File.Move(temp, path, overwrite: true); }
-            catch (Exception) when (File.Exists(path))
+            try { moveFile(temp, path, true); }
+            catch (Exception replaceError) when (File.Exists(path))
             {
-                File.Move(path, Aside(path)); // a loaded DLL: renamed out of the way, deleted at the next start
-                File.Move(temp, path);
+                string aside = Aside(path);
+                moveFile(path, aside, false); // a loaded DLL: renamed out of the way, deleted at the next start
+                try { moveFile(temp, path, false); }
+                catch (Exception installError)
+                {
+                    if (File.Exists(path))
+                        throw new AggregateException($"Could not install '{path}'; the previous file remains at '{aside}'.", replaceError, installError);
+                    try { moveFile(aside, path, false); }
+                    catch (Exception restoreError)
+                    { throw new AggregateException($"Could not install '{path}' or restore it; the previous file remains at '{aside}'.", replaceError, installError, restoreError); }
+                    throw new IOException($"Could not install '{path}'; the previous file was restored.", installError);
+                }
             }
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
@@ -146,9 +188,21 @@ public static class UpdateRules
     {
         for (int i = 0; ; i++)
         {
-            string old = path + ".old" + (i == 0 ? "" : i.ToString());
+            string old = path + ".qol-update-old" + (i == 0 ? "" : i.ToString());
             if (!File.Exists(old)) return old;
-            try { File.Delete(old); return old; } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
+    }
+
+    /// Only the updater's explicitly marked aside files for its own known assets; never delete a user's generic .old backup.
+    internal static IEnumerable<string> OldUpdateFiles(string pluginDir)
+    {
+        if (!Directory.Exists(pluginDir)) yield break;
+        foreach (var name in Files)
+            foreach (var path in Directory.EnumerateFiles(pluginDir, name + ".qol-update-old*"))
+                // A backup may be the only surviving copy if a previous replacement could not
+                // restore its old file. Keep it unless the destination now exists.
+                if (Regex.IsMatch(Path.GetFileName(path), "^" + Regex.Escape(name) + @"\.qol-update-old\d*$")
+                    && File.Exists(Path.Combine(pluginDir, name)))
+                    yield return path;
     }
 }

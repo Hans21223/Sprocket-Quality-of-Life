@@ -6,4 +6,7 @@ internal static class NativeHookAbi
 {
     internal static bool UnsafeBoxedArgument(int pointerBytes, bool byReference, int nativeBytes)
         => pointerBytes == 8 && !byReference && nativeBytes is 1 or 2 or 4 or 8;
+
+    internal static bool UnsafeBoxedReturn(int pointerBytes, int nativeBytes)
+        => pointerBytes == 8 && nativeBytes is 1 or 2 or 4 or 8;
 }

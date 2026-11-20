@@ -1,3 +1,33 @@
+# Quality of Life 1.11.0
+
+New tools and editor improvements:
+
+- **Set origin** (Ctrl+right-click > Set origin): place a hand-made part's origin at the centre of its whole shape, the
+  average position of selected points, or the centre of the selected geometry's bounds. Selecting edges or faces uses
+  their points. The part stays in place, including its attachments and mirror twin.
+- **Game keys** (Mod Options): rebind digital keyboard and mouse controls for the builder, driving, cameras and general
+  controls. Uses the game's Apply, Accept and Cancel flow. Pointer motion, scrolling and analog axes are unchanged.
+- **Builder camera speed** (1-100%) and **UI scale** (50-200%) in Mod Options. Camera changes do not affect driving.
+- **Show only selected parts** (`Numpad /` by default): hide other parts and their pick colliders; press the key again
+  or leave the editor to restore them.
+- **Turret movement preview**: blue traverse, yellow gun elevation, green muzzle paths that clear the hull, and red
+  paths that collide with it. Settings are in the turret ring and cannon panels.
+- **Extrude along normal**: move selected faces by a distance along their shared normal, with side faces to the original
+  outline. Negative distances extrude inward; Mirror and Ctrl+Z are supported.
+- Cannon panels show **reload timing and firing rate** from available ammo racks; track panels show **track length**.
+- **Rename factions** in the Workshop's Factions tab.
+- The updater can install compatible QoL releases at startup after checking the release SHA-256, and also updates the
+  matching Mod Manager copy. Automatic updates can be turned off in Mod Options > Compatibility.
+
+Safety and diagnostics:
+
+- Each newly opened design is checked for known Play crash risks and repairs the known-fixable turret links and tiny
+  Horizontal faces. Before Play, QoL writes and flushes a `QOL_PLAY` design summary to the log.
+- Harmony hooks with unverified small inline IL2CPP value arguments or returns are skipped on Windows x64 and listed in
+  Mod Options > Compatibility, rather than risking an invalid native value conversion.
+- Updater file replacement now restores the old file if installing a replacement fails; user `.old` backups are never
+  cleaned up.
+
 # Quality of Life 1.10.8
 
 Bug fixes only; no new tools or settings.
