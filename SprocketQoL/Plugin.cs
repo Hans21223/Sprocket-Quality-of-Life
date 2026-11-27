@@ -14,7 +14,7 @@ namespace SprocketQoL;
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
-    internal const string Version = "1.11.2";
+    internal const string Version = "1.11.3";
     internal static ManualLogSource ModLog = null!;
     internal static ConfigEntry<bool>? AutoUpdate;
     internal static ConfigEntry<string>? Folded;
@@ -33,7 +33,7 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<float>? ExplodeSpread, FlashlightPercent, FullbrightPercent, UiScalePercent;
     internal static ConfigEntry<int>? BackupsKept;
     internal static ConfigEntry<float>? RotationSnap;
-    internal static ConfigEntry<bool>? MirrorMerge, RelativeSnap;
+    internal static ConfigEntry<bool>? MirrorMerge, MirrorSplit, TurretMirror, RelativeSnap;
     internal static ConfigEntry<bool>? BetterMeshPicking;
     internal static ConfigEntry<float>? MeshPickRadius;
     internal static ConfigEntry<float>? MeshSurfaceAllowance;
@@ -76,6 +76,8 @@ public sealed class Plugin : BasePlugin
         FullbrightPercent = Config.Bind("Panels", "Fullbright brightness", 25f, "How bright each of fullbright's (F7) 14 lights is, in percent of the sun");
         RotationSnap = Config.Bind("Editor", "Rotation snap (degrees)", 0f, "While the game's rotation snap is on, turns snap in steps of this many degrees instead of the game's own (7.5 makes a 48-sided circle, 5 a 72-sided one). 0 keeps the game's step.");
         MirrorMerge = Config.Bind("Editor", "Mirror merge", true, "With the editor's Mirror on, Merge (M) merges the mirrored points on the other side too.");
+        MirrorSplit = Config.Bind("Editor", "Mirror split", true, "With the editor's Mirror on, Split cuts the mirrored edge on the other side too (the game's own Split cuts one side).");
+        TurretMirror = Config.Bind("Editor", "Turret mirror", true, "A turret placed with Mirror on gets its body, guns and parts copied onto its twin, and the pair stays mirror images as either moves. Off: each side is left as you build it, for an asymmetric turret.");
         RelativeSnap = Config.Bind("Editor", "Relative snap", false, "Snapping a move (holding the snap key, normally Ctrl) moves the points in whole grid steps from where they start, instead of putting each point on the grid, so a shape whose points are off the grid keeps its shape. Off: the game's own snap.");
         BetterMeshPicking = Config.Bind("Selection", "Better point and edge picking", true,
             "Pick the nearest visible vertex or edge within a fixed screen-pixel radius. Avoids selecting distant corners across a face. Keeps the game's selection modifiers and X-ray mode. Off restores the game's picker.");

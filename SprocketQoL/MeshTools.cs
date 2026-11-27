@@ -2171,6 +2171,8 @@ public static partial class MeshTools
         ui.Button("Fix mirror", Ui.Callback(() => FixMirror(__instance)), fixTip);
         ui.ToggleField("Mirror merges", Plugin.MirrorMerge?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorMerge != null) Plugin.MirrorMerge.Value = v; }),
             "With Mirror on, the game's Merge (M) merges the mirrored points on the other side too, in the same step (Ctrl+Z undoes both).");
+        ui.ToggleField("Mirror splits", Plugin.MirrorSplit?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.MirrorSplit != null) Plugin.MirrorSplit.Value = v; }),
+            "With Mirror on, the game's Split cuts the mirrored edge on the other side too, in the same step (Ctrl+Z undoes both). Off: it cuts one side only, as the game does.");
     });
 
     /// Mod Options' View settings (they were the mesh panel's View and lighting section).

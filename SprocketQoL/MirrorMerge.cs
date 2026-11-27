@@ -206,7 +206,7 @@ public static class MirrorSplit
     static void Before(EditMesh mesh) => Ui.Guard("Mirror split", () =>
     {
         pending = null;
-        if (again || Hotkeys.Current is not { } editor || !editor.meshEditor.Symmetry) return;
+        if (again || !(Plugin.MirrorSplit?.Value ?? true) || Hotkeys.Current is not { } editor || !editor.meshEditor.Symmetry) return;
         // Another mesh than the one being edited, unless it's the copy a hover outline runs the split on.
         if (editor.meshEditor.Mesh?.EditMesh?.Pointer != mesh.Pointer && !MeshTools.Outlining) return;
         var v = new MeshTools.View(mesh);

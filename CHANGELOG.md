@@ -1,3 +1,11 @@
+# Quality of Life 1.11.3
+
+Switches for what QoL adds to the editor's Mirror, for designs that differ on each side. They're in Mod Options > Build assist > Mirror, all on by default:
+
+- **Turret mirror** (new): a turret placed with Mirror on gets its body, guns and parts copied onto its twin, and the pair is kept mirrored whenever either moves. Off: each side stays as you build it, so a turret can have, say, two different remote weapon stations.
+- **Mirror split** (new): with Mirror on, Split cuts the mirrored edge too. Off: the game's own Split, which cuts one side only. Also in the mesh panel's Mirror fixes section.
+- **Mirror merge** moved here from the Settings page.
+
 # Quality of Life 1.11.2
 
 Bug fixes only; no new tools or settings.

@@ -1,5 +1,11 @@
-Quality of Life 1.11.2 - editor tools for Sprocket 0.2.55.5 to 0.2.57 (stable and experimental)
+Quality of Life 1.11.3 - editor tools for Sprocket 0.2.55.5 to 0.2.57 (stable and experimental)
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.11.3
+- Mod Options > Build assist > Mirror: switches for what QoL adds to the editor's Mirror, all on by default.
+- Turret mirror: off leaves each side of a mirrored turret as you build it (asymmetric turrets).
+- Mirror split: off lets Split cut one side only with Mirror on, as the game does.
+- Mirror merge moved there from Settings.
 
 FIXED IN 1.11.2
 - Flatten, Inset, Bevel and Smooth Edge work on the stable branch again (1.11.1 turned them off there).
