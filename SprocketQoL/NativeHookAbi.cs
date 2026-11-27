@@ -9,4 +9,11 @@ internal static class NativeHookAbi
 
     internal static bool UnsafeBoxedReturn(int pointerBytes, int nativeBytes)
         => pointerBytes == 8 && nativeBytes is 1 or 2 or 4 or 8;
+
+    /// The game method a hook written for `name(start...)` takes when that exact form is gone: the one that starts with
+    /// the same arguments and only adds more after them. Experimental (2026-11) added (onExecuted, mode) to
+    /// Execute(op, options, group) and dropped the short form; hooks reading only the first arguments still fit it.
+    internal static System.Reflection.MethodInfo? LongerForm(IEnumerable<System.Reflection.MethodInfo> methods, string name, Type[]? start) =>
+        start == null ? null : methods.FirstOrDefault(m => m.Name == name && m.GetParameters() is var p && p.Length > start.Length
+            && p.Take(start.Length).Select(x => x.ParameterType).SequenceEqual(start));
 }

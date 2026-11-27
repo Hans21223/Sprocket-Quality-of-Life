@@ -66,6 +66,28 @@ public static partial class MeshTools
         return true;
     }
 
+    // The game's Execute(op, options, group) gained (onExecuted, mode) on the experimental branch (2026-11), and the old form
+    // is gone there. A direct call binds to the build QoL was compiled against and is missing on the other: 1.11.1, built on
+    // experimental, turned Flatten, Inset, Bevel and Smooth Edge off on stable. So it's found when first used.
+    static System.Reflection.MethodInfo? executeEdit;
+    static readonly Type[] executeStart = { typeof(MeshEditOp), typeof(StructureEditOperationOptions), typeof(int) };
+
+    /// The game's Execute(op, no options, group), with the experimental branch's added arguments at their defaults.
+    internal static StructureEdit? ExecuteEdit(PlateStructureEditOperations ops, MeshEditOp op, int group)
+    {
+        const string execute = nameof(PlateStructureEditOperations.Execute);
+        executeEdit ??= typeof(PlateStructureEditOperations).GetMethod(execute, executeStart)
+            ?? NativeHookAbi.LongerForm(typeof(PlateStructureEditOperations).GetMethods(), execute, executeStart)
+            ?? throw new MissingMethodException("PlateStructureEditOperations.Execute(MeshEditOp, options, group)");
+        var take = executeEdit.GetParameters();
+        var args = new object?[take.Length];
+        args[0] = op;
+        args[1] = StructureEditOperationOptions.None;
+        args[2] = group;
+        for (int i = 3; i < take.Length; i++) args[i] = take[i].ParameterType.IsValueType ? Activator.CreateInstance(take[i].ParameterType) : null; // no callback, mode 0
+        return (StructureEdit?)executeEdit.Invoke(ops, System.Reflection.BindingFlags.DoNotWrapExceptions, null, args, null);
+    }
+
     internal static void Run(PlateStructureEditor editor, string name, Func<EditMesh, (bool, string)> apply) => Ui.Guard(name, () =>
     {
         if (dryRun) { Outline(editor, apply); return; }
@@ -96,7 +118,7 @@ public static partial class MeshTools
         bool retained = false;
         try
         {
-            var carried = ops.Execute(topology, StructureEditOperationOptions.None, ops.GetNewGroupID());
+            var carried = ExecuteEdit(ops, topology, ops.GetNewGroupID());
             if (carried?.operation is { } historyOp)
             {
                 carriedTools[historyOp.Pointer] = op.Pointer;

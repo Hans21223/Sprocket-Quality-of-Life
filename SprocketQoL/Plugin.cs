@@ -14,7 +14,7 @@ namespace SprocketQoL;
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
-    internal const string Version = "1.11.0";
+    internal const string Version = "1.11.2";
     internal static ManualLogSource ModLog = null!;
     internal static ConfigEntry<bool>? AutoUpdate;
     internal static ConfigEntry<string>? Folded;

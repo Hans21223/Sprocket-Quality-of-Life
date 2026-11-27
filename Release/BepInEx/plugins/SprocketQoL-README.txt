@@ -1,5 +1,10 @@
-Quality of Life 1.11.1 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.11.2 - editor tools for Sprocket 0.2.55.5 to 0.2.57 (stable and experimental)
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+FIXED IN 1.11.2
+- Flatten, Inset, Bevel and Smooth Edge work on the stable branch again (1.11.1 turned them off there).
+- Undo history for proportional edits and build prediction hook in on the experimental branch too.
+- Updates no longer repeat on every start (1.11.1 still called itself 1.11.0).
 
 FIXED IN 1.11.1
 - Hovering the game's Fill, Merge, Split or Delete mesh-tool buttons no longer edits the live design. Their QoL hover outline is disabled; QoL tool previews are unchanged.

@@ -112,7 +112,8 @@ internal static class Hooks
             MethodType.Getter => AccessTools.DeclaredPropertyGetter(info.declaringType, info.methodName) ?? AccessTools.PropertyGetter(info.declaringType, info.methodName),
             MethodType.Setter => AccessTools.DeclaredPropertySetter(info.declaringType, info.methodName) ?? AccessTools.PropertySetter(info.declaringType, info.methodName),
             MethodType.Constructor => AccessTools.DeclaredConstructor(info.declaringType, info.argumentTypes),
-            _ => AccessTools.DeclaredMethod(info.declaringType, info.methodName, info.argumentTypes) ?? AccessTools.Method(info.declaringType, info.methodName, info.argumentTypes),
+            _ => AccessTools.DeclaredMethod(info.declaringType, info.methodName, info.argumentTypes) ?? AccessTools.Method(info.declaringType, info.methodName, info.argumentTypes)
+                 ?? NativeHookAbi.LongerForm(AccessTools.GetDeclaredMethods(info.declaringType), info.methodName, info.argumentTypes),
         };
     }
 
