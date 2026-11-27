@@ -3,6 +3,9 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.11.3** adds switches for what QoL adds to the editor's Mirror (Mod Options > Build assist > Mirror):
+Turret mirror, for turrets that differ on each side, and Mirror split, for one-sided cuts. See [CHANGELOG.md](CHANGELOG.md).
+
 **Quality of Life 1.11.2** works on both Sprocket branches again. 1.11.1, built against the experimental branch (0.2.57),
 turned Flatten, Inset, Bevel and Smooth Edge off on stable and downloaded itself again on every start. QoL now finds the
 game's mesh-edit call, which differs between the branches, while it runs. Bug fixes only; see [CHANGELOG.md](CHANGELOG.md).

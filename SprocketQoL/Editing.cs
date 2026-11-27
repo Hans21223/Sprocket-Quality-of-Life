@@ -255,6 +255,7 @@ public sealed class DesignEditor : MonoBehaviour
     /// the ring): once the placing is done, the body, guns and everything else get mirrored onto it. Once per turret.
     private void FillMirroredTurrets()
     {
+        if (!(Plugin.TurretMirror?.Value ?? true)) return; // off: the twin is left as built (an asymmetric turret)
         if (core?.Editor == null || core.Editor.OperationInProgress || PhotoShot.Capturing || DrawingSheet.Capturing) return;
         foreach (var part in AllParts())
         {
@@ -284,6 +285,9 @@ public sealed class DesignEditor : MonoBehaviour
     /// being selected (a drive) go back where they were.
     private void KeepTurretsMirrored()
     {
+        // Off: each side stays as built. Forget the poses, so switching it back on doesn't snap the sides to match until
+        // one of them moves again.
+        if (!(Plugin.TurretMirror?.Value ?? true)) { turretPoses.Clear(); return; }
         if (busy || core?.Editor == null || core.Editor.OperationInProgress || core.Target == null) return;
         if (turretPosesTarget != core.Target.Pointer) { turretPoses.Clear(); turretPosesTarget = core.Target.Pointer; }
         HashSet<int>? selected = null;

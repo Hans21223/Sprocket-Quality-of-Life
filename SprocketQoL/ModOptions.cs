@@ -190,6 +190,12 @@ internal static class ModOptions
         ui.InfoField($"Move a point or face toward a target. The guide previews it; hold {Keybinds.Shown("applyPrediction")} to apply it, then confirm the move normally. Release the key to return to free movement.", 3);
         ui.InfoField("Uses your current axis locks, Mirror and X-ray setting. Ctrl+Z undoes the whole move. This suggests geometric targets; it does not move parts on its own.", 3);
         ui.InfoField("Change Apply prediction under Editing keys. Off by default.", 1);
+
+        // What QoL adds to the editor's Mirror: off, each side is left as built (an asymmetric turret, a one-sided cut).
+        ui.Header("Mirror");
+        Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");
+        Toggle(ui, Plugin.MirrorSplit, "Mirror split", "With the editor's Mirror on, Split cuts the mirrored edge too. Off: the game's own Split, which cuts one side only.");
+        Toggle(ui, Plugin.TurretMirror, "Turret mirror", "A turret placed with Mirror on gets its body, guns and parts copied onto its twin, and the pair stays mirrored as either moves. Off: build each side as you like, for an asymmetric turret.");
     }
 
     static void Photos(IGUIElementDrawer ui, Action redraw)
@@ -291,7 +297,6 @@ internal static class ModOptions
         Toggle(ui, Plugin.ShowHotkeys, "Hotkeys box", "The box listing the editing keys, beside a hand-made structure's panel (its key toggles it too).");
         Toggle(ui, Plugin.RotationAngle, "Rotation angle", "While turning a part or points with the game's rotation tool, the angle turned so far shows beside the mouse, in the game's snap steps when snap is on.");
         Toggle(ui, Plugin.PartMassMarkers, "Mass markers", "Each part's blue mass marker while the editor's COM view filter is on.");
-        Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");
         Toggle(ui, Plugin.RelativeSnap, "Relative snap", "Snapping a move moves the points in whole grid steps from where they start, instead of putting each point on the grid: off-grid shapes keep their shape.");
         ui.InfoField("Rotation snap 0 keeps the game's own step. Light strengths are in percent of the sun.", 1);
         Slider(ui, Plugin.RotationSnap, "Rotation snap (°)", 0, 45, 0.5f);
