@@ -439,7 +439,7 @@ internal static class MeshSelection
         });
         try
         {
-            var carried=editor.operations.Execute(op,StructureEditOperationOptions.None,editor.operations.GetNewGroupID());
+            var carried=MeshTools.ExecuteEdit(editor.operations,op,editor.operations.GetNewGroupID());
             if(carried?.operation is { } wrapper && !carried.cancelled && wrapper.State!=Operations.OperatorState.Released)
                 recallHistory[wrapper.Pointer]=op.Pointer;
             else recalls.Remove(op.Pointer);

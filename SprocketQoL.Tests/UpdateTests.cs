@@ -129,6 +129,23 @@ static class UpdateTests
                   && !File.Exists(rollback + ".new"), "failed install after moving the old DLL restores it and cleans its temp file");
         }
         finally { Directory.Delete(sandbox, true); }
+
+        // The updater compares Plugin.Version with the newest release. 1.11.1 shipped with the project at 1.11.1 but
+        // Plugin.Version still 1.11.0, so every start "updated" 1.11.0 -> 1.11.1 again: the two must be the same.
+        static DirectoryInfo? Above(string start)
+        {
+            var d = new DirectoryInfo(start);
+            while (d != null && !File.Exists(Path.Combine(d.FullName, "SprocketMod.props"))) d = d.Parent;
+            return d;
+        }
+        if ((Above(AppContext.BaseDirectory) ?? Above(Environment.CurrentDirectory)) is not { } root)
+            Console.WriteLine("VERSION_CHECK_SKIPPED: the QoL sources aren't above the test program or the folder it runs in");
+        else
+        {
+            var plugin = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(Path.Combine(root.FullName, "SprocketQoL", "Plugin.cs")), @"const string Version = ""([^""]+)""").Groups[1].Value;
+            var project = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(Path.Combine(root.FullName, "SprocketQoL", "SprocketQoL.csproj")), @"<Version>([^<]+)</Version>").Groups[1].Value;
+            Check(plugin.Length > 0 && plugin == project, $"Plugin.Version ({plugin}) is the project's version ({project}), or the updater reinstalls the same release every start");
+        }
         Console.WriteLine($"UPDATE_TESTS_OK: {checks} checks");
     }
 }

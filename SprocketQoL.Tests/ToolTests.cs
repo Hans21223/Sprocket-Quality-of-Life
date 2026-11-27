@@ -205,6 +205,62 @@ static class ToolTests
         // Across the middle: bridging an edge to its own mirror image is its own mirror image, made once.
         var across = MeshPlans.Bridge(both, bothFaces, new[] { (0, 3), (8, 11) }, 1, 0, twins);
         Check(across.Why == null && across.Add.Count == 2, $"bridge across the middle with Mirror: made once ({across.Why}, {across.Add.Count} faces)");
+        BridgeAnyAngle();
+    }
+
+    /// Any distance and any angle (2026-11-27): the second of two open-ended boxes turned or far off, bridged at the defaults
+    /// (4 cuts, 100 %), gives faces all turned one way. The nearest pairing used to twist the strip from 90° on ("face
+    /// opposite ways"), and a strip curving round failed the turned-over check.
+    static void BridgeAnyAngle()
+    {
+        static (List<Vector3> P, List<int[]> F) Box() // 0.6 long, 0.3 square, open at x = 0, faces outward
+        {
+            var p = Enumerable.Range(0, 8).Select(i => new Vector3((i & 1) == 0 ? -0.6f : 0, (i & 2) == 0 ? -0.15f : 0.15f, (i & 4) == 0 ? -0.15f : 0.15f)).ToList();
+            var f = new List<int[]> { new[] { 0, 4, 6, 2 }, new[] { 0, 1, 5, 4 }, new[] { 2, 6, 7, 3 }, new[] { 0, 2, 3, 1 }, new[] { 4, 5, 7, 6 } };
+            return (p, f);
+        }
+        var loop = new[] { (1, 3), (3, 7), (7, 5), (5, 1) };
+        float R(float deg) => deg * MathF.PI / 180;
+        var a = Box();
+        Check(a.F.All(f => Vector3.Dot(Nw(a.P, f), f.Aggregate(Vector3.Zero, (s, v) => s + a.P[v]) / 4 - new Vector3(-0.3f, 0, 0)) > 0), "test box: faces outward");
+        foreach (var (name, place) in new[]
+        {
+            ("90° turned", Matrix4x4.CreateRotationY(R(90)) * Matrix4x4.CreateTranslation(1, 0, 0)),
+            ("135° turned", Matrix4x4.CreateRotationY(R(135)) * Matrix4x4.CreateTranslation(1, 0, 0)),
+            ("180° turned", Matrix4x4.CreateRotationY(R(180)) * Matrix4x4.CreateTranslation(1, 0, 0)),
+            ("tilted up 150°", Matrix4x4.CreateRotationZ(R(150)) * Matrix4x4.CreateTranslation(1, 0, 0)),
+            ("side by side (U-turn)", Matrix4x4.CreateRotationY(R(180)) * Matrix4x4.CreateTranslation(0, 0, 1.3f)),
+            ("behind the first", Matrix4x4.CreateTranslation(-2, 0, 1)),
+            ("50 m off, twisted 60°", Matrix4x4.CreateRotationX(R(60)) * Matrix4x4.CreateTranslation(50, 3, 0)),
+        })
+        {
+            var b = Box();
+            var turnB = Matrix4x4.CreateRotationY(MathF.PI) * place; // the second box faces the first, then is moved
+            var pos = a.P.Concat(b.P.Select(x => Vector3.Transform(x, turnB))).ToList();
+            var faces = a.F.Concat(b.F.Select(f => f.Select(i => i + 8).ToArray())).ToList();
+            var plan = MeshPlans.Bridge(pos, faces, loop.Concat(loop.Select(e => (e.Item1 + 8, e.Item2 + 8))), 4, 1);
+            var (pb, fb) = Applied(pos, faces, plan);
+            Check(plan.Why == null && plan.Add.Count == 20 && Consistent(fb), $"bridge boxes {name}: 20 faces turned one way ({plan.Why})");
+            Check(MeshPlans.Check(pos, faces, plan, gaps: false) == null, $"bridge boxes {name}: passes the check ({MeshPlans.Check(pos, faces, plan, gaps: false)})");
+        }
+
+        // Plates: one folded back to 170° bridges round (its strip turns well past its source face); one upside down
+        // (facing the other way) still asks for a flip rather than twisting the strip through itself.
+        var plate = new List<Vector3> { new(-1, 0, 0), new(0, 0, 0), new(-1, 0.6f, 0), new(0, 0.6f, 0) };
+        foreach (var (name, place, ok) in new[]
+        {
+            ("folded back 170°", Matrix4x4.CreateRotationY(R(-170)) * Matrix4x4.CreateTranslation(1, 0, 0), true),
+            ("upside down", Matrix4x4.CreateRotationX(MathF.PI) * Matrix4x4.CreateTranslation(1, 0.6f, 0), false),
+        })
+        {
+            var turnB = Matrix4x4.CreateTranslation(0, -0.6f, 0) * Matrix4x4.CreateRotationZ(MathF.PI) * place; // edges facing
+            var pos = plate.Concat(plate.Select(x => Vector3.Transform(x, turnB))).ToList();
+            var faces = new List<int[]> { new[] { 0, 1, 3, 2 }, new[] { 4, 5, 7, 6 } };
+            var plan = MeshPlans.Bridge(pos, faces, new[] { (1, 3), (5, 7) }, 4, 1);
+            var (pp, fp) = Applied(pos, faces, plan);
+            Check(ok ? plan.Why == null && Consistent(fp) && MeshPlans.Check(pos, faces, plan, gaps: false) == null : plan.Why?.Contains("opposite") == true,
+                  $"bridge plates {name}: {(ok ? "bridged" : "asks to flip one")} ({plan.Why ?? MeshPlans.Check(pos, faces, plan, gaps: false)})");
+        }
     }
 
     static void Circle()

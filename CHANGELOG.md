@@ -1,3 +1,11 @@
+# Quality of Life 1.11.2
+
+Bug fixes only; no new tools or settings.
+
+- **Mesh tools work on the stable branch again.** 1.11.1 was built against the experimental branch, whose mesh-edit call takes two more arguments, so on stable Flatten, Inset, Bevel and Smooth Edge turned themselves off (`MissingMethodException`). QoL now finds that call on whichever branch it runs.
+- **Two hooks attach on experimental too:** undo history for proportional edits, and build prediction's history (both were written for the stable form of that call).
+- **Updates stop repeating.** 1.11.1 still called itself 1.11.0, so the updater downloaded 1.11.1 again on every start.
+
 # Quality of Life 1.11.1
 
 Bug fixes only; no new tools or settings.
