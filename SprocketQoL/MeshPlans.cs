@@ -16,6 +16,10 @@ public static class MeshPlans
         // Refined curved patches can be millimetres across even when their source plate
         // is metres across. Their physical feature area is a better degeneracy scale.
         public float? ReferenceArea { get; init; }
+
+        /// Part of a strip joining two chains of edges (Bridge): it bends round with the strip and may face any way, so it
+        /// isn't held to its source face's facing (the source only gives the settings).
+        public bool Strip { get; init; }
     }
 
     /// Faces to take out, faces to put in, and the points they need. Points no face uses afterwards go too.
@@ -125,7 +129,7 @@ public static class MeshPlans
             if (!float.IsFinite(referenceArea) || referenceArea <= 0 || referenceArea > s.Length())
                 return "a new face's area reference would be invalid";
             if (n.Length() < 1e-5f * referenceArea) return "a new face would be squashed to next to no area";
-            if (Vector3.Dot(n, s) < -0.5f * n.Length() * s.Length()) return "a new face would be turned over";
+            if (!nf.Strip && Vector3.Dot(n, s) < -0.5f * n.Length() * s.Length()) return "a new face would be turned over";
             if (c.Length == 4 && SidesCross(at[c[0]], at[c[1]], at[c[2]], at[c[3]], n)) return "a new face's sides would cross";
         }
         var removed = plan.Remove.ToHashSet();
@@ -892,33 +896,54 @@ public static class MeshPlans
         if (p.Closed != q.Closed) return Rebuild.Fail("one chain is a closed loop and the other isn't");
         int n = p.Points.Count;
         if (q.Points.Count != n) return Rebuild.Fail($"the two chains need as many points each ({n} and {q.Points.Count})");
-
-        // Pair the points: the second chain forwards or backwards (and, for loops, from each start), shortest strip.
-        var best = (Cost: double.MaxValue, Order: Array.Empty<int>());
-        foreach (int dir in new[] { 1, -1 })
-            for (int start = 0; start < (p.Closed ? n : 1); start++)
-            {
-                var order = Enumerable.Range(0, n).Select(i => p.Closed ? q.Points[((start + dir * i) % n + n) % n] : q.Points[dir > 0 ? i : n - 1 - i]).ToArray();
-                double cost = Enumerable.Range(0, n).Sum(i => (double)Vector3.Distance(pos[p.Points[i]], pos[order[i]]));
-                if (cost < best.Cost - 1e-9) best = (cost, order);
-            }
         var pa = p.Points.ToArray();
-        var qa = best.Order;
-
+        var listedQ = q.Points.ToArray();
         var edgeFaces = EdgeFaces(faces);
         int FaceOn(int a, int b) => edgeFaces.TryGetValue(Key(a, b), out var l) ? (l.Count == 1 ? l[0] : -2) : -1;
         int segments = p.Closed ? n : n - 1;
-        var faceP = new int[segments];
-        var faceQ = new int[segments];
-        for (int i = 0; i < segments; i++)
-        {
-            int j = (i + 1) % n;
-            faceP[i] = FaceOn(pa[i], pa[j]);
-            faceQ[i] = FaceOn(qa[i], qa[j]);
-            if (faceP[i] == -2 || faceQ[i] == -2) return Rebuild.Fail("bridge from a plate's open edges: one of these edges already has faces on both sides");
-        }
-        // The strip turns the way the faces at the chains do (each edge run the other way by the strip): all must agree.
+        int[] FacesAlong(int[] chain) => Enumerable.Range(0, segments).Select(i => FaceOn(chain[i], chain[(i + 1) % n])).ToArray();
         bool Runs(int f, int a, int b) { var c = faces[f]; int k = Array.IndexOf(c, a); return k >= 0 && c[(k + 1) % c.Length] == b; }
+        var faceP = FacesAlong(pa);
+        var faceQListed = FacesAlong(listedQ);
+        if (faceP.Contains(-2) || faceQListed.Contains(-2)) return Rebuild.Fail("bridge from a plate's open edges: one of these edges already has faces on both sides");
+
+        // Which way round to pair, however far apart or turned the chains are: the first, carried along the strip's middle
+        // line without turning about it, arrives the way round the second runs (no half twist; the nearest pairing twists
+        // once a loop is turned 90° or more). Faces that still disagree then mean a side is flipped. Where the shapes
+        // can't tell (loose edges, a loop round a hole, a strip doubling back), the faces' own turning picks.
+        Vector3 cp = Middle(pos, pa), cq = Middle(pos, listedQ);
+        float gap = Vector3.Distance(cp, cq);
+        Vector3 Out(int[] chain, int[] faceAt, Vector3 toOther)
+        {
+            var d = Enumerable.Range(0, n).Aggregate(Vector3.Zero, (sum, i) => sum + Onward(chain, faceAt, i));
+            return d.Length() > 0.3f * n ? Vector3.Normalize(d) : gap > 1e-6f ? toOther / gap : Vector3.Zero;
+        }
+        Vector3 tp = Out(pa, faceP, cq - cp) * gap, tq = -Out(listedQ, faceQListed, cp - cq) * gap;
+        Vector3 Spin(int[] c) => p.Closed ? Newell(pos, c) : pos[c[n - 1]] - pos[c[0]];
+        Vector3 sp = Spin(pa), sq = Spin(listedQ);
+        bool? Way(int[] chain, int[] faceAt) => Enumerable.Range(0, segments).Where(i => faceAt[i] >= 0).Select(i => (bool?)Runs(faceAt[i], chain[i], chain[(i + 1) % n])).FirstOrDefault();
+        var turn = Carry(s => Hermite(cp, tp, cq, tq, s), 8)?[8];
+        int way = 0;
+        if (turn is Quaternion t && Vector3.Dot(Vector3.Transform(sp, t), sq) is float g && Math.Abs(g) > 0.2f * sp.Length() * sq.Length())
+            way = g > 0 ? 1 : -1;
+        else if (Way(pa, faceP) is bool wp && Way(listedQ, faceQListed) is bool wq)
+            way = wp != wq ? 1 : -1; // the strip runs both chains' edges against their faces
+
+        // Pair the points: the second chain that way round (and, for loops, from each start), the closest match. With the
+        // turn known, each point of the first chain is carried over first (so a loop bent round doesn't twist a quarter).
+        Vector3 Lands(int v) => turn is Quaternion c ? cq + Vector3.Transform(pos[v] - cp, c) : pos[v];
+        var landed = pa.Select(Lands).ToArray();
+        var best = (Cost: double.MaxValue, Order: Array.Empty<int>());
+        foreach (int dir in new[] { 1, -1 }.Where(d => way == 0 || d == way))
+            for (int start = 0; start < (p.Closed ? n : 1); start++)
+            {
+                var order = Enumerable.Range(0, n).Select(i => p.Closed ? q.Points[((start + dir * i) % n + n) % n] : q.Points[dir > 0 ? i : n - 1 - i]).ToArray();
+                double cost = Enumerable.Range(0, n).Sum(i => (double)Vector3.Distance(landed[i], pos[order[i]]));
+                if (cost < best.Cost - 1e-9) best = (cost, order);
+            }
+        var qa = best.Order;
+        var faceQ = FacesAlong(qa);
+        // The strip turns the way the faces at the chains do (each edge run the other way by the strip): all must agree.
         var votes = new List<bool>();
         for (int i = 0; i < segments; i++)
         {
@@ -957,25 +982,57 @@ public static class MeshPlans
             return d.LengthSquared() < 1e-12f ? Vector3.Zero : Vector3.Normalize(d);
         }
 
-        // The rows: the first chain, `cuts` rows of new points, the second chain.
+        // The rows: the first chain, `cuts` rows of new points, the second chain. Each point curves from its own point to its
+        // partner, leaving and arriving the way its faces run on. Each end curves round as far as it turns off the straight
+        // line between the chains (a circle's arc turns as much at both ends), so a hook into a chain facing partly away
+        // gets room at that end. Bent far round, the points' curves run out of step and fold the strip over; then they're
+        // laid in a frame that turns as the strip's middle line does, which holds the strip's width.
         cuts = Math.Clamp(cuts, 0, 64);
-        var points = new List<NewPoint>();
+        float Turned(Vector3 way) => gap < 1e-6f || way.LengthSquared() < 1e-12f ? 0 : 2 * MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(way), (cq - cp) / gap), -1, 1));
+        float bendP = Math.Max(0, smooth) * Roundness(Turned(tp)), bendQ = Math.Max(0, smooth) * Roundness(Turned(tq));
+        Vector3 mp = tp * bendP, mq = tq * bendQ;
         var rows = new int[cuts + 2][];
         rows[0] = pa;
         rows[cuts + 1] = qa;
         for (int r = 1; r <= cuts; r++) rows[r] = new int[n];
-        for (int i = 0; i < n; i++)
+        List<NewPoint> Lay(Quaternion[] frames)
         {
-            Vector3 a = pos[pa[i]], b = pos[qa[i]];
-            float length = Vector3.Distance(a, b);
-            Vector3 ta = Onward(pa, faceP, i) * length * Math.Max(0, smooth), tb = -Onward(qa, faceQ, i) * length * Math.Max(0, smooth);
-            for (int r = 1; r <= cuts; r++)
+            var made = new List<NewPoint>();
+            var back = Quaternion.Inverse(frames[cuts + 1]);
+            for (int i = 0; i < n; i++)
             {
-                float s = r / (float)(cuts + 1), s2 = s * s, s3 = s2 * s;
-                var at = (2 * s3 - 3 * s2 + 1) * a + (s3 - 2 * s2 + s) * ta + (-2 * s3 + 3 * s2) * b + (s3 - s2) * tb;
-                rows[r][i] = pos.Count + points.Count;
-                points.Add(new NewPoint(at, new[] { (pa[i], 1 - s), (qa[i], s) }));
+                Vector3 a = pos[pa[i]], b = pos[qa[i]];
+                float length = Vector3.Distance(a, b);
+                Vector3 ta = Onward(pa, faceP, i) * length * bendP, tb = -Onward(qa, faceQ, i) * length * bendQ;
+                // Off the middle line, in the turning frame (with no turn, this adds up to the plain curve from a to b).
+                Vector3 oa = a - cp, ob = Vector3.Transform(b - cq, back), da = ta - mp, db = Vector3.Transform(tb - mq, back);
+                for (int r = 1; r <= cuts; r++)
+                {
+                    float s = r / (float)(cuts + 1);
+                    rows[r][i] = pos.Count + made.Count;
+                    made.Add(new NewPoint(Hermite(cp, mp, cq, mq, s) + Vector3.Transform(Hermite(oa, da, ob, db, s), frames[r]), new[] { (pa[i], 1 - s), (qa[i], s) }));
+                }
             }
+            return made;
+        }
+        bool Folded(List<NewPoint> made)
+        {
+            Vector3 At(int v) => v < pos.Count ? pos[v] : made[v - pos.Count].P;
+            for (int i = 0; i < segments; i++)
+                for (int r = 0; r <= cuts; r++)
+                {
+                    Vector3 a = At(rows[r][i]), b = At(rows[r][(i + 1) % n]), c = At(rows[r + 1][(i + 1) % n]), d = At(rows[r + 1][i]);
+                    var facing = Vector3.Cross(b - a, c - a) + Vector3.Cross(c - a, d - a);
+                    if (facing.LengthSquared() < 1e-24f || SidesCross(a, b, c, d, facing)) return true;
+                }
+            return false;
+        }
+        var points = Lay(Enumerable.Repeat(Quaternion.Identity, cuts + 2).ToArray());
+        if (Folded(points))
+        {
+            var turning = Carry(s => Hermite(cp, mp, cq, mq, s), cuts + 1);
+            if (turning == null || Folded(points = Lay(turning))) // (rows hold the same numbers either way)
+                return Rebuild.Fail("the strip would bend too tightly here and fold over itself: change Smoothness or Cuts, or give the chains more room");
         }
 
         // Settings come from the face at the nearer chain (or the other one, or the nearest face for loose edges).
@@ -992,7 +1049,7 @@ public static class MeshPlans
                 int source = (nearP ? faceP[i] : faceQ[i]) is int f1 and >= 0 ? f1 : (nearP ? faceQ[i] : faceP[i]) is int f2 and >= 0 ? f2
                     : Nearest(corners.Aggregate(Vector3.Zero, (s, v) => s + all[v]) / corners.Length);
                 if (source < 0) return Rebuild.Fail("there's no face on this part to copy the new faces' settings from");
-                add.Add(new NewFace(corners, source));
+                add.Add(new NewFace(corners, source) { Strip = true });
             }
         }
 
@@ -1025,7 +1082,7 @@ public static class MeshPlans
                     if (!made.Add(string.Join(",", corners.OrderBy(v => v)))) continue;
                     var sourceImage = faces[nf.Source].Select(v => twins.TryGetValue(v, out int t) ? t : -1).ToArray();
                     int source = !sourceImage.Contains(-1) && byCorners.TryGetValue(string.Join(",", sourceImage.OrderBy(v => v)), out int s) ? s : nf.Source;
-                    add.Add(new NewFace(corners, source));
+                    add.Add(nf with { Corners = corners, Source = source });
                 }
             }
         }
@@ -1075,6 +1132,49 @@ public static class MeshPlans
         var l = points.ToList();
         return l.Aggregate(Vector3.Zero, (s, v) => s + pos[v]) / Math.Max(1, l.Count);
     }
+
+    /// The curve from `a` (leaving along `ta`) to `b` (arriving along `tb`) at `s` from 0 to 1 (cubic Hermite).
+    static Vector3 Hermite(Vector3 a, Vector3 ta, Vector3 b, Vector3 tb, float s)
+    {
+        float s2 = s * s, s3 = s2 * s;
+        return (2 * s3 - 3 * s2 + 1) * a + (s3 - 2 * s2 + s) * ta + (-2 * s3 + 3 * s2) * b + (s3 - s2) * tb;
+    }
+
+    /// How a direction turns carried along the curve `at` (s from 0 to 1), only as the curve turns, never about it: the
+    /// turn so far at each of `parts` + 1 even steps of s (the first none). Null where the curve doubles back on itself
+    /// (a cusp), which leaves no telling; no turn for a curve of no length.
+    static Quaternion[]? Carry(Func<float, Vector3> at, int parts)
+    {
+        const int fine = 32; // samples per part
+        var turns = new Quaternion[parts + 1];
+        var turn = turns[0] = Quaternion.Identity;
+        Vector3 last = at(0), was = Vector3.Zero;
+        for (int k = 1; k <= parts * fine; k++)
+        {
+            var next = at(k / (float)(parts * fine));
+            var step = next - last;
+            last = next;
+            if (step.LengthSquared() > 1e-14f)
+            {
+                step = Vector3.Normalize(step);
+                if (was != Vector3.Zero)
+                {
+                    float cos = Vector3.Dot(was, step);
+                    if (cos < 0) return null;
+                    var axis = Vector3.Cross(was, step);
+                    if (axis.LengthSquared() > 1e-12f) turn = Quaternion.Concatenate(turn, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.Acos(Math.Min(cos, 1))));
+                }
+                was = step;
+            }
+            if (k % fine == 0) turns[k / fine] = turn;
+        }
+        return turns;
+    }
+
+    /// How much longer than the gap a bend's end directions must be to curve round evenly, like a circle's arc, when it
+    /// turns `angle` radians in all: 1 running straight, 1.17 for a right angle, 2 for a U-turn (held at 4, ~240°).
+    static float Roundness(float angle) =>
+        angle < 1e-3f ? 1 : Math.Min(4, 2 * MathF.Tan(Math.Min(angle, 4.2f) / 4) / MathF.Sin(Math.Min(angle, 4.2f) / 2));
 
     // ---------- Circle ----------
 

@@ -1,5 +1,10 @@
-Quality of Life 1.11.0 - editor tools for Sprocket 0.2.55.5 and 0.2.56
+Quality of Life 1.11.1 - editor tools for Sprocket 0.2.55.5 and 0.2.56
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+FIXED IN 1.11.1
+- Hovering the game's Fill, Merge, Split or Delete mesh-tool buttons no longer edits the live design. Their QoL hover outline is disabled; QoL tool previews are unchanged.
+- Bridge pairs turned edge chains without an unwanted half twist, carries strips around bends, and gives hooks more room at a partly-away-facing end at any distance.
+- Bug fixes only; no new tools or settings.
 
 NEW IN 1.11.0
 - Set origin from Ctrl+right-click: whole-shape centre, selected point average, or selected bounds centre. Parts stay in place.

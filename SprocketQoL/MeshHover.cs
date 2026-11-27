@@ -6,14 +6,13 @@ using UnityEngine;
 
 namespace SprocketQoL;
 
-/// Hover outlines: while the mouse is over a mesh tool's button, what the tool would make or move is outlined on the
-/// part (the tool run on a copy of the mesh), instead of a window to confirm. Create Hole draws its rings itself.
+/// Hover outlines: while the mouse is over a QoL mesh tool's button, what the tool would make or move is outlined on
+/// the part (the tool run on a copy of the mesh), instead of a window to confirm. Create Hole draws its rings itself.
 public static partial class MeshTools
 {
     static Sprocket.Tooltiped? hoveredButton;
     static bool dryRun; // inside a hover outline: Run keeps what the tool would do instead of doing it
-    static MeshEditOp? caught; // a game tool's edit, caught before it ran
-    static (string Key, Vector3[] Points, int[][] Faces, bool Gone)? hoverWire; // Gone: faces it would take away (Delete)
+    static (string Key, Vector3[] Points, int[][] Faces, bool Gone)? hoverWire;
 
     /// Outlining: QoL's mirror hooks also work on the mesh copy then.
     internal static bool Outlining => dryRun;
@@ -39,23 +38,9 @@ public static partial class MeshTools
     [HarmonyPrefix, HarmonyPatch(typeof(Sprocket.Info), nameof(Sprocket.Info.SendError))]
     static bool QuietGameWhileOutlining() => !dryRun;
 
-    // While outlining, a game tool hands its edit over instead of running it.
-    [HarmonyPrefix, HarmonyPatch(typeof(PlateStructureEditOperations), "Execute", new[] { typeof(MeshEditOp), typeof(StructureEditOperationOptions), typeof(int) })]
-    static bool CatchEdit(MeshEditOp __0, ref StructureEdit? __result)
-    {
-        if (!dryRun) return true;
-        caught = __0;
-        __result = null;
-        return false;
-    }
-
-    // The game's toolbar buttons outlined: those that only make one mesh edit and don't use it after (Slope does).
-    static readonly Dictionary<string, Action<PlateStructureEditOperations, int>> gameTools = new()
-    {
-        ["Fill"] = (o, g) => o.Fill(g), ["Merge"] = (o, g) => o.Merge(g), ["Split"] = (o, g) => o.Split(g), ["Delete"] = (o, g) => o.Delete(g),
-    };
-
-    // Button titles (their tooltips') and the tools they run.
+    // QoL previews run only their own operations against a cloned mesh. Never call the game's native toolbar actions
+    // from a hover callback: some game versions execute Fill/Merge/Split/Delete directly against the live mesh before
+    // the edit-operation hook can intercept them.
     static readonly Dictionary<string, string> outlined = new()
     {
         ["Flatten"] = "Flatten", ["Loop cut"] = "Loop cut", ["Inset"] = "Inset", ["Bevel"] = "Bevel", ["Smooth Edge"] = "Smooth Edge",
@@ -66,7 +51,7 @@ public static partial class MeshTools
 
     internal static void DrawHoverTool()
     {
-        if (HoveredButton is not { } title || !outlined.ContainsKey(title) && !gameTools.ContainsKey(title) || Event.current.type != EventType.Repaint
+        if (HoveredButton is not { } title || !outlined.ContainsKey(title) || Event.current.type != EventType.Repaint
             || Hotkeys.Current is not { } e || e.meshEditor?.Mesh?.EditMesh is not { } mesh || !MeshSelection.TryMeshFrame(e, out var frame)
             || Camera.main is not { } camera) return;
         string key = $"{HoverCount}|{title}|{mesh.Pointer}|{mesh.vertices.Count}|{mesh.faces.Count}|{mesh.selectedVertexCount}|{mesh.selectedEdgeCount}|{mesh.selectedFaceCount}|{e.meshEditor.Symmetry}"
@@ -77,17 +62,12 @@ public static partial class MeshTools
             hoverWire = (key, Array.Empty<Vector3>(), Array.Empty<int[]>(), false);
             var split = (lastSplitMesh, lastSplitFaces); // Split faces remembers its last split for Select between splits
             dryRun = true;
-            caught = null;
             try
             {
-                if (outlined.TryGetValue(title, out var tool)) { if (tool == "Fix mirror") FixMirror(e); else InvokeTool(e, tool); }
-                else
-                {
-                    gameTools[title](e.operations, e.operations.GetNewGroupID());
-                    if (caught?.TryCast<MeshTopologyEditOp>()?.meshOp is { } op) Outline(e, copy => { copy.ExecuteOperation(op); return (true, ""); });
-                }
+                var tool = outlined[title];
+                if (tool == "Fix mirror") FixMirror(e); else InvokeTool(e, tool);
             }
-            finally { dryRun = false; caught = null; (lastSplitMesh, lastSplitFaces) = split; }
+            finally { dryRun = false; (lastSplitMesh, lastSplitFaces) = split; }
         }
         if (hoverWire is { Points.Length: > 0 } wire)
             GeometryPreview.DrawWire(camera, wire.Points, wire.Faces, frame, wire.Gone ? new Color(1, .3f, .25f) : new Color(1, .85f, .2f));

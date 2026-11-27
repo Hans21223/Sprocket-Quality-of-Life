@@ -1,3 +1,10 @@
+# Quality of Life 1.11.1
+
+Bug fixes only; no new tools or settings.
+
+- **Hovering game mesh tools no longer edits the design.** Fill, Merge, Split and Delete no longer show a QoL hover outline or call the game's live edit actions while the mouse is over their buttons; QoL tool previews are unchanged.
+- **Bridge handles turned and curved edge chains at any distance.** It pairs chains without an unintended half twist at wide angles, carries the strip around bends, gives partly-away-facing hooks more room, and accepts curved bridge faces. The existing flipped-side warning remains for genuinely reversed sides.
+
 # Quality of Life 1.11.0
 
 New tools and editor improvements:
