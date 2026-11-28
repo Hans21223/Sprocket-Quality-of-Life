@@ -38,9 +38,24 @@ public static partial class MeshTools
     [HarmonyPrefix, HarmonyPatch(typeof(Sprocket.Info), nameof(Sprocket.Info.SendError))]
     static bool QuietGameWhileOutlining() => !dryRun;
 
-    // QoL previews run only their own operations against a cloned mesh. Never call the game's native toolbar actions
-    // from a hover callback: some game versions execute Fill/Merge/Split/Delete directly against the live mesh before
-    // the edit-operation hook can intercept them.
+    // The game's own Fill, Merge, Split and Delete, outlined without pressing them: QoL makes the mesh operation each
+    // button makes (PlateStructureEditOperations.Fill and the rest: an operation with these settings, its Symmetry from
+    // the editor's Mirror as CreateTopoOp sets it) and runs it on the copy only. The buttons themselves are never called:
+    // their edit ran for real on hover on the experimental branch, where the hook meant to catch it didn't attach.
+    static readonly Dictionary<string, Func<EditMesh, Sprocket.PlateMesh.Operations.MeshOperation?>> gameTools = new()
+    {
+        ["Delete"] = m => new Sprocket.PlateMesh.Operations.DeleteOp(DeleteTypeOf((int)m.selectMode)),
+        ["Merge"] = m => m.selectedVertexCount > 1 ? new MergeOp { UseToolFlags = true } : null,
+        ["Split"] = _ => new Sprocket.PlateMesh.Operations.SplitOp { UseToolFlags = true },
+        ["Fill"] = m => m.selectedVertexCount is >= 2 and <= 4 ? new FillOp() : null,
+    };
+
+    /// What the game's Delete takes for the selection mode (points 1, edges 2, faces 4): points, edges, or faces and
+    /// whatever they leave loose.
+    internal static Sprocket.PlateMesh.Operations.DeleteType DeleteTypeOf(int selectMode) =>
+        (Sprocket.PlateMesh.Operations.DeleteType)((selectMode & 1) | (selectMode & 2) | ((selectMode & 4) != 0 ? 8 : 0));
+
+    // QoL's own tools outlined: they run on a cloned mesh too (Run while outlining).
     static readonly Dictionary<string, string> outlined = new()
     {
         ["Flatten"] = "Flatten", ["Loop cut"] = "Loop cut", ["Inset"] = "Inset", ["Bevel"] = "Bevel", ["Smooth Edge"] = "Smooth Edge",
@@ -51,7 +66,7 @@ public static partial class MeshTools
 
     internal static void DrawHoverTool()
     {
-        if (HoveredButton is not { } title || !outlined.ContainsKey(title) || Event.current.type != EventType.Repaint
+        if (HoveredButton is not { } title || !outlined.ContainsKey(title) && !gameTools.ContainsKey(title) || Event.current.type != EventType.Repaint
             || Hotkeys.Current is not { } e || e.meshEditor?.Mesh?.EditMesh is not { } mesh || !MeshSelection.TryMeshFrame(e, out var frame)
             || Camera.main is not { } camera) return;
         string key = $"{HoverCount}|{title}|{mesh.Pointer}|{mesh.vertices.Count}|{mesh.faces.Count}|{mesh.selectedVertexCount}|{mesh.selectedEdgeCount}|{mesh.selectedFaceCount}|{e.meshEditor.Symmetry}"
@@ -64,8 +79,12 @@ public static partial class MeshTools
             dryRun = true;
             try
             {
-                var tool = outlined[title];
-                if (tool == "Fix mirror") FixMirror(e); else InvokeTool(e, tool);
+                if (outlined.TryGetValue(title, out var tool)) { if (tool == "Fix mirror") FixMirror(e); else InvokeTool(e, tool); }
+                else if (gameTools[title](mesh) is { } op)
+                {
+                    op.Symmetry = e.meshEditor.Symmetry;
+                    Outline(e, copy => { copy.ExecuteOperation(op); return (true, ""); });
+                }
             }
             finally { dryRun = false; (lastSplitMesh, lastSplitFaces) = split; }
         }

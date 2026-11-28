@@ -82,6 +82,7 @@ void Run(string json,int id)
     conversions++;
 }
 ToolTests.Run(); // Bridge, Circle, Fix mirror, mirrored merge: small shapes, no blueprints needed
+SlideMathTests.Run(); // what the game's edge slide hands ApplyElem, lining up, typed amounts
 // Real designs: this PC's PMC faction unless SPROCKET_QOL_VEHICLES names another folder; none there, those checks are skipped.
 string root=Environment.GetEnvironmentVariable("SPROCKET_QOL_VEHICLES")??Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)+@"\My Games\Sprocket\Factions\PMC\Blueprints\Vehicles";
 var files=Directory.Exists(root)?Directory.GetFiles(root,"*.blueprint").OrderBy(f=>new FileInfo(f).Length).Take(12).ToList():new List<string>();

@@ -578,12 +578,18 @@ public static partial class MeshTools
     {
         if (e.meshEditor.SelectType != MeshEditType.Edge) { e.operations.NotifyError("Loop cut: switch to Edges and select an edge"); return; }
         bool mirror = e.meshEditor.Symmetry;
+        // One cut, as in Blender: the new loop is selected and the game's edge slide starts on it (Sprocket 0.2.57 and later).
+        bool slide = !dryRun && loopCuts == 1 && (Plugin.SlideAfterCut?.Value ?? true) && SlideAssist.Available, cut = false;
         Run(e, "Loop cut", mesh =>
         {
             var v = new View(mesh);
             if (v.SelectedEdges.Count == 0) return (false, "select an edge first");
-            return Apply(mesh, v, PrecisionGeometry.LoopCuts(v.Pos, v.Corners, WithTwins(v, v.SelectedEdges, mirror), loopCuts, loopOffset / 100), "loop cut");
+            var before = slide ? SlideAssist.Points(mesh) : null;
+            var done = Apply(mesh, v, PrecisionGeometry.LoopCuts(v.Pos, v.Corners, WithTwins(v, v.SelectedEdges, mirror), loopCuts, loopOffset / 100), "loop cut");
+            if (done.Item1 && before != null) cut = SlideAssist.SelectNewLoop(mesh, before, mirror);
+            return done;
         });
+        if (cut) SlideAssist.SlideSoon(e);
     }
 
     static void Inset(PlateStructureEditor e)
@@ -2112,6 +2118,9 @@ public static partial class MeshTools
         ui.Button("Loop cut (T)", Ui.Callback(() => LoopCut(__instance)), loopTip);
         ui.Slider("Loop cuts", loopCuts, 1, 16, Ui.FloatCallback(v => loopCuts = Math.Clamp((int)MathF.Round(v), 1, 16)));
         ui.Slider("Loop offset (%)", loopOffset, 1, 99, Ui.FloatCallback(v => loopOffset = Math.Clamp(v, 1, 99)));
+        if (SlideAssist.Available)
+            ui.ToggleField("Slide after cut", Plugin.SlideAfterCut?.Value ?? true, Ui.BoolCallback(v => { if (Plugin.SlideAfterCut != null) Plugin.SlideAfterCut.Value = v; }),
+                "With one cut, the new loop goes straight into the game's edge slide: place it with the mouse or type an amount in percent; right-click keeps it where it was cut.");
         var splitTip = new Tip("Split faces", "In Faces mode, select the faces to divide. Sections sets how many equal strips to create. Direction A/B changes the cut direction on four-sided faces. The strips stay inside the selected faces; neighbouring borders stay joined using triangles and quads. Turn Mirror off to affect only one side; Ctrl+Z undoes the edit.");
         ui.Slider("Split sections", splitSections, 2, 16, Ui.FloatCallback(v => splitSections = Math.Clamp((int)MathF.Round(v), 2, 16)));
         ui.Button(splitOtherDirection ? "Split direction: B" : "Split direction: A", Ui.Callback(() => { splitOtherDirection = !splitOtherDirection; __instance.RequestRedraw(); }), splitTip);

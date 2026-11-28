@@ -3,6 +3,10 @@
 Everything needed to write BepInEx mods for **Sprocket** (IL2CPP, Unity 6), with a working example:
 **Quality of Life**, which adds small tools to the vehicle editor's own panels.
 
+**Quality of Life 1.12.0** adds helpers for the game's edge and vertex slide on the experimental branch (0.2.57): the
+amount by the mouse, typed amounts, lining up, an Edge slide box, and Loop cut into a slide. Hovering the game's Fill,
+Merge, Split and Delete outlines them again, and pasted or mirrored guns keep their own laying drive. See [CHANGELOG.md](CHANGELOG.md).
+
 **Quality of Life 1.11.3** adds switches for what QoL adds to the editor's Mirror (Mod Options > Build assist > Mirror):
 Turret mirror, for turrets that differ on each side, and Mirror split, for one-sided cuts. See [CHANGELOG.md](CHANGELOG.md).
 

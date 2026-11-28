@@ -232,6 +232,30 @@ public static class ClipboardTests
         Check(Conversion.Near(Conversion.WorldMatrices(origObjects)[20], Conversion.WorldMatrices(Conversion.Objects(Conversion.Parse(attached)))[attachedRoot]),
             "paste onto a scaled rotated mantlet preserves world transform"); checks++;
 
+        // A mantlet names its drive, trunnions and shield in its own settings: a pasted one names the pasted ones (it named
+        // the original's, and the game's laying drive gizmo threw every frame on the copy).
+        var gunTank = Conversion.Parse(bareTank);
+        JsonObject Part(int vuid, int parent, string? component = null, int id = 0)
+        {
+            var part = JsonNode.Parse(Conversion.Objects(origB)[20].ToJsonString())!.AsObject();
+            part.Remove("plateStructure"); part.Remove("structureBlueprintVuid");
+            part["vuid"] = vuid; part["pvuid"] = parent;
+            if (component != null) part[component] = id;
+            gunTank["objects"]!.AsArray().Add(part);
+            return part;
+        }
+        Part(40, 0, "mantlet", 41)["mantletBlueprint"] = new JsonObject { ["drive_vuid"] = 44, ["trunnions_vuid"] = 47, ["shield_vuid"] = 49 };
+        Part(43, 40, "layingDrive", 44); Part(46, 40, "trunnions", 47); Part(49, 40);
+        var gunClip = BlueprintClipboard.Copy(gunTank.ToJsonString(), new[] { 40 }).ClipboardJson;
+        var gunPaste = Conversion.Objects(Conversion.Parse(BlueprintClipboard.PasteInto(gunTank.ToJsonString(), gunClip).Json));
+        var pastedMantlet = gunPaste.Values.Single(o => o["mantlet"] != null && Conversion.Id(o, "vuid") != 40);
+        var under = gunPaste.Values.Where(o => Conversion.Id(o, "pvuid") == Conversion.Id(pastedMantlet, "vuid")).ToList();
+        var mantletLinks = pastedMantlet["mantletBlueprint"]!;
+        Check(under.Count == 3 && Conversion.Id(mantletLinks, "drive_vuid") == under.Single(o => o["layingDrive"] != null)["layingDrive"]!.GetValue<int>()
+              && Conversion.Id(mantletLinks, "trunnions_vuid") == under.Single(o => o["trunnions"] != null)["trunnions"]!.GetValue<int>()
+              && under.Any(o => Conversion.Id(o, "vuid") == Conversion.Id(mantletLinks, "shield_vuid")),
+            "pasted mantlet names its own pasted drive, trunnions and shield"); checks++;
+
         var transform = JsonNode.Parse(mantlet["transform"]!.ToJsonString())!.AsObject();
         string transformBefore = transform.ToJsonString();
         var shear = Matrix4x4.Identity; shear.M12 = 0.5f;

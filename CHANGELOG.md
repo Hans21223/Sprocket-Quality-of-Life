@@ -1,3 +1,22 @@
+# Quality of Life 1.12.0
+
+Helpers for the game's new edge and vertex slide (Sprocket 0.2.57 experimental: Shift+V, or G twice). On stable they stay off and nothing changes. The switches are in Mod Options > Build assist > Slide:
+
+- **Slide amount:** while sliding, the percent and the millimetres moved show beside the mouse.
+- **Typed amount:** digits typed while sliding set the amount in percent (minus and a point work, Backspace removes one). Enter or a click confirms. The game's actions on those keys, and QoL's own hotkeys, wait until the slide ends.
+- **Line up:** hold Apply prediction (N) while sliding to line the slid point up with the nearest other point or edge middle under the mouse.
+- **Edge slide box:** after an edge slide, a box at the bottom left changes its amount, Even, Flip and Clamp afterwards, one undo step each.
+- **Slide after cut:** Loop cut with one cut goes straight into sliding the new loop. Also in the mesh panel.
+
+Also new:
+
+- **Outlines on the game's buttons again:** hovering Fill, Merge, Split or Delete outlines what they would change, without pressing them. 1.11.1 had turned these outlines off because the game ran the edit on hover.
+
+Fixes:
+
+- **Pasted and mirrored guns keep their own laying drive.** A gun copied with QoL's clipboard, or by Turret mirror onto a twin turret, still pointed at the original gun's laying drive, trunnions and shield. The editor then logged an error every frame. Guns copied by earlier versions keep the old links.
+- **Quieter log on experimental:** no more "Could not find method Execute" warnings at start.
+
 # Quality of Life 1.11.3
 
 Switches for what QoL adds to the editor's Mirror, for designs that differ on each side. They're in Mod Options > Build assist > Mirror, all on by default:

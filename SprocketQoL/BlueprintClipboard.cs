@@ -427,8 +427,7 @@ public static class BlueprintClipboard
             if (o["structureID"] is JsonValue sVal && sVal.TryGetValue<int>(out int oldStr) && vuidMap.TryGetValue(oldStr, out int newStr))
                 o["structureID"] = newStr;
 
-            if (o["compartmentBodyID"]?["structureVuid"] is JsonValue cbVal && cbVal.TryGetValue<int>(out int oldCb) && vuidMap.TryGetValue(oldCb, out int newCb))
-                o["compartmentBodyID"]!["structureVuid"] = newCb;
+            Conversion.RemapNestedLinks(o, vuidMap);
 
             int oldPvuid = Conversion.Id(o, "pvuid");
             if (vuidMap.TryGetValue(oldPvuid, out int newParent))

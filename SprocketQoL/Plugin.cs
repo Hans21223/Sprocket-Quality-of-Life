@@ -14,11 +14,12 @@ namespace SprocketQoL;
 [BepInDependency(ModApi.Guid, BepInDependency.DependencyFlags.SoftDependency)] // Sprocket Mod API, if installed (ModApi.cs)
 public sealed class Plugin : BasePlugin
 {
-    internal const string Version = "1.11.3";
+    internal const string Version = "1.12.0";
     internal static ManualLogSource ModLog = null!;
     internal static ConfigEntry<bool>? AutoUpdate;
     internal static ConfigEntry<string>? Folded;
     internal static ConfigEntry<bool>? ShowHotkeys;
+    internal static ConfigEntry<bool>? SlidePanel, SlideAfterCut;
     internal static ConfigEntry<bool>? RotationAngle;
     internal static ConfigEntry<bool>? TurretPreview, TurretPreviewAlways;
     internal static ConfigEntry<bool>? PartMassMarkers;
@@ -70,6 +71,8 @@ public sealed class Plugin : BasePlugin
         TurretPreview = Config.Bind("Editor", "Turret preview", true, "While a turret or gun part is selected: its turning range, the gun's elevation fan, and where the barrel at full depression clears the hull (green) or goes into it (red)");
         TurretPreviewAlways = Config.Bind("Editor", "Turret preview always on", false, "Show the turret preview for every turret all the time, not only the selected one");
         RotationAngle = Config.Bind("Editor", "Rotation angle", true, "While turning a part or points with the game's rotation tool, the angle turned so far shows beside the mouse");
+        SlidePanel = Config.Bind("Panels", "Slide panel", true, "After the game's edge slide (Sprocket 0.2.57 and later), a box to change its amount, Even, Flip and Clamp afterwards");
+        SlideAfterCut = Config.Bind("Editor", "Slide after cut", true, "Loop cut with one cut goes straight into the game's edge slide of the new loop (Sprocket 0.2.57 and later): place it with the mouse or type an amount");
         PartMassMarkers = Config.Bind("Panels", "Show part mass markers", true, "Show the blue mass marker for each part when COM is enabled in the editor view filters. Disabling COM hides both vehicle and part mass markers.");
         ExplodeSpread = Config.Bind("Panels", "Exploded view spread", 0.5f, "How far apart the exploded view (F2) moves parts, in metres (F3 / F4 change it)");
         FlashlightPercent = Config.Bind("Panels", "Flashlight brightness", 80f, "How bright the flashlight (F6) is where it lands, in percent of the sun");
@@ -126,6 +129,8 @@ public sealed class Plugin : BasePlugin
         // The engine panel's class moved assembly in Sprocket 0.2.56: found while the game runs (EngineEditor), not named.
         Hooks.AttachPostfix(harmony, nameof(GearSpeeds), EngineEditor.Type, "CombustionEngineComponentEditor", "OnComponentRebuilt", AccessTools.Method(typeof(GearSpeeds), nameof(GearSpeeds.EngineChanged)));
         Hooks.AttachPostfix(harmony, nameof(NativePanels), EngineEditor.Type, "CombustionEngineComponentEditor", "OnGUI", AccessTools.Method(typeof(NativePanels), nameof(NativePanels.Engine)));
+        // The game's edge and vertex slide exists from Sprocket 0.2.57 (experimental): found while the game runs.
+        SlideAssist.Attach(harmony);
         PanelSections.Register();
         try { Updater.Start(typeof(Plugin).Assembly.Location, Paths.GameRootPath, Version, UnityEngine.Application.version); }
         catch (Exception ex) { Log.LogWarning($"QOL_UPDATE couldn't start: {ex.Message}"); }

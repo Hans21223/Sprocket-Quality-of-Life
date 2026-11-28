@@ -143,6 +143,7 @@ internal static class Keybinds
     /// read Ctrl as "the other way" check it themselves).
     internal static bool Pressed(string id)
     {
+        if (SlideAssist.Sliding) return false; // digits and the numpad type the slide's amount then
         if (pressed is { } p && p.Id == id && p.Frame == UnityEngine.Time.frameCount) return true;
         if (api.TryGetValue(id, out var handle)) { Compare(); return ModApi.KeyPressed(handle); }
         if (!parsed.TryGetValue(id, out var k) || k.Key == Key.None || Keyboard.current is not { } keys) return false;

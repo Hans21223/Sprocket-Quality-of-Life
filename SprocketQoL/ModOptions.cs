@@ -196,6 +196,13 @@ internal static class ModOptions
         Toggle(ui, Plugin.MirrorMerge, "Mirror merge", "With the editor's Mirror on, Merge (M) merges the mirrored points too.");
         Toggle(ui, Plugin.MirrorSplit, "Mirror split", "With the editor's Mirror on, Split cuts the mirrored edge too. Off: the game's own Split, which cuts one side only.");
         Toggle(ui, Plugin.TurretMirror, "Turret mirror", "A turret placed with Mirror on gets its body, guns and parts copied onto its twin, and the pair stays mirrored as either moves. Off: build each side as you like, for an asymmetric turret.");
+
+        // The game's edge and vertex slide (Sprocket 0.2.57 and later): while sliding, the amount shows by the mouse, digits
+        // type it in percent, and holding Apply prediction lines the point up with another. Stable has no slide.
+        if (!SlideAssist.Available) return;
+        ui.Header("Slide");
+        Toggle(ui, Plugin.SlidePanel, "Slide panel", "After an edge slide, a box to change its amount, Even, Flip and Clamp afterwards (one undo step each). While sliding: digits type the amount in percent; hold Apply prediction to line the point up with the nearest other point.");
+        Toggle(ui, Plugin.SlideAfterCut, "Slide after cut", "Loop cut with one cut goes straight into the game's edge slide of the new loop: place it with the mouse or type an amount; right-click keeps it where it was cut.");
     }
 
     static void Photos(IGUIElementDrawer ui, Action redraw)
