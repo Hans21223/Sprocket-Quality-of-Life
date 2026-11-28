@@ -104,6 +104,16 @@ public static class Conversion
     internal static IEnumerable<string> ComponentKeys(JsonObject o) => o.Where(kv => kv.Value is JsonValue v && v.TryGetValue<int>(out _) && kv.Key.Length > 0 && char.IsLetter(kv.Key[0])
         && kv.Key is not ("vuid" or "pvuid" or "flags" or "structureID") && !BlueprintKey(kv.Key) && !kv.Key.EndsWith("Vuid") && !kv.Key.EndsWith("ID")).Select(kv => kv.Key).ToList();
 
+    /// A copied part's links nested in its own settings (a mantlet's drive, trunnions and shield, a compartment's body,
+    /// a track's wheels), renumbered through `map` where it has them. The transform's mirror link isn't one of them.
+    internal static void RemapNestedLinks(JsonObject part, IReadOnlyDictionary<int, int> map)
+    {
+        foreach (var nested in part.Where(kv => kv.Key != "transform").Select(kv => kv.Value).OfType<JsonObject>())
+            foreach (var key in nested.Select(kv => kv.Key).ToList())
+                if (key.EndsWith("vuid", StringComparison.OrdinalIgnoreCase) && nested[key] is JsonValue v && v.TryGetValue<int>(out int old) && map.TryGetValue(old, out int to))
+                    nested[key] = to;
+    }
+
     // Ring settings can be shared between mirror twins, but the motor is a component reference, not a setting.
     // Clone before remapping so changing the twin never redirects the original ring as well.
     static void RemapRingMotor(JsonObject ring, JsonArray blocks, IReadOnlyDictionary<int, int> map, ref int nextBlock)
@@ -317,8 +327,7 @@ public static class Conversion
             foreach (var key in ComponentKeys(o)) d[key] = map[Id(o, key)];
             RemapRingMotor(d, blocks, map, ref nextBlock);
             if (o["structureID"] is JsonValue s && map.TryGetValue(s.GetValue<int>(), out int body)) d["structureID"] = body;
-            if (o["compartmentBodyID"]?["structureVuid"] is JsonValue nestedBody && map.TryGetValue(nestedBody.GetValue<int>(), out int copiedBody))
-                d["compartmentBodyID"]!["structureVuid"] = copiedBody;
+            RemapNestedLinks(d, map);
             // Mirrored across the vehicle's centre: seen from its (mirrored) parent, x the other way and the turn mirrored.
             var t = d["transform"]!.AsObject();
             var pos = t["pos"]!.AsArray();

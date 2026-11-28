@@ -566,6 +566,7 @@ public sealed class DesignEditor : MonoBehaviour
         if (ready && !ObjTransfer.BlocksInput && !EditorModal.BlocksInput)
         {
             if (!busy && !PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Right-click menu", RightClickMenu.Update);
+            if (!PhotoShot.Capturing && !DrawingSheet.Capturing) Ui.Guard("Slide", SlideAssist.Tick);
             Ui.Guard("Mesh tools keys", MeshTools.Keys);
             Ui.Guard("Exploded view", ExplodedView.Keys);
             Ui.Guard("Show only selected", IsolateView.Keys);
@@ -1005,6 +1006,7 @@ public sealed class DesignEditor : MonoBehaviour
             Ui.Guard("Selection measurements", MeshTools.DrawSelectionMeasures);
             Ui.Guard("Create Hole preview", HoleQuality.DrawHovered);
             Ui.Guard("Tool hover outline", MeshTools.DrawHoverTool);
+            Ui.Guard("Slide", SlideAssist.Draw);
             Ui.Guard("Rotation angle", RotationSnap.DrawAngle);
             Ui.Guard("Turret preview", TurretPreview.Draw);
             Ui.Guard("Right-click menu", RightClickMenu.Draw);

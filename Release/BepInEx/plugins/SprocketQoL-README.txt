@@ -1,5 +1,14 @@
-Quality of Life 1.11.3 - editor tools for Sprocket 0.2.55.5 to 0.2.57 (stable and experimental)
+Quality of Life 1.12.0 - editor tools for Sprocket 0.2.55.5 to 0.2.57 (stable and experimental)
 https://github.com/Hans21223/Sprocket-Quality-of-Life
+
+NEW IN 1.12.0
+- Slide amount: percent and millimetres beside the mouse while using the game's edge or vertex slide (experimental 0.2.57).
+- Typed slide amount: type digits while sliding to set it in percent; Enter or a click confirms.
+- Line up: hold N while sliding to line the point up with the nearest other point.
+- Edge slide box: change an edge slide's amount, Even, Flip and Clamp afterwards. Mod Options > Build assist > Slide.
+- Slide after cut: Loop cut with one cut goes straight into a slide.
+- Hovering the game's Fill, Merge, Split and Delete outlines them again, without pressing them.
+- Fixed: pasted or mirrored guns now keep their own laying drive (the editor logged an error every frame).
 
 NEW IN 1.11.3
 - Mod Options > Build assist > Mirror: switches for what QoL adds to the editor's Mirror, all on by default.

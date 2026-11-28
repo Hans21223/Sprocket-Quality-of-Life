@@ -38,6 +38,7 @@
     <Compile Include="..\SprocketQoL\MeshPicking.cs" Link="MeshPicking.cs" />
     <Compile Include="..\SprocketQoL\BuildPrediction.cs" Link="BuildPrediction.cs" />
     <Compile Include="..\SprocketQoL\PrecisionGeometry.cs" Link="PrecisionGeometry.cs" />
+    <Compile Include="..\SprocketQoL\SlideMath.cs" Link="SlideMath.cs" />
     <Compile Include="..\SprocketQoL\WorkshopGeometry.cs" Link="WorkshopGeometry.cs" />
     <Compile Include="..\SprocketQoL\WorkshopStorage.cs" Link="WorkshopStorage.cs" />
     <Compile Include="..\SprocketQoL\ToolPresetStore.cs" Link="ToolPresetStore.cs" />

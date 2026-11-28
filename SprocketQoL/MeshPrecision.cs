@@ -136,7 +136,7 @@ public static partial class MeshTools
         foreach(var edge in v.SelectedEdges) { points.Add(edge.A);points.Add(edge.B); }
         return points;
     }
-    static (bool,string) MovePoints(EditMesh mesh,View v,Dictionary<int,Num> moved,bool mirror,string name)
+    internal static (bool,string) MovePoints(EditMesh mesh,View v,Dictionary<int,Num> moved,bool mirror,string name)
     {
         if(moved.Count==0) return (false,"no safe movement: choose points with a neighbouring unselected edge");
         if(mirror) foreach(var (source,twin) in MeshPlans.Twins(v.Pos,moved.Keys.ToArray(),Tolerance))
